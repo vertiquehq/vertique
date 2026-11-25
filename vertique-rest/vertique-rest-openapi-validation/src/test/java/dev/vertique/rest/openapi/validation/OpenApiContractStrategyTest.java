@@ -76,7 +76,7 @@ class OpenApiContractStrategyTest {
         OpenApiContractValidationStrategy strategy = new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());
         // Construction pre-warms CONTRACT_PATH via executeBlocking; settle it before the injected Vertx
-        // is reclaimed or the completion task races loop shutdown (issue #340).
+        // is reclaimed or the completion task races loop shutdown.
         awaitContractLoads(strategy, CONTRACT_PATH);
         return strategy;
     }
@@ -85,7 +85,7 @@ class OpenApiContractStrategyTest {
      * Awaits every cached contract load for {@code paths} so VertxExtension does not close the injected
      * {@link Vertx} while {@code OpenAPIContract.from}'s {@code executeBlocking} is still completing.
      * Leaving that work in flight surfaces as {@code RejectedExecutionException: event executor
-     * terminated} on {@code vert.x-internal-blocking-*} (issue #340).
+     * terminated} on {@code vert.x-internal-blocking-*}.
      *
      * @param strategy the strategy whose cached loads to drain
      * @param paths    contract paths whose loads must settle; missing cache entries are skipped

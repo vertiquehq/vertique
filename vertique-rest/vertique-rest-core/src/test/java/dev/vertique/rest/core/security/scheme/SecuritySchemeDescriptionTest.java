@@ -34,22 +34,20 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Proves T009's {@code SecuritySchemeDescription} contract (C-SCHEME): the closed, sealed
+ * Proves the {@code SecuritySchemeDescription} contract: the closed, sealed
  * description hierarchy admits exactly the OpenAPI Security Scheme fields, every valid shape
  * builds through its factories with independent copies and unmodifiable maps, every invalid shape
  * is rejected when built, and {@code ApiKey}'s header/cookie names are RFC 9110 tokens.
- *
- * <p>Covers TP-001, TP-002, TP-003, TP-004, and TP-007 of T009.
  */
 class SecuritySchemeDescriptionTest {
 
     // =====================================================================
-    // TP-001 — a handler that does not override the method describes nothing
+    // a handler that does not override the method describes nothing
     // =====================================================================
 
     /**
      * A {@link SecuritySchemeHandler} implementing only {@link #schemeName()} and
-     * {@link #configure(SecuritySchemeRegistry)}, as every handler written before this task does.
+     * {@link #configure(SecuritySchemeRegistry)}, so it inherits the default {@code openApiDescription()}.
      */
     private static final class MinimalSecuritySchemeHandler implements SecuritySchemeHandler {
 
@@ -73,7 +71,7 @@ class SecuritySchemeDescriptionTest {
     }
 
     // =====================================================================
-    // TP-002 — the description types admit no field outside the OpenAPI object
+    // the description types admit no field outside the OpenAPI object
     // =====================================================================
 
     private static final Set<Class<? extends SecuritySchemeDescription>> EXPECTED_PERMITTED_SUBCLASSES =
@@ -243,7 +241,7 @@ class SecuritySchemeDescriptionTest {
     }
 
     // =====================================================================
-    // TP-003 — every valid description builds, copies are independent, maps unmodifiable
+    // every valid description builds, copies are independent, maps unmodifiable
     // =====================================================================
 
     private record ValidCase(String name, Runnable verification) {
@@ -509,7 +507,7 @@ class SecuritySchemeDescriptionTest {
     }
 
     // =====================================================================
-    // TP-004 — invalid descriptions are rejected when built
+    // invalid descriptions are rejected when built
     // =====================================================================
 
     private record InvalidRow(
@@ -870,7 +868,7 @@ class SecuritySchemeDescriptionTest {
     }
 
     // =====================================================================
-    // TP-007 — header and cookie API key names must be RFC 9110 tokens
+    // header and cookie API key names must be RFC 9110 tokens
     // =====================================================================
 
     private record TokenRow(

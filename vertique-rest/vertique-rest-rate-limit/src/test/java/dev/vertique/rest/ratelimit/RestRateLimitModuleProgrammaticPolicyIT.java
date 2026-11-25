@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T010 follow-up: {@link RestRateLimitModule#rateLimitEdgeMiddlewareContribution} must classify an
+ * {@link RestRateLimitModule#rateLimitEdgeMiddlewareContribution} must classify an
  * {@code IP}-dimension rule's absent-origin decision correctly for a policy declared <strong>only</strong>
  * via a Dagger {@code @IntoSet RateLimitPolicy} contribution — one with no backing {@code
  * rateLimit.policies.<name>} JSON section anywhere. The module previously re-parsed {@code

@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-004: the {@code IP} dimension derives its key from {@link OriginCaptureMiddleware}'s
+ * The {@code IP} dimension derives its key from {@link OriginCaptureMiddleware}'s
  * published {@code RequestOrigin} only — never from a directly-parsed forwarding header or the raw
  * socket {@code remoteAddress()}.
  */
@@ -139,7 +139,7 @@ class RateLimitEdgeIpDimensionIT {
                 rateLimiters, policy, RateLimitEdgeRule.DEFAULT_IPV6_PREFIX_BITS);
         AtomicBoolean invoked = new AtomicBoolean(false);
 
-        // P02/P03 review repair (T017, item 6): the absent-origin + OPEN path must log a bounded,
+        // The absent-origin + OPEN path must log a bounded,
         // internal-only warning (policy name + "RequestOrigin absent") since the response carries
         // no policy/rule identity at all. Attached
         // around the request round trip only, detached in the finally below, so a failing

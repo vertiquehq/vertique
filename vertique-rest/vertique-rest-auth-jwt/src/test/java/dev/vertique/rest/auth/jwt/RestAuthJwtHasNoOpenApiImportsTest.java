@@ -14,10 +14,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for FR-025 (slice 14): no reference to the tech-preview OpenAPI
+ * Mechanical completeness check: no reference to the tech-preview OpenAPI
  * packages {@code io.vertx.openapi.} or {@code io.vertx.ext.web.openapi.router.} may remain in the
- * rest-auth-jwt production source tree. This is the broader FR-025 sweep that complements
- * {@code RestAuthJwtHasNoOpenApiRouterImportTest} (which guards only the router package from slice 5).
+ * rest-auth-jwt production source tree. This is the broader sweep that complements
+ * {@code RestAuthJwtHasNoOpenApiRouterImportTest} (which guards only the router package).
  *
  * <p>The grep is a backstop, not a behavior test — it guards against a straggler reference
  * re-introducing the OpenAPI coupling.

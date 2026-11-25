@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for the framework built-in {@link ParamConverter} registrations.
  *
- * <p>Each FR-015-02 target type must round-trip {@code fromString}/{@code toString}, and a malformed
+ * <p>Each built-in target type must round-trip {@code fromString}/{@code toString}, and a malformed
  * value must surface as a {@link ParamConversionException}. Converters are obtained through the public
  * surface, {@link ParamConverterRegistry#find(Class)} on a registry built with no application
  * bindings.

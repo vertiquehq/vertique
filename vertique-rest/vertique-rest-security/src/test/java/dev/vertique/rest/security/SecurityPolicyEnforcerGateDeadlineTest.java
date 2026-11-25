@@ -49,11 +49,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R01 TP-001 — {@code shouldFailClosedOnceWhenAGateExceedsTheDeadline} (issue #417).
+ * {@code shouldFailClosedOnceWhenAGateExceedsTheDeadline}.
  *
- * <p>Before this repair, {@link SecurityPolicyEnforcer#decide} failed closed on a synchronous throw,
+ * <p>{@link SecurityPolicyEnforcer#decide} failed closed on a synchronous throw,
  * a null future, a failed future, and a null decision from either the {@link
- * AuthorizationDecisionPoint} or the {@link Authorizer} — but not on a future that simply never
+ * AuthorizationDecisionPoint} or the {@link Authorizer} — and also on a future that simply never
  * resolves. An app-provided decision point or authorizer that hangs (a remote PDP with no timeout, an
  * OPA sidecar under load) left the future {@code decide()} returns pending forever: on the MCP path
  * there is no {@code RoutingContext} idle timeout to eventually reclaim it.
@@ -62,7 +62,7 @@ import org.junit.jupiter.api.Test;
  * SecurityPolicyEnforcer#SecurityPolicyEnforcer(
  * Optional, Optional, Set, SecurityEventEmitter, ContextHolder, SecurityRuntime, Optional, Optional)}) so
  * this proof completes in milliseconds rather than {@link AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS}.
- * The {@code tools/list} scan-termination half of TP-001 — asserting the decision-point invocation
+ * The {@code tools/list} scan-termination half — asserting the decision-point invocation
  * count across a multi-candidate scan, not just elapsed time — lives in {@code vertique-mcp-server}
  * (module boundary: {@code McpRequestDispatcher} is not visible here), in
  * {@code McpToolsListAuthorizationInfrastructureFailureIT}: it proves the scan aborts the whole list on
@@ -90,12 +90,12 @@ class SecurityPolicyEnforcerGateDeadlineTest {
      * reader must not "simplify" this into a bare result assertion: doing so would restore the exact
      * failure this proof exists to catch (a JUnit run that hangs instead of failing red). Verified by
      * temporarily reverting the two {@code .timeout(...)} calls in {@code decide()} and confirming
-     * this test times out rather than reporting a wrong value (see R01 completion evidence).
+     * this test times out rather than reporting a wrong value.
      */
     private static final long AWAIT_BOUND_MS = 3_000L;
 
     /**
-     * R42 (issue #417's deferred configurability half): the gate deadline threaded through the
+     * The gate deadline threaded through the
      * PUBLIC {@link AuthorizationGateConfig} construction path — not the package-private test-only
      * seam {@link #enforcerWith} still uses above. Deliberately far below {@link
      * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} so a hung gate denies fast rather than
@@ -118,10 +118,10 @@ class SecurityPolicyEnforcerGateDeadlineTest {
     }
 
     /**
-     * R42: an enforcer constructed through the PUBLIC {@code @Inject} constructor with a configured
+     * An enforcer constructed through the PUBLIC {@code @Inject} constructor with a configured
      * {@link AuthorizationGateConfig} (50ms) must deny a hung role/scope gate fast — well under the
      * old fixed 5s default — proving the deadline is genuinely operator-configurable rather than
-     * reachable only through the package-private test seam (issue #417's deferred question).
+     * reachable only through the package-private test seam .
      */
     @Test
     @DisplayName("shouldFailClosedFastWhenConstructedWithAConfiguredGateDeadline")
@@ -215,12 +215,12 @@ class SecurityPolicyEnforcerGateDeadlineTest {
     }
 
     /**
-     * R48 proof-gap closure — drives {@code security.authz.gateDeadlineMs} through the REAL config
+     * Drives {@code security.authz.gateDeadlineMs} through the REAL config
      * path: a JSON application config, {@link AuthorizationGateConfigModule}'s own {@code @Provides}
      * factory method (the exact call Dagger generates for an application that installs the module),
      * and {@link ConfigParser#parse}, rather than the public {@code @Inject}-constructor test above's
      * hand-built {@code new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)} — closing the
-     * remaining proof gap between "the module parses this shape correctly" ({@code
+     * gap between "the module parses this shape correctly" ({@code
      * AuthorizationGateConfigTest}, unit-only) and "the parsed value genuinely bounds a hung gate"
      * (this method, into observable {@link SecurityPolicyEnforcer#decide} behavior). Mirrors {@code
      * JwtAuthConfigTest}'s {@code DefaultConfigParser(DefaultConfigMapper.lenient())} construction —
@@ -599,7 +599,7 @@ class SecurityPolicyEnforcerGateDeadlineTest {
         }
     }
 
-    /** A minimal role-checking {@link AuthorizationDecisionPoint}, mirroring the T005 fixture shape. */
+    /** A minimal role-checking {@link AuthorizationDecisionPoint}, mirroring the decision-contract fixture shape. */
     private static final class RecordingDecisionPoint implements AuthorizationDecisionPoint {
         private int callCount;
 

@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests proving {@link SecurityPolicyEnforcer} threads the ambient {@link InvocationOrigin}
- * onto every {@link AuthorizationRequest} it builds (identity-002 P2.S5b-i / DEF-007), falling back
+ * onto every {@link AuthorizationRequest} it builds, falling back
  * to {@link InvocationOrigin#unspecified()} when nothing is bound — never inventing a privileged
  * {@code rest} origin for a transport-neutral enforcer.
  */
@@ -153,7 +153,7 @@ class InvocationOriginPropagationTest {
 
     @Test
     @DisplayName("enforcer falls back to InvocationOrigin.unspecified() on the constrained-policy"
-            + " AuthorizationRequest when no ambient origin is bound (DEF-007)")
+            + " AuthorizationRequest when no ambient origin is bound")
     void unboundOriginFallsBackToUnspecified() {
         AtomicReference<AuthorizationRequest> captured = new AtomicReference<>();
         AuthorizationDecisionPoint dp = request -> {
@@ -203,7 +203,7 @@ class InvocationOriginPropagationTest {
 
     @Test
     @DisplayName("action-gate AuthorizationRequest falls back to InvocationOrigin.unspecified() when no ambient"
-            + " origin is bound — matching the role/scope gate (DEF-007)")
+            + " origin is bound — matching the role/scope gate")
     void actionGateFallsBackToUnspecifiedWhenUnbound() {
         AtomicReference<AuthorizationRequest> captured = new AtomicReference<>();
         Authorizer authorizer = new Authorizer() {
@@ -248,7 +248,7 @@ class InvocationOriginPropagationTest {
 
     @Test
     @DisplayName("action-gate AuthorizationRequest reuses the entry-captured InvocationOrigin, not a re-read that "
-            + "could observe a different origin after the role/scope gate's async hop (W1 residual fix)")
+            + "could observe a different origin after the role/scope gate's async hop")
     void actionGateOriginStableAcrossAsyncHop() {
         AtomicReference<AuthorizationRequest> captured = new AtomicReference<>();
         Authorizer authorizer = new Authorizer() {

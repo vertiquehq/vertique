@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link RestContextTypes}.
  *
- * <p>Verifies the injectability predicate (FR-REST-168), the FQN constant values,
+ * <p>Verifies the injectability predicate, the FQN constant values,
  * and the contents of {@link RestContextTypes#RESERVED_UNSUPPORTED_JAXRS_FQNS}.
  */
 class RestContextTypesTest {

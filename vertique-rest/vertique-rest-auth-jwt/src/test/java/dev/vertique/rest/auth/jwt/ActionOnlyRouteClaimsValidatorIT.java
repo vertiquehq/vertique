@@ -81,8 +81,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * End-to-end integration test proving that a custom {@link JwtClaimsValidator} runs on an
  * <em>action-only</em> REST route ({@link SecurityPolicy.None} carrying a {@code @RequiresAction}
- * gate, declaring no OpenAPI security requirement) — closing the Phase-3 round-3 ordering bug where
- * the validator was silently bypassed on such routes.
+ * gate, declaring no OpenAPI security requirement) — a route on which the
+ * validator was once silently bypassed.
  *
  * <h3>The bug this guards against</h3>
  * The {@link JwtClaimsValidatorContributor} runs at priority {@code 50} and skips when
@@ -95,16 +95,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * custom validator would reject (tenant binding, token version/revocation, a required custom claim)
  * was let through on action-only routes while rejected on every normal authenticated route.
  *
- * <p>The fix lowers {@link ActionGateAuthenticationContributor} below the validator's priority so the
- * action-only chain becomes {@code auth → validate(50) → identity(80) → authorize(100)}, matching the
+ * <p>{@link ActionGateAuthenticationContributor} sorts below the validator's priority, so the
+ * action-only chain is {@code auth → validate(50) → identity(80) → authorize(100)}, matching the
  * normal-route ordering: authentication → claims-validation → identity-resolution → authorization.
  *
  * <h3>How the chain is wired</h3>
  * The four security contributors are sorted with {@link OrderedExtension#comparator()} — exactly as
  * {@code JaxRsRouterMount} sorts them at runtime — and invoked in that order over the real
  * {@link OpenAPIRoute}, followed by a terminal 200-OK handler. Sorting (not hard-coded invocation
- * order) is what makes this test sensitive to the priority value under test: with the pre-fix
- * priority the validator sorts ahead of authentication and the bug reproduces; with the fixed
+ * order) is what makes this test sensitive to the priority value under test: if the
+ * authentication contributor sorted after the validator, the bypass would reproduce; with its actual
  * priority authentication sorts first and the validator runs against a populated user.
  *
  * <h3>Scenarios</h3>
@@ -120,7 +120,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * These tests assert on the status code alone, so the raw idiom is latent rather than actively broken
  * here — but a {@link WebClient} aggregates the response before completing the send, which removes
  * the trap for whoever next adds a body assertion.
@@ -265,9 +265,9 @@ public class ActionOnlyRouteClaimsValidatorIT {
     /**
      * A valid bearer token whose actor holds the {@code editor} role but which the custom
      * {@link JwtClaimsValidator} rejects must be denied with {@code 401}: the validator must run on
-     * an action-only route (after authentication) and reject the token. With the ordering bug the
-     * validator is bypassed and the request reaches the action gate, which permits the {@code editor}
-     * actor — so a pre-fix run returns {@code 200} and fails this assertion (RED).
+     * an action-only route (after authentication) and reject the token. If the
+     * validator were bypassed, the request would reach the action gate, which permits the {@code editor}
+     * actor, and the response would be {@code 200}, failing this assertion.
      *
      * @param ctx the test context
      */

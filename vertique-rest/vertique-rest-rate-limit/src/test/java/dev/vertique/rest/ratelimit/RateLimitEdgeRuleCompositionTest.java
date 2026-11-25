@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * TP-003: two ordered rules — a permissive {@code IP} rule then a denying {@code HEADER} rule —
+ * Two ordered rules — a permissive {@code IP} rule then a denying {@code HEADER} rule —
  * against a fake {@link RateLimiters} that records every {@code acquire(...)} call.
  */
 class RateLimitEdgeRuleCompositionTest {
@@ -72,7 +72,7 @@ class RateLimitEdgeRuleCompositionTest {
     }
 
     /**
-     * P02/P03 review repair (T017, item 5): a rule's declared {@code cost} must not exceed its
+     * A rule's declared {@code cost} must not exceed its
      * referenced policy's capacity — validated at middleware construction time, before any request
      * is ever admitted, mirroring the {@code RateLimiter#acquire} runtime check.
      */
@@ -98,7 +98,7 @@ class RateLimitEdgeRuleCompositionTest {
     }
 
     /**
-     * P02/P03 review repair (T017, item 5): {@code enabled=true} with an empty {@code rules} list
+     * {@code enabled=true} with an empty {@code rules} list
      * fails eagerly instead of silently admitting every request through a no-op edge limiter.
      */
     @Test

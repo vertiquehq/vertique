@@ -329,7 +329,7 @@ class SecurityPolicyEnforcerTest {
 
             SecurityContext authed = userSecurityContext("alice");
             when(securityRuntime.current()).thenReturn(authed);
-            // The permit path now emits one event (FR-AUTHZ-050), which reads the route from the
+            // The permit path emits one event, which reads the route from the
             // context, so the request/path must be stubbed even on the permit path.
             RoutingContext rc = stubRoute();
             handler.handle(rc);
@@ -802,7 +802,7 @@ class SecurityPolicyEnforcerTest {
 
             SecurityContext authed = userSecurityContext("alice");
             when(securityRuntime.current()).thenReturn(authed);
-            // The permit path emits one event (FR-AUTHZ-050), which reads the route from the context.
+            // The permit path emits one event, which reads the route from the context.
             RoutingContext rc = stubRoute();
             enforcer.createHandler(new SecurityPolicy.AuthenticatedOnly()).handle(rc);
 
@@ -905,8 +905,8 @@ class SecurityPolicyEnforcerTest {
         void authenticatedOnlyNullContextEmitsExactlyOnce() {
             SecurityPolicyEnforcer enforcer = enforcerWith(mock(AuthorizationDecisionPoint.class));
 
-            // securityRuntime.current() returns null — no SecurityContext bound at all (F4 symmetry
-            // gap: the suite previously covered only the anonymous-identity branch, not the null one).
+            // securityRuntime.current() returns null — no SecurityContext bound at all (the
+            // null branch is covered alongside the anonymous-identity branch).
             when(securityRuntime.current()).thenReturn(null);
             RoutingContext rc = stubRoute();
             enforcer.createHandler(new SecurityPolicy.AuthenticatedOnly()).handle(rc);
@@ -925,7 +925,7 @@ class SecurityPolicyEnforcerTest {
         }
     }
 
-    // --- Short-circuit route fidelity (F2) ---
+    // --- Short-circuit route fidelity ---
 
     @Nested
     @DisplayName("Short-circuit deny events carry the real route, not a placeholder")
@@ -970,7 +970,7 @@ class SecurityPolicyEnforcerTest {
         }
     }
 
-    // --- Fail-closed hardening (F-W3): contract-violating decision points ---
+    // --- Fail-closed: contract-violating decision points ---
 
     @Nested
     @DisplayName("Constrained path fails closed on a contract-violating decision point")
@@ -1050,7 +1050,7 @@ class SecurityPolicyEnforcerTest {
         }
     }
 
-    // --- Async correlation capture (F1): correlation is captured at handler entry ---
+    // --- Async correlation capture: correlation is captured at handler entry ---
 
     @Nested
     @DisplayName("Async decision points preserve the correlation bound at handler entry")

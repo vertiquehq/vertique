@@ -34,7 +34,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * rather than a fresh inline {@code HttpClient}. Two reasons: an inline client is unclosable by
  * construction, so {@code Vertx} teardown reclaims its netty pools while the request may still be
  * in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive before a body
- * handler is attached, which the drain step below existed to work around (issues #167, #330). A
+ * handler is attached, which the drain step below existed to work around. A
  * {@link WebClient} has already aggregated the body by the time its send future resolves, so no
  * drain step is needed. Nothing here answers 3xx, so the follow-redirects default never engages.
  */

@@ -29,11 +29,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Fail-closed startup validation for the WebSocket {@code @RequiresAction} action gate
- * (Phase-3 review finding C2).
+ * Fail-closed startup validation for the WebSocket {@code @RequiresAction} action gate.
  *
  * <p>A class-level {@code @RequiresAction} on a WebSocket endpoint is enforced once at upgrade by the
- * composed {@link SecurityPolicyEnforcer} action gate (FR-AUTHZ-048). Three distinct
+ * composed {@link SecurityPolicyEnforcer} action gate. Three distinct
  * dependencies must all be present for the gate to be enforceable:
  * <ul>
  *   <li>the authz engine — the {@link ActionRegistry} — used to validate the action value;</li>
@@ -41,8 +40,7 @@ import org.junit.jupiter.api.Test;
  *       handler at upgrade; and</li>
  *   <li>the core action {@link Authorizer} — the function the enforcer calls to actually decide the
  *       action gate. {@code ActionRegistry} and {@code Authorizer} are bound through separate optional
- *       seams, so a non-default graph can have the registry present while the authorizer is absent
- *       (finding W2).</li>
+ *       seams, so a non-default graph can have the registry present while the authorizer is absent.</li>
  * </ul>
  * When any of the three is absent, accepting the annotation would silently never enforce it (or fail
  * closed per-request via an NPE), so startup must fail-closed.
@@ -123,7 +121,7 @@ class WebSocketActionGateStartupTest {
         void onOpen(WebSocketSession session) {}
     }
 
-    // --- Enforcement-pipeline-absent rejection (C2a) ---
+    // --- Enforcement-pipeline-absent rejection ---
 
     @Nested
     @DisplayName("enforcement pipeline absent (SecurityPolicyEnforcer null)")
@@ -199,7 +197,7 @@ class WebSocketActionGateStartupTest {
         }
     }
 
-    // --- Engine-absent rejection via the no-arg / null-registry scanner path (C2b) ---
+    // --- Engine-absent rejection via the no-arg / null-registry scanner path ---
 
     @Nested
     @DisplayName("authz engine absent (ActionRegistry null)")
@@ -240,7 +238,7 @@ class WebSocketActionGateStartupTest {
         }
     }
 
-    // --- Authorizer-absent rejection (W2) ---
+    // --- Authorizer-absent rejection ---
 
     @Nested
     @DisplayName("core Authorizer absent (registry + enforcer present)")
@@ -253,7 +251,7 @@ class WebSocketActionGateStartupTest {
             // (non-null enforcer), but the core Authorizer that the enforcer calls to decide the action
             // gate is absent — a non-default graph where ActionRegistry and Authorizer are bound through
             // separate optional seams. Without it the gate would NPE and fail closed per request rather
-            // than the graph being rejected at boot; startup must fail-closed (W2).
+            // than the graph being rejected at boot; startup must fail-closed.
             WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
                     new WebSocketMessageCodec(),
                     mock(SecurityPolicyEnforcer.class),

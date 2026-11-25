@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies the migrated {@link OperationRegistrationContext} record components and constructors:
  * the operation is exposed as a neutral {@link RestOperationDescriptor} and the route as a neutral
- * {@link RouteRegistration} (FR-022), replacing the previous {@code OpenAPIRoute}/{@code RouterBuilder}
+ * {@link RouteRegistration}, replacing the previous {@code OpenAPIRoute}/{@code RouterBuilder}
  * components. The identity, security-policy, and required-action accessors are unchanged.
  */
 class OperationRegistrationContextTest {

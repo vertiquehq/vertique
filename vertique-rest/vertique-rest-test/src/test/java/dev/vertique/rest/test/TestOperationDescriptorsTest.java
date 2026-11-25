@@ -24,7 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link TestOperationDescriptors#of(String, String, String)} (rest-025 T003, TP-011).
+ * Unit tests for {@link TestOperationDescriptors#of(String, String, String)}.
  *
  * <p>Verifies that the fixture builds a {@link RestOperationDescriptor} carrying only its identity:
  * <ul>
@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  *       empty {@code findAnnotation}; reading the effective security policy does not throw;</li>
  *   <li>its {@code toString} is the compact {@code <httpMethod> <routeTemplate> (<operationId>)} form, and
  *       it compares by identity: two calls with the same arguments return distinct, unequal instances, with
- *       no value-equality promise (ruling R2);</li>
+ *       no value-equality promise;</li>
  *   <li>it works as the {@code operation} of a {@link RestRequestCompletedEvent}, whose {@code toString}
  *       renders it as {@code <operationId> <routeTemplate>};</li>
  *   <li>a {@code null} in any argument position is rejected with a {@link NullPointerException}.</li>
@@ -59,7 +59,7 @@ class TestOperationDescriptorsTest {
     /** End time of the event built here. */
     private static final Instant END_TIME = START_TIME.plusMillis(5);
 
-    /** TP-011: the fixture's descriptor carries only its identity and compares by identity. */
+    /** The fixture's descriptor carries only its identity and compares by identity. */
     @Test
     @DisplayName(
             "of builds a descriptor carrying only its identity, compared by identity, rejecting null identity values")
@@ -100,7 +100,7 @@ class TestOperationDescriptorsTest {
                         () -> assertDoesNotThrow(
                                 descriptor::effectiveSecurityPolicy, "effectiveSecurityPolicy() does not throw")),
                 () -> assertAll(
-                        "rendering and equality (ruling R2)",
+                        "rendering and equality",
                         () -> assertEquals(
                                 HTTP_METHOD + " " + ROUTE_TEMPLATE + " (" + OPERATION_ID + ")",
                                 descriptor.toString(),

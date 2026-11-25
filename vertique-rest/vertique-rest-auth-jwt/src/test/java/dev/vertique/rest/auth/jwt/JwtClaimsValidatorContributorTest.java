@@ -51,7 +51,7 @@ import org.junit.jupiter.api.Test;
  *       {@link CredentialRejectedEvent} is emitted.</li>
  *   <li>When the {@link JwtClaimsValidator} throws, a {@link CredentialRejectedEvent} is emitted
  *       with reason code {@code JWT_CLAIMS_INVALID} before {@code ctx.fail(401, e)} is called
- *       — matching the requirement in F-W6.</li>
+ *      .</li>
  *   <li>When the routing context has no authenticated user ({@code ctx.user() == null}), the
  *       handler skips validation and calls {@code ctx.next()} without emitting a rejection
  *       event.</li>

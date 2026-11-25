@@ -55,7 +55,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
 
 /**
- * End-to-end proof for finding C2: two real {@link JwtBearerSecuritySchemeHandler}s — each backed by a
+ * End-to-end proof that two real {@link JwtBearerSecuritySchemeHandler}s — each backed by a
  * distinct symmetric key and issuer — compose into an {@link AuthenticationOrChain} OR chain and
  * authenticate at request time, exactly as the registrar's multi-scheme {@code applySecurity} path
  * wires them.
@@ -86,7 +86,7 @@ import org.mockito.Mockito;
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status
  * code is correct. This class read the identity JSON that way and failed exactly so in CI — the
- * status assertion passed while every body-derived field read {@code null} (issue #167). A
+ * status assertion passed while every body-derived field read {@code null}. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send,
  * so the race is closed by construction rather than by every author remembering an idiom.
  */
@@ -174,8 +174,8 @@ public class DelegatingJwtAuthHandlerOrChainIT {
         // JwtClaimsValidatorContributor-style claims check that fails and calls reporter.report(...)
         // then ctx.fail(401). At report() time ctx.user() != null (the chain already authenticated),
         // so the reporter MUST emit immediately — not buffer for the end-handler — even though the
-        // DEFER_CONTEXT_KEY flag is set. Proves the Codex review critical finding: the user-null guard
-        // is what scopes deferral to chain-attempt rejections only.
+        // DEFER_CONTEXT_KEY flag is set. Proves the user-null guard is what scopes deferral to
+        // chain-attempt rejections only.
         sharedPostAuthReporter = buildReporter();
         ChainAuthHandler orChainForPostAuth = AuthenticationOrChain.any();
         AuthenticationHandler handlerA2 = registeredHandler(
@@ -287,18 +287,17 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Proves the C2 OR-chain regression fix: a request authenticated by the FIRST OR alternative
-     * (issuer A) resolves to a NON-anonymous framework identity. The {@code ChainAuthHandler.any()}
-     * path calls only {@code authenticate(ctx)} on each member and then the winning member's
-     * {@code postAuthentication(ctx)}; it never calls {@code handle()}. Before the fix the framework
-     * evidence was appended only in {@code handle()}, so on the OR path
-     * {@code RestAuthenticationEvidence.get(ctx)} was empty and {@link DefaultSecurityIdentityResolver}
-     * resolved {@link SecurityIdentity#anonymous()}. The terminal handler runs the same evidence read
-     * and resolver the framework's {@code IdentityResolutionMiddleware} runs, and reports the result.
+     * Proves that a request authenticated by the FIRST OR alternative (issuer A) resolves
+     * to a NON-anonymous framework identity. The {@code ChainAuthHandler.any()} path calls only {@code authenticate(ctx)} on each member and then the winning member's
+     * {@code postAuthentication(ctx)}; it never calls {@code handle()}. The framework evidence must
+     * still be recorded on that path: otherwise {@code RestAuthenticationEvidence.get(ctx)} would be
+     * empty and {@link DefaultSecurityIdentityResolver} would resolve {@link SecurityIdentity#anonymous()}. The terminal handler runs the same
+     * evidence read and resolver the framework's {@code IdentityResolutionMiddleware} runs, and reports
+     * the result.
      *
      * <p>Asserts: evidence is non-empty (exactly one entry) and the resolved actor is the
-     * authenticated user {@code alice} with a non-anonymous type — RED before the fix
-     * (evidenceCount=0, actorType=ANONYMOUS), GREEN after.
+     * authenticated user {@code alice} with a non-anonymous type,
+     * not evidenceCount=0 with actorType=ANONYMOUS.
      *
      * @param ctx the test context
      */
@@ -326,15 +325,14 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Proves the C2 OR-chain regression fix for the SECOND OR alternative: a request authenticated
-     * by issuer B (the first alternative fails its signature/issuer check and the chain advances)
-     * resolves to a NON-anonymous framework identity. Mirrors
+     * Proves that a request authenticated by the SECOND OR alternative, issuer B (the first
+     * alternative fails its signature/issuer check and the chain advances), resolves to a NON-anonymous framework identity. Mirrors
      * {@link #tokenForIssuerA_resolvesAuthenticatedIdentity(VertxTestContext)} but exercises the
      * non-first winning member, confirming {@code postAuthentication(ctx)} appends evidence
      * regardless of which alternative wins.
      *
      * <p>Asserts: evidence non-empty (exactly one entry) and the resolved actor is {@code bob} with a
-     * non-anonymous type — RED before the fix, GREEN after.
+     * non-anonymous type.
      *
      * @param ctx the test context
      */
@@ -459,10 +457,10 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Issue #154 — RED #1. An OR route where the token authenticates the SECOND alternative only
+     * An OR route where the token authenticates the SECOND alternative only
      * (issuer B): the first alternative (issuer A) rejects the credential, but because the request
-     * ultimately authenticates, NO {@link CredentialRejectedEvent} must be recorded. Before the fix the
-     * first alternative's reporter emits its rejection synchronously, so exactly one spurious event is
+     * ultimately authenticates, NO {@link CredentialRejectedEvent} must be recorded. Without deferral the
+     * first alternative's reporter would emit its rejection synchronously, so exactly one spurious event is
      * captured even though the request succeeds (200).
      *
      * <p>Drives the request to completion and awaits the response-end window so the deferred
@@ -489,7 +487,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Issue #154 — an OR route where the token authenticates NEITHER alternative: both alternatives
+     * An OR route where the token authenticates NEITHER alternative: both alternatives
      * reject the credential and the chain fails (401). When authentication ultimately fails, the
      * buffered rejection(s) MUST be flushed — at least one {@link CredentialRejectedEvent} is recorded.
      *
@@ -511,7 +509,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Issue #154 — regression: a SINGLE-scheme route (mounted with no deferral wrapper) with an invalid
+     * Regression: a SINGLE-scheme route (mounted with no deferral wrapper) with an invalid
      * token must emit exactly one {@link CredentialRejectedEvent} IMMEDIATELY. This proves the
      * single-scheme path is unchanged — the deferral flag is never set, so the reporter takes its
      * original immediate-emit branch.
@@ -535,7 +533,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Issue #154 — Codex review critical finding: a post-authentication claims rejection on an OR route
+     * A post-authentication claims rejection on an OR route
      * MUST be emitted immediately (NOT buffered and then dropped). When the OR chain authenticates
      * ({@code ctx.user() != null} after the chain completes), a subsequent post-auth handler —
      * mirroring {@code JwtClaimsValidatorContributor} — calls
@@ -545,9 +543,9 @@ public class DelegatingJwtAuthHandlerOrChainIT {
      * <p>At the time {@code report()} is called, {@code ctx.user()} is non-null (the chain set it), so
      * the reporter's {@code ctx.user() == null} guard is false: the event bypasses the buffer and is
      * emitted immediately, even though {@link DeferredCredentialRejectionAuthHandler#DEFER_CONTEXT_KEY}
-     * is still set on the context. Before the Codex-identified fix (which added the user-null guard),
-     * the reporter checked only the flag and buffered the event, then the end-handler saw
-     * {@code ctx.user() != null} and dropped it — zero rejections were recorded for a real 401.
+     * is still set on the context. Without the user-null guard, the reporter would check only the flag and
+     * buffer the event, then the end-handler would see {@code ctx.user() != null} and drop it — zero rejections
+     * would be recorded for a real 401.
      *
      * @param vertx the Vert.x instance, used to await the end-handler window
      * @param ctx   the test context

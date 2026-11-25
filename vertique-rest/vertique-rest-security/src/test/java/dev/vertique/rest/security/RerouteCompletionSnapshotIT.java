@@ -83,21 +83,21 @@ import org.slf4j.LoggerFactory;
 /**
  * Proves, through a real {@link HttpVerticle}, that a request which authenticates only after a
  * reroute emits exactly one completion event carrying the security and correlation snapshots of the
- * pass that authenticated (FR-003, AC-003.1; Codex CX-F-007).
+ * pass that authenticated.
  *
  * <p>A reroute re-runs every ROOT middleware on the same request. {@link RequestContextLifecycle}
  * must therefore keep one handle per request across the reroute and register no second cleanup:
  * a second cleanup would be registered after the emitter's end handler, fire before it, and close
  * the second pass's bindings before the event reads them. The event would then carry the first
- * pass's anonymous identity and request id, which is the CX-F-007 defect.
+ * pass's anonymous identity and request id, which is the defect this guards against.
  *
- * <p>{@link #eventCarriesTheSnapshotsOfThePassThatAuthenticated(RerouteCase)} (TP-017) sends one
+ * <p>{@link #eventCarriesTheSnapshotsOfThePassThatAuthenticated(RerouteCase)} sends one
  * {@code GET /api/start} per {@link RerouteCase}, with an accepted credential and no
  * {@code X-Request-Id}. {@code /api/start} resolves an anonymous identity, because it carries no
  * credential scheme, and reroutes to the case's target, which authenticates {@value #SUBJECT}. So
  * authentication happens only on the second pass, and each pass generates its own request id. The
  * one event must carry {@value #SUBJECT} and the second pass's request id, which is also the id the
- * response echoes (security review SEC-I4). A reroute clears the claim {@code /start}'s operation
+ * response echoes. A reroute clears the claim {@code /start}'s operation
  * route made, so the reroute target's claim selects the event's type: a
  * {@link RestRequestCompletedEvent} whose {@code operation()} is the target's descriptor instance
  * when the target is an operation route, and an {@link HttpRequestCompletedEvent} when the target
@@ -283,13 +283,13 @@ public class RerouteCompletionSnapshotIT {
         }
     }
 
-    // --- TP-017 ---
+    // --- reroute completion snapshot ---
 
     /**
-     * TP-017's named cases. Both reroute to a route that authenticates {@value #SUBJECT}; they
+     * The named cases. Both reroute to a route that authenticates {@value #SUBJECT}; they
      * differ only in whether that route is an operation route, and so in the type of the one event.
      *
-     * @return the two cases, in the contract's order
+     * @return the two cases
      */
     static Stream<RerouteCase> rerouteCases() {
         return Stream.of(
@@ -298,7 +298,7 @@ public class RerouteCompletionSnapshotIT {
     }
 
     /**
-     * TP-017 (FR-003, AC-003.1; Codex CX-F-007; security review SEC-I4): a request that
+     * A request that
      * authenticates only on the pass after a reroute emits exactly one event carrying that pass's
      * security snapshot and request id, the request id the response echoes. For an operation target
      * the event is a {@link RestRequestCompletedEvent} whose {@code operation()} is the target's
@@ -547,7 +547,7 @@ public class RerouteCompletionSnapshotIT {
     // --- Test-local types ---
 
     /**
-     * A TP-017 row.
+     * One reroute case.
      *
      * @param name              the case name, also sent as {@value #CASE_HEADER}
      * @param target            the absolute path {@code /api/start} reroutes to, sent as

@@ -66,7 +66,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end integration proof for finding C2 (SH-4): an operation declaring a single-scheme
+ * End-to-end integration proof that an operation declaring a single-scheme
  * {@code @SecurityRequirement(name="bearerAuth", scopes={"write"})} <strong>authorizes</strong> those
  * scopes, not just authenticates. The set's scopes are folded into the operation's effective
  * {@link SecurityPolicy} by {@link EffectiveSecurityPolicy#fold} at registration time, so the existing
@@ -74,9 +74,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code 403}.
  *
  * <h3>The bug this guards against</h3>
- * Before SH-4 the scoped requirement only contributed an authentication handler; its scopes were never
- * compared against the caller's claims. A caller with a valid token but lacking the {@code write} scope
- * reached the terminal handler ({@code 200}). The fold promotes the policy to
+ * A scoped requirement that only contributed an authentication handler would never compare its scopes
+ * against the caller's claims, and a caller with a valid token but lacking the {@code write} scope
+ * would reach the terminal handler ({@code 200}). The fold promotes the policy to
  * {@code Constrained([], ["write"], requireAllScopes=true)} so the decision point denies a caller
  * lacking the scope ({@code 403}).
  *
@@ -94,14 +94,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <h3>Scenarios</h3>
  * <ul>
  *   <li><b>scoped op, token WITH {@code write}</b> → authorized ({@code 200});</li>
- *   <li><b>scoped op, token WITHOUT {@code write}</b> → the decision point denies ({@code 403}) —
- *       RED before the fix (returns {@code 200}, scopes ignored);</li>
+ *   <li><b>scoped op, token WITHOUT {@code write}</b> → the decision point denies ({@code 403});</li>
  *   <li><b>scopeless op</b> → no scope gate, authorized regardless of token scopes ({@code 200}).</li>
  * </ul>
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * These tests assert on the status code alone, so the raw idiom is latent rather than actively broken
  * here — but a {@link WebClient} aggregates the response before completing the send, which removes
  * the trap for whoever next adds a body assertion.
@@ -273,7 +272,7 @@ public class ScopedSecurityRequirementEnforcementIT {
 
     /**
      * A token <em>without</em> the {@code write} scope is denied by the decision point ({@code 403}).
-     * This is the C2 fix: before SH-4 the scopes were ignored and this returned {@code 200} (RED).
+     * A {@code 200} would mean the scopes were ignored.
      *
      * @param ctx the test context
      */
@@ -286,7 +285,7 @@ public class ScopedSecurityRequirementEnforcementIT {
                             403,
                             status,
                             "a token lacking the required write scope must be denied by the decision point; "
-                                    + "a 200 means @SecurityRequirement scopes were not enforced (finding C2)");
+                                    + "a 200 means @SecurityRequirement scopes were not enforced");
                     ctx.completeNow();
                 })));
     }

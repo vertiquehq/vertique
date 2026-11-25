@@ -46,7 +46,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test for the <em>foreign-context</em> variant of the channel-registration completion
- * race in {@link WebSocketEndpointRegistrar#bootstrapSession} (round-4 hardening of finding F-W5).
+ * race in {@link WebSocketEndpointRegistrar#bootstrapSession} .
  *
  * <p>The sibling {@link WebSocketCloseDuringRegistrationIT} resolves the deferred {@code register()}
  * promise from a Vert.x timer, so the registration-completion callback runs on the WebSocket's owner

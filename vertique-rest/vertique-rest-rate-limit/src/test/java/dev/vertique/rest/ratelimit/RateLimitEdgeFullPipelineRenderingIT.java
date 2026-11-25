@@ -51,18 +51,17 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T020 slice 3: proves an edge rate-limit denial renders through the <em>full</em> JAX-RS failure
+ * Proves an edge rate-limit denial renders through the <em>full</em> JAX-RS failure
  * pipeline ({@code JaxRsRouterMount.handleFailure} → {@code ErrorPipeline} →
  * {@code ResponsePipeline}) — the same pipeline a resource method's own thrown exception traverses —
- * rather than the middleware's own hand-built response (T019).
+ * rather than a response the middleware builds by hand.
  *
  * <p>Uses {@link RestTestMounts#startServer} (a real, mounted {@code JaxRsRouterMount}, both
  * middleware tiers installed) so the request actually crosses the {@code JaxRsRouterMount} failure
- * boundary the way {@code ctx.fail(status, cause)} delegation depends on. Red under T019's
- * direct-write middleware (which resolves denials through its own locally-built
- * {@code ExceptionMapperRegistry} and writes the wire response by hand, never touching
- * {@code ErrorPipeline}/{@code ResponsePipeline} at all); green once the middleware delegates via
- * {@code ctx.fail}.
+ * boundary the way {@code ctx.fail(status, cause)} delegation depends on. A middleware that resolved
+ * denials through its own locally-built {@code ExceptionMapperRegistry} and wrote the wire response
+ * by hand would never touch {@code ErrorPipeline}/{@code ResponsePipeline}; this proof holds only
+ * because the middleware delegates via {@code ctx.fail}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -189,7 +188,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                 }));
     }
 
-    // --- Row: an application ValidationException mapper must not shadow the 429 default (T021 W1) ---
+    // --- Row: an application ValidationException mapper must not shadow the 429 default ---
 
     @Test
     void applicationValidationExceptionMapperDoesNotShadowThe429Default(Vertx vertx, VertxTestContext ctx) {
@@ -205,7 +204,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                             response.statusCode(),
                             "an application ExceptionMapper<ValidationException> must never intercept a "
                                     + "rate-limit denial: TooManyRequestsException (and its RateLimitExceededException "
-                                    + "subtype) no longer extends ValidationException/BusinessRuleException (T021 W1), "
+                                    + "subtype) no longer extends ValidationException/BusinessRuleException, "
                                     + "so the registry's hierarchy walk from RateLimitExceededException reaches the "
                                     + "framework's Throwable-level default instead of this narrower application mapper");
                     assertTrue(
@@ -424,10 +423,10 @@ class RateLimitEdgeFullPipelineRenderingIT {
 
     /**
      * Simulates an application-owned {@code ExceptionMapper<ValidationException>} — a common,
-     * legitimate contribution with no rate-limit awareness at all. Before T021 W1,
-     * {@code RateLimitExceededException} was still a {@code ValidationException}, so the registry's
-     * hierarchy walk would find this mapper before ever reaching the framework's Throwable-level
-     * default, rendering 400 instead of 429.
+     * legitimate contribution with no rate-limit awareness at all. Were
+     * {@code RateLimitExceededException} a {@code ValidationException}, the registry's hierarchy walk
+     * would find this mapper before ever reaching the framework's Throwable-level default, rendering
+     * 400 instead of 429.
      */
     private static final class ApplicationValidationExceptionMapper
             implements ExceptionMapper<dev.vertique.core.exception.ValidationException> {

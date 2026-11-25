@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
  * {@link SecurityRequirementSet#hasScopes()} predicate, including the empty-set edge case.
  *
  * <p>The set models one alternative (an AND-group of schemes) within an operation's OR-of-AND
- * security model introduced for the rest-017 security hardening.
+ * security model.
  */
 class SecurityRequirementSetTest {
 

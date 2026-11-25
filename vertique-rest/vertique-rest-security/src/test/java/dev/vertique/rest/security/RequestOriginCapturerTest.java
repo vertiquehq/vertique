@@ -26,16 +26,16 @@ import org.junit.jupiter.params.provider.ValueSource;
 /**
  * Unit tests for {@link RequestOriginCapturer}.
  *
- * <p>Covers all acceptance criteria AC-RO-1 through AC-RO-9:
+ * <p>Covers:
  * <ul>
- *   <li>AC-RO-1: direct peer with no proxy — {@code clientIp == remoteIp}</li>
- *   <li>AC-RO-2: trusted proxy with X-Forwarded-For — clientIp derived from chain walk</li>
- *   <li>AC-RO-3: untrusted peer with X-Forwarded-For — chain parsed, clientIp == remoteIp</li>
- *   <li>AC-RO-5: chain exceeds forwardedForCap — chain dropped, rejected flag set</li>
- *   <li>AC-RO-6: invalid IP in chain — dropped and counted in rejectedCount</li>
- *   <li>AC-RO-7: untrusted peer ignores forwarded scheme/host</li>
- *   <li>AC-RO-8: TLS facts populated from SSLSession when present</li>
- *   <li>AC-RO-9: IPv6-mapped IPv4 normalization</li>
+ *   <li>direct peer with no proxy — {@code clientIp == remoteIp}</li>
+ *   <li>trusted proxy with X-Forwarded-For — clientIp derived from chain walk</li>
+ *   <li>untrusted peer with X-Forwarded-For — chain parsed, clientIp == remoteIp</li>
+ *   <li>chain exceeds forwardedForCap — chain dropped, rejected flag set</li>
+ *   <li>invalid IP in chain — dropped and counted in rejectedCount</li>
+ *   <li>untrusted peer ignores forwarded scheme/host</li>
+ *   <li>TLS facts populated from SSLSession when present</li>
+ *   <li>IPv6-mapped IPv4 normalization</li>
  * </ul>
  *
  * <p>Tests use Mockito stubs for {@link HttpServerRequest} and {@link SocketAddress}.
@@ -116,10 +116,10 @@ class RequestOriginCapturerTest {
         return new RequestOriginCapturer(new RequestOriginConfig(Set.of(cidrs), 16, false, false));
     }
 
-    // --- AC-RO-1: No proxy ---
+    // --- No proxy ---
 
     @Nested
-    @DisplayName("AC-RO-1: no proxy — clientIp equals remoteIp")
+    @DisplayName("no proxy — clientIp equals remoteIp")
     class NoProxy {
 
         @Test
@@ -161,10 +161,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-2: Trusted proxy derives clientIp from chain ---
+    // --- Trusted proxy derives clientIp from chain ---
 
     @Nested
-    @DisplayName("AC-RO-2: trusted proxy — clientIp derived from chain walk")
+    @DisplayName("trusted proxy — clientIp derived from chain walk")
     class TrustedProxy {
 
         @Test
@@ -320,10 +320,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-3: Untrusted peer — chain parsed but clientIp == remoteIp ---
+    // --- Untrusted peer — chain parsed but clientIp == remoteIp ---
 
     @Nested
-    @DisplayName("AC-RO-3: untrusted peer — chain parsed for observability, clientIp == remoteIp")
+    @DisplayName("untrusted peer — chain parsed for observability, clientIp == remoteIp")
     class UntrustedPeer {
 
         @Test
@@ -343,7 +343,7 @@ class RequestOriginCapturerTest {
                     stubRequest("203.0.113.10", 0, "http", "example.com", "198.51.100.5, 203.0.113.10");
             RequestOrigin origin = defaultCapturer().capture(request);
 
-            // Chain still parsed despite peer being untrusted (AC-RO-3 observability requirement)
+            // Chain still parsed despite peer being untrusted (observability requirement)
             assertFalse(origin.forwardedFor().isEmpty());
         }
 
@@ -362,10 +362,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-5: Chain cap exceeded ---
+    // --- Chain cap exceeded ---
 
     @Nested
-    @DisplayName("AC-RO-5: chain cap exceeded — chain dropped, rejected flag set")
+    @DisplayName("chain cap exceeded — chain dropped, rejected flag set")
     class ChainCapExceeded {
 
         @Test
@@ -409,10 +409,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-6: Invalid IP in chain ---
+    // --- Invalid IP in chain ---
 
     @Nested
-    @DisplayName("AC-RO-6: invalid IPs in chain — dropped and counted")
+    @DisplayName("invalid IPs in chain — dropped and counted")
     class InvalidIpInChain {
 
         @Test
@@ -664,10 +664,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-7: Untrusted peer + forwarded headers ---
+    // --- Untrusted peer + forwarded headers ---
 
     @Nested
-    @DisplayName("AC-RO-7: untrusted peer — scheme from actual connection, host from Host header")
+    @DisplayName("untrusted peer — scheme from actual connection, host from Host header")
     class UntrustedPeerSchemeAndHost {
 
         @Test
@@ -691,10 +691,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-8: TLS facts ---
+    // --- TLS facts ---
 
     @Nested
-    @DisplayName("AC-RO-8: TLS facts populated from SSLSession when present")
+    @DisplayName("TLS facts populated from SSLSession when present")
     class TlsFacts {
 
         @Test
@@ -751,10 +751,10 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- AC-RO-9: IPv6-mapped IPv4 normalization ---
+    // --- IPv6-mapped IPv4 normalization ---
 
     @Nested
-    @DisplayName("AC-RO-9: IPv6-mapped IPv4 normalization")
+    @DisplayName("IPv6-mapped IPv4 normalization")
     class IPv6MappedNormalization {
 
         @Test

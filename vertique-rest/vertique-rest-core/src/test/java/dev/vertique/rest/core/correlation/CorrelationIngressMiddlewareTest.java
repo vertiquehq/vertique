@@ -68,7 +68,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * Every assertion here reads the response status, a response header, or state captured inside the
  * handler — never the body — so these tests cannot flake on that today; the raw idiom was latent, and
  * would become a live race the moment anyone asserted on the body, with no diff to hint why. A
@@ -868,10 +868,10 @@ class CorrelationIngressMiddlewareTest {
     }
 
     @Test
-    @DisplayName("no resolver (Optional.empty): behavior identical to pre-change baseline (existing tests unchanged)")
+    @DisplayName("no resolver (Optional.empty): behavior is the same as for the default middleware")
     void noResolverBehaviorUnchanged(VertxTestContext ctx) {
         // This test uses the default newMiddleware() which passes Optional.empty() — it mirrors
-        // the baseline test "X-Request-Id is generated when absent and echoed in the response".
+        // the test "X-Request-Id is generated when absent and echoed in the response".
         CorrelationIngressMiddleware middleware = newMiddleware();
         AtomicReference<String> capturedTraceId = new AtomicReference<>();
 

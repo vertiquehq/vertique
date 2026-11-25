@@ -159,7 +159,7 @@ class SseEventTest {
         }
     }
 
-    // --- Fully-qualified name guard (json-004 round-4 review) ---
+    // --- Fully-qualified name guard ---
 
     @Nested
     @DisplayName("Fully-qualified class name")

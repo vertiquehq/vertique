@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for FR-022 (slice 5): after the JWT bearer security-scheme handler
+ * Mechanical completeness check: after the JWT bearer security-scheme handler
  * migrates off the Vert.x OpenAPI {@code RouterBuilder}, no reference to the
  * {@code io.vertx.ext.web.openapi.router} package may remain in the rest-auth-jwt production source
  * tree (neither {@code RouterBuilder} nor {@code Security}). The handler now registers its

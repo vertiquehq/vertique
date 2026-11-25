@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Dagger graph-compilation proof for {@code AuthModule}'s {@link IdentityPipelineFactory}-backed
- * bindings (T007).
+ * bindings.
  *
  * <p>Declares a component combining {@link AuthModule} and {@link SecurityModule} with the single
  * minimal stand-in this narrow request needs — {@link ContextRuntimeModule}, which supplies the
@@ -30,9 +30,6 @@ import org.junit.jupiter.api.Test;
  * {@link IdentityPipelineFactory#policyEnforcer()} return — i.e. Dagger prefers the explicit
  * provider over either type's own {@code @Inject} constructor, so a graph including
  * {@code AuthModule} constructs exactly one instance of each, through the factory.
- *
- * <p>Expected initial result (before T007's production slice lands): red — neither
- * {@link IdentityPipelineFactory} nor the {@code AuthModule} providers that depend on it exist yet.
  */
 class IdentityPipelineWiringTest {
 

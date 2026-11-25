@@ -47,7 +47,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>The one request-driven case uses a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load a body read can succeed with zero bytes while the status code is
- * correct (issue #167). That case only drains the response to sequence the post-request assertions,
+ * correct. That case only drains the response to sequence the post-request assertions,
  * so it cannot flake on that today — the raw idiom is latent here, and would become a live race the
  * moment anyone asserted on the body, with no diff to hint why. A {@link WebClient} aggregates the
  * body into its {@code HttpResponse} before completing the send, so the hazard is removed by

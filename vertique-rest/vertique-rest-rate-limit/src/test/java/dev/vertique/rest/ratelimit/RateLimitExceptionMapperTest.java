@@ -20,7 +20,7 @@ import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-001: {@code RateLimitExceptionMapper} maps {@code RateLimitExceededException}/{@code
+ * {@code RateLimitExceptionMapper} maps {@code RateLimitExceededException}/{@code
  * RateLimitUnavailableException} to the frozen HTTP responses.
  */
 class RateLimitExceptionMapperTest {

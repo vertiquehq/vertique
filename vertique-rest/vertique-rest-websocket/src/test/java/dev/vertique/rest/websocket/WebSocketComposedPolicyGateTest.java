@@ -85,7 +85,7 @@ class WebSocketComposedPolicyGateTest {
 
     /**
      * Endpoint whose only policy is a class-level {@code @Sanitize} — a bare {@code @OnMessage} with no
-     * method- or parameter-level annotation of its own (T020, issue #379). The gate must resolve this
+     * method- or parameter-level annotation of its own. The gate must resolve this
      * exactly as the cached route policies would: a class-level chain now applies to every lifecycle
      * method, so it must trip the gate identically to a method-level declaration.
      */

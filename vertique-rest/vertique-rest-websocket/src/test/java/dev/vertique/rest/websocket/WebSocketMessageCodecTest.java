@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link WebSocketMessageCodec}, verifying JSON encode/decode round-trips
  * and error handling for invalid JSON input.
  *
- * <p>TP-001 and TP-003 (T024) additionally prove {@link WebSocketMessageCodec#decode} resolves
+ * <p>Two tests additionally prove {@link WebSocketMessageCodec#decode} resolves
  * {@link VertiqueJson#mapper()} at use time — not the raw, install-blind
  * {@code io.vertx.core.json.jackson.DatabindCodec#mapper()} — by installing a mapper
  * <strong>after</strong> the codec under test is constructed and observing that the install is
@@ -40,17 +40,17 @@ class WebSocketMessageCodecTest {
     /** Simple test payload used across encode/decode tests. */
     record TestMessage(String text, int count) {}
 
-    /** TP-001 fixture: an {@link Optional} component, unsupported by Jackson without {@code Jdk8Module}. */
+    /** Fixture: an {@link Optional} component, unsupported by Jackson without {@code Jdk8Module}. */
     record OptionalPayload(Optional<String> value) {}
 
-    /** TP-003 fixture enum: {@code UNKNOWN} is the {@code @JsonEnumDefaultValue} fallback constant. */
+    /** Fixture enum: {@code UNKNOWN} is the {@code @JsonEnumDefaultValue} fallback constant. */
     enum Status {
         @JsonEnumDefaultValue
         UNKNOWN,
         ACTIVE
     }
 
-    /** TP-003 fixture: an enum component that can carry an unrecognized wire value. */
+    /** Fixture: an enum component that can carry an unrecognized wire value. */
     record StatusPayload(Status status) {}
 
     private WebSocketMessageCodec codec;
@@ -65,10 +65,10 @@ class WebSocketMessageCodecTest {
         VertiqueJson.resetForTests();
     }
 
-    // --- TP-001 (T024): decode() resolves the process mapper at use time ---
+    // --- decode() resolves the process mapper at use time ---
 
     /**
-     * TP-001: {@code new WebSocketMessageCodec()} is constructed <strong>before</strong>
+     * {@code new WebSocketMessageCodec()} is constructed <strong>before</strong>
      * {@link VertiqueJson#install}. Decoding a payload with an {@link Optional} component
      * <strong>after</strong> the install must succeed — proof that {@link WebSocketMessageCodec#decode}
      * reads {@link VertiqueJson#mapper()} live, at decode time, rather than a raw mapper resolved
@@ -81,11 +81,6 @@ class WebSocketMessageCodecTest {
      * When: the codec decodes a message record with an {@code Optional<String>} component after the
      * install.
      * Then: decoding succeeds and the optional value binds.
-     *
-     * <p><strong>Expected initial (RED) result:</strong> today's {@code decode} reads
-     * {@code DatabindCodec.mapper()} directly — the raw Vert.x mapper has no {@code Jdk8Module}
-     * registered, so binding {@code Optional<String>} throws {@code InvalidDefinitionException}
-     * regardless of the install.
      *
      * <p><strong>Sensitivity proof:</strong> keeping {@code DatabindCodec.mapper()} in the codec fails
      * this assertion even after the install — only reading {@link VertiqueJson#mapper()} makes it pass.
@@ -104,10 +99,10 @@ class WebSocketMessageCodecTest {
         assertEquals(Optional.of("present"), decoded.value());
     }
 
-    // --- TP-003 (T024): unknown enum binds to the default only under the installed lenient mapper ---
+    // --- unknown enum binds to the default only under the installed lenient mapper ---
 
     /**
-     * TP-003: proves {@link WebSocketMessageCodec#decode} is binder-authoritative for enum leniency —
+     * Proves {@link WebSocketMessageCodec#decode} is binder-authoritative for enum leniency —
      * an unknown enum string is rejected under the raw delegate but binds to the
      * {@code @JsonEnumDefaultValue} constant once the registry's {@code vertique} mapper (which enables
      * {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}) is installed as the process codec.
@@ -117,10 +112,6 @@ class WebSocketMessageCodecTest {
      * installed under {@code "vertique"}.
      * When: a payload with an unknown enum string is decoded in both states.
      * Then: rejected under the raw delegate; bound to the default under {@code vertique}.
-     *
-     * <p><strong>Expected initial (RED) result:</strong> today's {@code decode} always reads
-     * {@code DatabindCodec.mapper()}, so the second decode is rejected exactly like the first — the
-     * install has no effect.
      *
      * <p><strong>Sensitivity proof:</strong> keeping {@code DatabindCodec.mapper()} in the codec leaves
      * the second decode rejected — only reading {@link VertiqueJson#mapper()} makes it bind to the

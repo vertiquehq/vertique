@@ -44,7 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test proving that {@link RestRequestCompletionEmitter} fires <em>exactly one</em>
- * completion event per request across all success and failure paths (FR-AUD-300): a
+ * completion event per request across all success and failure paths: a
  * {@link RestRequestCompletedEvent} for a request an operation route claimed, and an
  * {@link HttpRequestCompletedEvent} for a request no transport claimed.
  *
@@ -87,7 +87,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * Both request helpers here only drained the body to keep the pooled connection clean and projected
  * the status code, so they cannot flake on that today — the raw idiom was latent, and would become a
  * live race the moment anyone asserted on the body, with no diff to hint why. A {@link WebClient}
@@ -463,7 +463,7 @@ public class RestRequestCompletionExactlyOnceIT {
                                 "IllegalStateException",
                                 event.failureCode(),
                                 "failureCode must be the exception's simple class name");
-                        assertNull(event.safeFailureMessage(), "safeFailureMessage must be null (§10.3)");
+                        assertNull(event.safeFailureMessage(), "safeFailureMessage must be null");
                         // The raw exception message must not appear anywhere in the event
                         assertRawMessageAbsent(event, BOOM_RAW_MESSAGE);
                     });
@@ -575,7 +575,7 @@ public class RestRequestCompletionExactlyOnceIT {
     }
 
     /**
-     * rest-025 T003 TP-014: the four operation routes each yield one {@link RestRequestCompletedEvent}
+     * The four operation routes each yield one {@link RestRequestCompletedEvent}
      * carrying its route's stub, and {@code /nope} and the correlation-rejected {@code /ok} each yield
      * one {@link HttpRequestCompletedEvent}, so the two event types together count the six requests.
      *

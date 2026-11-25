@@ -78,7 +78,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  *
  * <p><strong>Where the no-leak proof actually lives.</strong> In
  * {@code blankSubDoesNotLeakValidationMessage} the guarantee is carried by the {@code 500} status
@@ -281,7 +281,7 @@ class IdentityResolutionMiddlewareTest {
         void crossPhaseDuplicateDetected() {
             // OrderedExtension sorts phase-first, so two resolvers sharing (priority, id) but
             // differing in phase are NOT adjacent once a third resolver sorts between them. The
-            // (priority, id) uniqueness contract (NFR-ID-003) must still fail loudly.
+            // (priority, id) uniqueness contract must still fail loudly.
             SecurityIdentityResolver systemDup = new PhasedResolver(ExtensionPhase.SYSTEM_FIRST, 50, "shared-id");
             SecurityIdentityResolver appBetween = new PhasedResolver(ExtensionPhase.APPLICATION, 10, "between");
             SecurityIdentityResolver appDup = new PhasedResolver(ExtensionPhase.APPLICATION, 50, "shared-id");
@@ -564,10 +564,10 @@ class IdentityResolutionMiddlewareTest {
 
         @Test
         @DisplayName("Higher-priority resolver supplying a qualified id wins over the default resolver "
-                + "(FR-ID-CA-012 multi-issuer escape hatch)")
+                + "(multi-issuer escape hatch)")
         void higherPriorityQualifiedIdResolverWins(Vertx vertx, VertxTestContext ctx) {
             // A custom, higher-priority (lower number) resolver namespaces the id with an
-            // issuer-scoped URN — the pattern FR-ID-CA-012 requires multi-issuer deployments to
+            // issuer-scoped URN — the pattern multi-issuer deployments are required to
             // install ahead of DefaultSecurityIdentityResolver.
             PrincipalRef qualifiedActor = new PrincipalRef(PrincipalType.USER, "urn:example:issuer-a:alice", Map.of());
             SecurityIdentity qualifiedIdentity =
@@ -696,7 +696,7 @@ class IdentityResolutionMiddlewareTest {
             installLifecycle(router, "/test");
 
             // Append JWT evidence so the resolver chain yields a USER identity with primaryMethod
-            // JWT — the W3 eligibility gate only captures a snapshot for a non-anonymous,
+            // JWT — the eligibility gate only captures a snapshot for a non-anonymous,
             // non-NONE-auth-method context.
             router.route("/test").handler(rc -> {
                 AuthenticationEvidence evidence = new AuthenticationEvidence(
@@ -721,7 +721,7 @@ class IdentityResolutionMiddlewareTest {
         }
 
         @Test
-        @DisplayName("Wired + enabled capture binds nothing for an anonymous request (W3 eligibility gate)")
+        @DisplayName("Wired + enabled capture binds nothing for an anonymous request (eligibility gate)")
         void skipsSnapshotForAnonymousFallback(Vertx vertx, VertxTestContext ctx) {
             SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
@@ -746,7 +746,7 @@ class IdentityResolutionMiddlewareTest {
             router.route("/test").handler(rc -> {
                 assertTrue(
                         captureHolder.current(IdentitySnapshotContext.class).isEmpty(),
-                        "anonymous/NONE-auth context must not be captured (W3)");
+                        "anonymous/NONE-auth context must not be captured");
                 rc.response().setStatusCode(200).end("ok");
             });
 
@@ -1286,10 +1286,10 @@ class IdentityResolutionMiddlewareTest {
         }
     }
 
-    // --- Default resolver underivable-id failure (FR-ID-CA-012) ---
+    // --- Default resolver underivable-id failure ---
 
     @Nested
-    @DisplayName("Default resolver underivable-id failure (FR-ID-CA-012)")
+    @DisplayName("Default resolver underivable-id failure")
     class DefaultResolverUnderivableIdFailure {
 
         @Test
@@ -1308,7 +1308,7 @@ class IdentityResolutionMiddlewareTest {
             installLifecycle(router, "/test");
             // mTLS evidence with no safe attributes at all: classifies as SERVICE, but neither
             // `sub` nor `client_id`/`azp` is present, so the default resolver's id is underivable
-            // (FR-ID-CA-012). Resolution must fail closed — never anonymous, never a placeholder.
+            // Resolution must fail closed — never anonymous, never a placeholder.
             router.route("/test").handler(rc -> {
                 AuthenticationEvidence evidence = new AuthenticationEvidence(
                         DefaultAuthMethod.mtls(),
@@ -1342,10 +1342,10 @@ class IdentityResolutionMiddlewareTest {
         }
     }
 
-    // --- Blank claim handling (CW-2) ---
+    // --- Blank claim handling ---
 
     @Nested
-    @DisplayName("Blank sub claim handling (CW-2)")
+    @DisplayName("Blank sub claim handling")
     class BlankClaimHandling {
 
         @Test
@@ -1386,9 +1386,9 @@ class IdentityResolutionMiddlewareTest {
             // with the raw exception message as the body; any other failure -> 500) so this
             // self-contained unit test (vertique-rest-security has no dependency on the rest-jaxrs
             // module that owns RestModule) still proves the same shape the production error pipeline
-            // would produce: today the resolver throws IllegalArgumentException synchronously,
-            // leaking "id must not be blank" as a 400; after the fix it must be a same-shaped
-            // IdentityResolutionException / 500 as underivableIdCausesRequestFailure below.
+            // would produce: a resolver failure must surface as a same-shaped
+            // IdentityResolutionException / 500 as underivableIdCausesRequestFailure below, not leak
+            // an IllegalArgumentException message such as "id must not be blank" as a 400.
             router.route("/test").failureHandler(rc -> {
                 Throwable failure = rc.failure();
                 if (failure instanceof IllegalArgumentException) {

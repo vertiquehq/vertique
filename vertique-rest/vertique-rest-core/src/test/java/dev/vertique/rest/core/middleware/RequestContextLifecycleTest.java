@@ -72,8 +72,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * unclosable by construction — the {@code close()} in that test's success path belongs to the
  * server, not the client — so {@code Vertx} teardown reclaims its netty pools while the request may
  * still be in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive before
- * a body handler is attached, which the drain step there existed to work around (issues #167,
- * #330). A {@link WebClient} has already aggregated the body by the time its send future resolves.
+ * a body handler is attached, which the drain step there existed to work around . A {@link WebClient} has already aggregated the body by the time its send future resolves.
  * Nothing here answers 3xx, so the follow-redirects default never engages.
  */
 @ExtendWith(VertxExtension.class)
@@ -463,15 +462,15 @@ class RequestContextLifecycleTest {
     // --- Request binding across reroutes ---
 
     /**
-     * One lifecycle handle per request, across reroutes (FR-003; Codex CX-F-007 and CX-F-010).
+     * One lifecycle handle per request, across reroutes.
      *
      * <p>A reroute re-runs ROOT middleware. The lifecycle must reuse the request's own open handle and register no
      * second cleanup end handler. Any other slot value (another request's handle, an unbound handle, a value of
      * another type) gets a fresh handle. A handle closed by {@code completeNow()} is never reopened: the re-entered
      * pass gets a successor that the request's one cleanup still reaches.
      *
-     * <p>Both proofs use only the lifecycle's public API. TP-018 calls {@link RequestContextLifecycle#handle} on mocked
-     * contexts built like {@code mockContext()}, with {@code request()} stubbed. TP-019 drives a real router through a
+     * <p>Both proofs use only the lifecycle's public API. The slot-value proof calls {@link RequestContextLifecycle#handle} on mocked
+     * contexts built like {@code mockContext()}, with {@code request()} stubbed. The reroute proof drives a real router through a
      * reroute, as {@code endHandlerOnRealRoutingContextShouldDriveCorrectOrdering} does.
      */
     @Nested
@@ -491,28 +490,28 @@ class RequestContextLifecycleTest {
         /** A row with no assertion of its own. */
         private static final Executable NO_ROW_CHECK = () -> {};
 
-        /** TP-019's first-pass flag in {@code rc.data()}, which a reroute keeps. */
+        /** The reroute proof's first-pass flag in {@code rc.data()}, which a reroute keeps. */
         private static final String END_PROBE_FLAG = "test.requestBinding.endProbeRegistered";
 
-        /** TP-019's bound on the wait for the end probe. */
+        /** The reroute proof's bound on the wait for the end probe. */
         private static final long END_PROBE_WAIT_MS = 5_000;
 
-        /** TP-019's settle timer, as in {@code endHandlerOnRealRoutingContextShouldDriveCorrectOrdering}. */
+        /** The reroute proof's settle timer, as in {@code endHandlerOnRealRoutingContextShouldDriveCorrectOrdering}. */
         private static final long SETTLE_MS = 50;
 
-        /** TP-018's request under test. */
+        /** The slot-value proof's request under test. */
         private final MockedContext ctx = MockedContext.over(mockContext());
 
-        /** TP-018's second request, with its own mocked {@link HttpServerRequest}. */
+        /** The slot-value proof's second request, with its own mocked {@link HttpServerRequest}. */
         private final MockedContext other = MockedContext.over(mockContext());
 
-        /** Every TP-018 cleanup appends its label here when it runs. */
+        /** Every slot-value cleanup appends its label here when it runs. */
         private final List<String> cleanupLog = new ArrayList<>();
 
-        // --- TP-018 ---
+        // --- slot values before re-entry ---
 
         /**
-         * TP-018, one row per value in {@code ctx}'s slot before the call under test.
+         * One row per value in {@code ctx}'s slot before the call under test.
          *
          * @param slotCase the row
          */
@@ -520,7 +519,7 @@ class RequestContextLifecycleTest {
         @MethodSource("slotCases")
         @DisplayName("One handle per request: re-entry reuses it, and any other slot value gets a fresh one")
         void reentryReusesTheRequestsHandleAndAnyOtherSlotValueGetsAFreshOne(SlotCase slotCase) {
-            // FR-003, Codex CX-F-007: one lifecycle handle per request, bound to it, with one cleanup end handler in
+            // One lifecycle handle per request, bound to it, with one cleanup end handler in
             // all. Only this request's own handle is ever reused.
             SlotState slot = slotCase.prepareSlot().apply(this);
 
@@ -573,9 +572,9 @@ class RequestContextLifecycleTest {
         }
 
         /**
-         * TP-018's rows.
+         * The rows.
          *
-         * @return rows (a) to (g), in contract order
+         * @return rows (a) to (g), in declaration order
          */
         static Stream<SlotCase> slotCases() {
             return Stream.of(
@@ -716,10 +715,10 @@ class RequestContextLifecycleTest {
             return List.copyOf(cleanupLog);
         }
 
-        // --- TP-019 ---
+        // --- reroute after completeNow ---
 
         /**
-         * TP-019: {@code GET /early} completes the lifecycle early and reroutes to {@code GET /done}.
+         * {@code GET /early} completes the lifecycle early and reroutes to {@code GET /done}.
          *
          * @param vertx       the extension's Vert.x instance
          * @param testContext the async test context
@@ -727,7 +726,7 @@ class RequestContextLifecycleTest {
         @Test
         @DisplayName("A reroute after completeNow() keeps one cleanup and the re-entered pass's bindings")
         void rerouteAfterCompleteNowChainsASuccessorUnderTheOneCleanup(Vertx vertx, VertxTestContext testContext) {
-            // FR-003, Codex CX-F-010: a handle closed by completeNow() is never reopened. The re-entered pass gets a
+            // A handle closed by completeNow() is never reopened. The re-entered pass gets a
             // successor that the request's one cleanup reaches, so a hook registered on the first pass still sees the
             // re-entered pass's bindings.
             CountingContextHolder holder = new CountingContextHolder();
@@ -779,7 +778,7 @@ class RequestContextLifecycleTest {
                             // Pass 2's scope is attributed to the one cleanup: the end probe saw its binding, so it
                             // was still open then, and the cleanup is the only end handler that fires after the probe.
                             assertAll(
-                                    "TP-019",
+                                    "reroute after completeNow",
                                     () -> assertEquals(200, status.get(), "the response status; failures=" + failures),
                                     () -> assertEquals(List.of(), failures, "no failure may be recorded"),
                                     () -> assertEquals(
@@ -817,7 +816,7 @@ class RequestContextLifecycleTest {
         }
 
         /**
-         * TP-019's end probe, standing where the emitter stands. On the first pass only, it registers one end handler
+         * The end probe, standing where the emitter stands. On the first pass only, it registers one end handler
          * that records the request id bound when it fires, or {@code null} when none is bound.
          *
          * @param holder   the holder to read
@@ -835,7 +834,7 @@ class RequestContextLifecycleTest {
         }
 
         /**
-         * TP-019's pass probe: records the request id bound on each pass.
+         * The pass probe: records the request id bound on each pass.
          *
          * @param holder         the holder to read
          * @param passRequestIds receives one request id per pass
@@ -881,7 +880,7 @@ class RequestContextLifecycleTest {
         // --- Fixtures ---
 
         /**
-         * A TP-018 row.
+         * A slot-value row.
          *
          * @param name        the row's display name
          * @param prepareSlot prepares {@code ctx}'s slot before the call under test, and returns what the row expects
@@ -896,7 +895,7 @@ class RequestContextLifecycleTest {
         }
 
         /**
-         * What a TP-018 row's preparation left in {@code ctx}'s slot, and what the row expects.
+         * What a slot-value row's preparation left in {@code ctx}'s slot, and what the row expects.
          *
          * @param priorValue    the slot's value just before the call under test
          * @param reused        the handle a reuse row expects in the slot after the call; {@code null} otherwise

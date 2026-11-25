@@ -42,7 +42,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-001 (T005): {@code RestCoreModule.jaxRsConfig}'s {@code jaxrs.security} section defaults off,
+ * {@code RestCoreModule.jaxRsConfig}'s {@code jaxrs.security} section defaults off,
  * parses the opt-in, announces it with one INFO line when enabled, and rejects an unknown or
  * misplaced key before parsing — never echoing a configuration value.
  *
@@ -92,7 +92,7 @@ class JaxRsSecurityConfigProviderTest {
                     case DEFAULTS -> new Outcome(JaxRsSecurityConfig.defaults(), null, List.of());
                 };
         TEST_LOG.info(
-                "TP-001 {}: failure={} security={} info={}",
+                "{}: failure={} security={} info={}",
                 testCase.name(),
                 outcome.failure() != null ? outcome.failure().getMessage() : null,
                 outcome.security(),
@@ -177,7 +177,7 @@ class JaxRsSecurityConfigProviderTest {
                     assertSuccess(outcome, false);
                     assertNoInfo(outcome);
                 }),
-                new Case("(k) misplaced key with different case (PP4-001)", Kind.PROVIDER, """
+                new Case("(k) misplaced key with different case", Kind.PROVIDER, """
                         {"jaxrs":{"RequireExplicitPolicy":true}}
                         """, outcome -> {
                     assertFailureExact(
@@ -197,7 +197,7 @@ class JaxRsSecurityConfigProviderTest {
                 }));
     }
 
-    // --- TP-002 (G2-13) ---
+    // --- reserved security key names ---
 
     /**
      * Guards {@code RestCoreModule#checkSecurityKeys}'s reserved-name rule: it rejects any raw

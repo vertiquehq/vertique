@@ -37,22 +37,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Dagger graph-compilation and behavior proof (TP-001, T008) for a WebSocket-only component: a
+ * Dagger graph-compilation and behavior proof for a WebSocket-only component: a
  * {@link WebSocketModule}-only graph (no {@code AuthModule}/{@code SecurityModule}) that exposes
  * {@link Set}{@code <}{@link RouterMount}{@code >} and {@link WebSocketMount.Factory}.
  *
  * <p>Two nested {@code @Component} interfaces share the same module shape (config/Vert.x stand-ins
  * plus a stub {@link RouteAuthHandler} contribution, covering the "auth handler bound without the
- * pipeline" case per the contract): {@link UnannotatedOnlyComponent} contributes a single
+ * pipeline" case): {@link UnannotatedOnlyComponent} contributes a single
  * unannotated endpoint, and {@link RestrictiveEndpointsComponent} contributes a {@code @DenyAll} and
  * a {@code @RolesAllowed("admin")} endpoint together.
  *
- * <p>Expected initial result (before T008's production slice lands): {@code test-compile} fails
- * Dagger validation — {@code WebSocketMount.Factory}'s current {@code @Inject} constructor requires
- * {@code Optional<AuthorizationGateConfig>}, which only {@code AuthModule} declares
- * {@code @BindsOptionalOf} for; a {@code WebSocketModule}-only graph exposing the factory cannot
- * satisfy it. T008's frozen single-{@code Optional<IdentityPipelineFactory>} constructor removes
- * that requirement.
+ * <p>The factory's single {@code Optional<IdentityPipelineFactory>} constructor parameter is what
+ * lets a {@code WebSocketModule}-only graph satisfy the factory: no {@code AuthModule} binding is required.
  */
 @ExtendWith(VertxExtension.class)
 class WebSocketOnlyMountComponentTest {
@@ -104,8 +100,8 @@ class WebSocketOnlyMountComponentTest {
     }
 
     /**
-     * Contributes one {@link RouteAuthHandler} without any identity pipeline bound — the AC-010.2
-     * "auth-handler-without-pipeline" case the contract calls out.
+     * Contributes one {@link RouteAuthHandler} without any identity pipeline bound — the
+     * "auth-handler-without-pipeline" case.
      */
     @Module
     static final class RouteAuthHandlerFixtureModule {
@@ -192,7 +188,7 @@ class WebSocketOnlyMountComponentTest {
 
     // --- Endpoint fixtures ---
 
-    /** No security annotations — must register and serve unauthenticated (FR-010, AC-008.1). */
+    /** No security annotations — must register and serve unauthenticated. */
     @WebSocketEndpoint("/ws/open")
     static class UnannotatedEndpoint {
         @OnOpen
@@ -201,7 +197,7 @@ class WebSocketOnlyMountComponentTest {
         }
     }
 
-    /** {@code @DenyAll} — restrictive policy; must fail closed when the pipeline is absent (AC-010.2). */
+    /** {@code @DenyAll} — restrictive policy; must fail closed when the pipeline is absent. */
     @WebSocketEndpoint("/ws/deny")
     @DenyAll
     static class DenyAllEndpoint {
@@ -211,7 +207,7 @@ class WebSocketOnlyMountComponentTest {
         }
     }
 
-    /** {@code @RolesAllowed("admin")} — restrictive policy; must fail closed when the pipeline is absent (AC-010.2). */
+    /** {@code @RolesAllowed("admin")} — restrictive policy; must fail closed when the pipeline is absent. */
     @WebSocketEndpoint("/ws/admin")
     @RolesAllowed("admin")
     static class AdminOnlyEndpoint {
@@ -242,8 +238,7 @@ class WebSocketOnlyMountComponentTest {
         RouterMount openMount = openMounts.iterator().next();
 
         // --- Then: an unannotated endpoint registers and serves without error ---
-        assertDoesNotThrow(
-                () -> openMount.createRouter(vertx), "an unannotated endpoint must register without error (FR-010)");
+        assertDoesNotThrow(() -> openMount.createRouter(vertx), "an unannotated endpoint must register without error");
 
         // --- Given/When: the same graph shape, but with @DenyAll and @RolesAllowed("admin") endpoints ---
         RestrictiveEndpointsComponent restrictiveComponent =
@@ -252,7 +247,7 @@ class WebSocketOnlyMountComponentTest {
                 restrictiveComponent.routerMounts().iterator().next();
 
         // --- Then: registration fails closed with one aggregated exception naming both endpoints
-        //     and their policies, before any auth handler is installed (AC-010.2) ---
+        //     and their policies, before any auth handler is installed ---
         IllegalStateException thrown = assertThrows(
                 IllegalStateException.class,
                 () -> restrictiveMount.createRouter(vertx),

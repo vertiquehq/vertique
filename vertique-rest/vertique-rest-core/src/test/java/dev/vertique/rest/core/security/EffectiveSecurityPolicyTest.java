@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link EffectiveSecurityPolicy#fold}, the registration-time computation that folds a
  * single-scheme {@link SecurityRequirementSet}'s scopes into the operation's effective
  * {@link SecurityPolicy} so the existing {@code VertxProviderDecisionPoint}/{@code SecurityPolicyEnforcer}
- * authorizes them (SH-4 / finding C2).
+ * authorizes them.
  *
  * <p>Contract pinned:
  *
@@ -30,11 +30,11 @@ import org.junit.jupiter.api.Test;
  *   <li>A single-scheme set with scopes {@code S} promotes the base policy to a
  *       {@link SecurityPolicy.Constrained} requiring scopes {@code S} with {@code requireAllScopes=true}
  *       (OpenAPI AND-semantics), preserving any existing {@code @RolesAllowed} roles. There are never
- *       existing required <em>scopes</em> on the base policy — SH-2's both-scopes guard rejects that
+ *       existing required <em>scopes</em> on the base policy — the both-scopes guard rejects that
  *       at startup — so the fold only ever adds scopes, never merges two scope sources.</li>
  *   <li>A scopeless set (or no set) leaves the base policy untouched (the same instance is returned).</li>
  *   <li>Blanket policies ({@code PermitAll}/{@code DenyAll}) are returned unchanged — a scoped set
- *       cannot co-occur with them past SH-2 validation, so the fold defensively leaves them alone.</li>
+ *       cannot co-occur with them past startup validation, so the fold defensively leaves them alone.</li>
  * </ul>
  */
 class EffectiveSecurityPolicyTest {
@@ -137,7 +137,7 @@ class EffectiveSecurityPolicyTest {
         }
 
         @Test
-        @DisplayName("PermitAll with a scoped set → unchanged (cannot co-occur past SH-2)")
+        @DisplayName("PermitAll with a scoped set → unchanged (cannot co-occur past startup validation)")
         void permitAll_unchanged() {
             // given a blanket PermitAll policy
             SecurityPolicy base = new SecurityPolicy.PermitAll();

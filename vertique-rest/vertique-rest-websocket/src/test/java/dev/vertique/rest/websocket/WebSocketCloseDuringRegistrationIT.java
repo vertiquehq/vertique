@@ -44,7 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test for the close-while-registration-pending lifecycle gap in
- * {@link WebSocketEndpointRegistrar#bootstrapSession} (round-2 hardening of finding F-W5).
+ * {@link WebSocketEndpointRegistrar#bootstrapSession} .
  *
  * <p>Channel registration via a {@link ChannelIdentityManager} is asynchronous. The registrar
  * installs the WebSocket close handler <em>before</em> the {@code register()} future settles. If the
@@ -63,9 +63,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>the binding's scope is released (not orphaned) — proven by a follow-up
  *       {@link WebSocketChannelBinding#rebind} failing with {@link IllegalStateException}
  *       ("already released"), the same released-scope signal pinned by
- *       {@code WebSocketChannelBindingTest.rebindAfterReleaseFails}. Before the fix the success
- *       branch clears the session scope and never deregisters the late-registered binding, so its
- *       scope is orphaned and {@code rebind} would succeed.</li>
+ *       {@code WebSocketChannelBindingTest.rebindAfterReleaseFails}. A success
+ *       branch that clears the session scope without deregistering the late-registered binding
+ *       would orphan its scope, and {@code rebind} would then succeed.</li>
  * </ul>
  */
 @ExtendWith(VertxExtension.class)

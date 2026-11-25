@@ -18,14 +18,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the {@code operation} component of {@link RestRequestCompletedEvent} (rest-025 T003).
+ * Unit tests for the {@code operation} component of {@link RestRequestCompletedEvent}.
  *
  * <p>Verifies:
  * <ul>
- *   <li>TP-008: the compact constructor rejects a {@code null} operation with a
+ *   <li>The compact constructor rejects a {@code null} operation with a
  *       {@link NullPointerException} whose message is {@code operation}, and {@code operation()} returns
  *       the descriptor instance the event was built with.</li>
- *   <li>TP-009: {@code toString()} renders the operation as {@code <operationId> <routeTemplate>}, beside
+ *   <li>{@code toString()} renders the operation as {@code <operationId> <routeTemplate>}, beside
  *       the other components' {@code name=value} pairs, without calling the descriptor's own
  *       {@code toString}. The descriptor is a {@link TestOperation.Hostile}, whose {@code toString},
  *       {@code equals} and {@code hashCode} count their calls and throw.</li>
@@ -43,7 +43,7 @@ class RestRequestCompletedEventTest {
     /** End time of every event built here. */
     private static final Instant END_TIME = START_TIME.plusMillis(5);
 
-    /** TP-008: a {@code null} operation is rejected; a non-null one is kept by identity. */
+    /** A {@code null} operation is rejected; a non-null one is kept by identity. */
     @Test
     @DisplayName("The event rejects a null operation and keeps the descriptor instance it was built with")
     void rejectsNullOperation() {
@@ -64,7 +64,7 @@ class RestRequestCompletedEventTest {
                         "operation() returns the instance the event was built with"));
     }
 
-    /** TP-009: the rendered event names its operation without ever calling the descriptor's toString. */
+    /** The rendered event names its operation without ever calling the descriptor's toString. */
     @Test
     @DisplayName("toString renders the operation as '<operationId> <routeTemplate>' without calling the descriptor")
     void toStringRendersOperationIdentityWithoutCallingDescriptor() {

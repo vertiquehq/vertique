@@ -55,21 +55,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for {@link IdentityPipelineFactory} (T007).
+ * Unit tests for {@link IdentityPipelineFactory}.
  *
  * <p>Verifies that {@link IdentityPipelineFactory#restIdentityResolution()} wires
  * identity-snapshot capture and binds the REST {@link InvocationOrigin}, that
  * {@link IdentityPipelineFactory#identityResolutionHandler(IdentityPipelineOptions)} with
  * {@link IdentityPipelineOptions#webSocket()} does neither, that the REST middleware and the policy
  * enforcer are memoized, that {@link IdentityPipelineFactory#securityRuntime()} returns the injected
- * runtime, that the factory exposes no options-taking middleware accessor (AR-002), and — by
+ * runtime, that the factory exposes no options-taking middleware accessor, and — by
  * reflection — that the factory's constructor stays a superset of the two {@code @Inject}
- * constructors it must cover (AR-006 drift guard).
- *
- * <p>Expected initial result (before T007's production slice lands): compile failure — neither
- * {@link IdentityPipelineFactory} nor {@link IdentityPipelineOptions} exist yet, and
- * {@code DispatchBoundary.REST}/{@code WEBSOCKET} and {@code IdentityResolutionMiddleware.REST_ORIGIN}
- * are additive members this task also introduces.
+ * constructors it must cover (a drift guard).
  */
 @ExtendWith(VertxExtension.class)
 class IdentityPipelineFactoryTest {
@@ -216,7 +211,7 @@ class IdentityPipelineFactoryTest {
         context.next();
     }
 
-    // --- TP-001 ---
+    // --- REST and WebSocket handler wiring ---
 
     @Test
     @DisplayName(
@@ -304,7 +299,7 @@ class IdentityPipelineFactoryTest {
 
     /**
      * Reflectively asserts the factory has no public method taking an {@link IdentityPipelineOptions}
-     * and returning an {@link IdentityResolutionMiddleware} — deliberate per AR-002, since a
+     * and returning an {@link IdentityResolutionMiddleware} — deliberate, since a
      * middleware's {@code handle(ctx)} always binds the REST origin.
      */
     private static void assertNoOptionsToMiddlewareAccessor() {
@@ -317,7 +312,7 @@ class IdentityPipelineFactoryTest {
                         + "IdentityResolutionMiddleware");
     }
 
-    // --- TP-003 ---
+    // --- handler misuse and constructor coverage ---
 
     @Test
     @DisplayName("identityResolutionHandler rejects the REST origin — REST goes through restIdentityResolution()")
@@ -350,7 +345,7 @@ class IdentityPipelineFactoryTest {
     }
 
     @Test
-    @DisplayName("Factory constructor covers every parameter of the two @Inject constructors (AR-006 drift guard)")
+    @DisplayName("Factory constructor covers every parameter of the two @Inject constructors (drift guard)")
     void factoryConstructorCoversEveryInjectedCollaborator() {
         Set<String> factoryParams = genericParameterTypeNames(onlyPublicConstructor(IdentityPipelineFactory.class));
         Set<String> middlewareInjectParams =

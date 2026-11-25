@@ -81,7 +81,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test proving that a WebSocket endpoint carrying a class-level {@code @RequiresAction}
- * is enforced once at upgrade by the composed {@link SecurityPolicyEnforcer} action gate (FR-AUTHZ-048).
+ * is enforced once at upgrade by the composed {@link SecurityPolicyEnforcer} action gate.
  *
  * <p>The endpoint {@code /ws/content} declares {@code @RolesAllowed("editor")} AND
  * {@code @RequiresAction("cms.content.read")}. The in-test {@link Authorizer} permits
@@ -102,8 +102,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       independently denies, not the role gate.</li>
  * </ul>
  *
- * <p>The {@link Authorizer} is threaded into the real {@link SecurityPolicyEnforcer} (the slice-13
- * wiring under test) so the action gate is actually evaluated at upgrade.
+ * <p>The {@link Authorizer} is threaded into the real {@link SecurityPolicyEnforcer} (the wiring
+ * under test) so the action gate is actually evaluated at upgrade.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -161,7 +161,7 @@ public class WebSocketRequiresActionIT {
                 securityRuntime,
                 contextHolder);
 
-        // SecurityPolicyEnforcer wired with the real action Authorizer (slice-13 wiring under test).
+        // SecurityPolicyEnforcer wired with the real action Authorizer (the wiring under test).
         // A RoleCheckDecisionPoint handles the @RolesAllowed gate; the EditorActionAuthorizer handles
         // the @RequiresAction gate. Both must pass for the upgrade to succeed.
         SecurityPolicyEnforcer policyEnforcer = new SecurityPolicyEnforcer(
