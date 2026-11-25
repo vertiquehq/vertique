@@ -23,12 +23,11 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Fixture types for {@link SchemaFixtureMatrixTest}: one type per FR-JSON-081 baseline matrix row,
+ * Fixture types for {@link SchemaFixtureMatrixTest}: one type per baseline matrix row,
  * plus the fixtures backing the determinism, divergence, and wire-honesty proofs in the same class.
  *
  * <p>Every DTO exposes public non-static fields, matching the shape the rest of this package's
- * fixtures use, so generation exercises the same Victools property-discovery path REST exercises
- * today.
+ * fixtures use, so generation exercises the same Victools property-discovery path REST exercises.
  */
 final class MatrixFixtures {
 
@@ -89,7 +88,7 @@ final class MatrixFixtures {
     /** Holder whose field resolves to {@code Map<String, Integer>}. */
     static final class MapHolder {
 
-        /** A resolved map property (S4 as-built fact: Victools 4.38.0 emits a bare object type). */
+        /** A resolved map property (Victools 4.38.0 emits a bare object type). */
         public Map<String, Integer> counts;
     }
 

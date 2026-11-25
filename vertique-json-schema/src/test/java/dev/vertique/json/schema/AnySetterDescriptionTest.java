@@ -36,30 +36,32 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * FR-015 (T007): how a type with a {@code @JsonAnySetter} describes its extra keys and the names it
- * reserves beside them.
+ * How a type with a {@code @JsonAnySetter} describes its extra keys and the names it reserves beside
+ * them.
  *
- * <p>Five proofs share one fixture family, each fixture named for the shape it stands for:
+ * <p>Six proofs share one fixture family, each fixture named for the shape it stands for:
  *
  * <ul>
- *   <li><strong>TP-001</strong> — {@code additionalProperties} describes the any-setter's value type:
+ *   <li><strong>Typed extras</strong> — {@code additionalProperties} describes the any-setter's value type:
  *       the map value type of a field-level any-setter, the second parameter of a method-level one,
  *       and the profile's own rendering of that type, so a {@code LocalDate} keeps {@code format:
  *       date} and a {@code BigDecimal} under {@code vertique-strict} carries the strict decimal
  *       fragment.
- *   <li><strong>TP-002</strong> — an unconstrained value type ({@code Object}, {@code JsonNode}) is
+ *   <li><strong>Unconstrained values</strong> — an unconstrained value type ({@code Object}, {@code JsonNode}) is
  *       the empty schema; a class-level Swagger {@code additionalProperties = TRUE} does not suppress
  *       the typed description, while {@code FALSE}, declared or inherited, does.
- *   <li><strong>TP-003</strong> — the description travels with the type: it appears at a nested
+ *   <li><strong>Nested and shared positions</strong> — the description travels with the type: it appears at a nested
  *       position and in the shared definition of a type used twice.
- *   <li><strong>TP-004</strong> — behavior preservation: a type Jackson binds as map-like is
+ *   <li><strong>Map-like types</strong> — behavior preservation: a type Jackson binds as map-like is
  *       described exactly as the same class without an any-setter, because Jackson ignores the
- *       any-setter there (design proof v5/v6, K02).
- *   <li><strong>TP-005</strong> — {@code propertyNames} carries one reserved set, computed as a
+ *       any-setter there.
+ *   <li><strong>Reserved names</strong> — {@code propertyNames} carries one reserved set, computed as a
  *       difference: every name Jackson binds on input, minus every name published under {@code
  *       properties}, minus every name whose Jackson property definition carries no member at all.
  *       Each fixture stands for one member of that set, and the creator-rename fixture stands for the
  *       memberless subtraction that fails open.
+ *   <li><strong>Type-use constraints</strong> — a single any-setter whose value type carries a type-use
+ *       constraint has that constraint in its extras {@code additionalProperties} schema.
  * </ul>
  *
  * <p>Every document is generated under the registry's built-in {@code vertique} profile — the floor
@@ -119,7 +121,7 @@ class AnySetterDescriptionTest {
 
     /**
      * Returns the {@code additionalProperties} member describing an any-setter's extra keys, failing
-     * when the schema describes none — the open object this task closes.
+     * when the schema describes none, which would leave the object open.
      *
      * @param document the whole document, which owns the definitions and is printed on failure
      * @param schema   the schema of the any-setter type itself, which is the document at a root
@@ -210,7 +212,7 @@ class AnySetterDescriptionTest {
         }
     }
 
-    // --- TP-001: typed extras are described ---
+    // --- Typed extras are described ---
 
     @Test
     @DisplayName("A field-level any-setter describes its map's value type as the extras schema")
@@ -305,7 +307,7 @@ class AnySetterDescriptionTest {
                         + " document: " + document);
     }
 
-    // --- TP-002: unconstrained values and the Swagger annotations ---
+    // --- Unconstrained values and the Swagger annotations ---
 
     @Test
     @DisplayName("An Object extras value is the empty schema")
@@ -360,7 +362,7 @@ class AnySetterDescriptionTest {
                 "a subclass inheriting the class-level FALSE must stay closed too; document: " + inherited);
     }
 
-    // --- TP-003: nested and shared positions ---
+    // --- Nested and shared positions ---
 
     @Test
     @DisplayName("An any-setter type held as a property is described at the nested position")
@@ -382,8 +384,8 @@ class AnySetterDescriptionTest {
     void sharedAnySetterDefinitionKeepsItsDescription() {
         JsonNode document = inputDocument(HoldsAnAnySetterTypeTwice.class);
 
-        // Measured at T007's parent: a type used twice is published once under $defs and referenced
-        // from both positions, so the description has exactly one place to be.
+        // A type used twice is published once under $defs and referenced from both positions, so the
+        // description has exactly one place to be.
         String reference = properties(document).path("first").path("$ref").asText(null);
         assertEquals(
                 "#/$defs/FieldAnySetterOverStrings",
@@ -402,7 +404,7 @@ class AnySetterDescriptionTest {
                         + document);
     }
 
-    // --- TP-004: a map-like type is described as if it had no any-setter ---
+    // --- A map-like type is described as if it had no any-setter ---
 
     @Test
     @DisplayName("A map subclass with an any-setter is described exactly as the same class without one")
@@ -416,7 +418,7 @@ class AnySetterDescriptionTest {
                     withAnySetter,
                     "Jackson binds a map-like type as a container and never routes a key to its any-setter,"
                             + " so the any-setter must contribute nothing under " + profileId
-                            + ": describing it rejects the legal entry {\"empty\":\"x\"} (design proof v5, K02)");
+                            + ": describing it rejects the legal entry {\"empty\":\"x\"}");
 
             JsonNode document = assertCanonicalForm(withAnySetter);
             assertNotEquals(
@@ -427,11 +429,11 @@ class AnySetterDescriptionTest {
             assertFalse(
                     document.has("propertyNames"),
                     "a map-like type reserves no name: reserving 'empty' from isEmpty() rejects a legal map"
-                            + " entry (design proof v4) under " + profileId + "; document: " + document);
+                            + " entry under " + profileId + "; document: " + document);
         }
     }
 
-    // --- TP-005: reserved names beside described extras ---
+    // --- Reserved names beside described extras ---
 
     @Test
     @DisplayName("An ignored name and a read-only name are reserved beside the extras")
@@ -462,7 +464,7 @@ class AnySetterDescriptionTest {
                 properties(document).has("extras"),
                 "the combined any-accessor field is backing storage, not a property: Jackson stores a key"
                         + " named 'extras' as an ordinary entry of the map, so the name is neither published"
-                        + " nor reserved (design proof v6); document: " + document);
+                        + " nor reserved; document: " + document);
     }
 
     @Test
@@ -513,21 +515,19 @@ class AnySetterDescriptionTest {
                 "a creator parameter renamed away from its field has no field, setter, getter, or record"
                         + " component, so its identity cannot be recovered and the reserved-name rule must"
                         + " fail open for it: reserving 'amount_cents' rejects the type's valid traffic at"
-                        + " both boundaries (design proof v7 to v8, 10 verdicts); document: " + document);
+                        + " both boundaries; document: " + document);
     }
 
-    // --- rest-023 T003 (TP-009, N16, architecture round-3 R1's own alternative, ruling X1) ---
+    // --- A single any-setter's own type-use-constrained value ---
 
     /**
-     * TP-009: a single, non-conjoined {@code @JsonAnySetter Map<String, @Size(max = 3) String>} (N16 —
-     * no {@code @JsonUnwrapped} parent involved) has its extras {@code additionalProperties} schema
-     * carry the value type's own type-use constraint, through the any-setter's own value position's
-     * {@code AnnotatedType} wired into T001's own type-use-overlay hook (extracted inert by T001,
-     * activated here for the first time). {@code describeExtras} read only {@code anySetter.getType()}
-     * (a bare {@code JavaType}, no {@code AnnotatedType}) before this task.
+     * A single, non-conjoined {@code @JsonAnySetter Map<String, @Size(max = 3) String>} (no
+     * {@code @JsonUnwrapped} parent involved) has its extras {@code additionalProperties} schema carry
+     * the value type's own type-use constraint, through the any-setter's own value position's
+     * {@code AnnotatedType} wired into the type-use-overlay hook.
      */
     @Test
-    @DisplayName("A single any-setter's own type-use-constrained value is described (N16)")
+    @DisplayName("A single any-setter's own type-use-constrained value is described")
     void anySetterValueTypeUseConstraintIsRendered() {
         JsonNode document = inputDocument(TypeUseConstrainedAnySetter.class);
 
@@ -547,12 +547,12 @@ class AnySetterDescriptionTest {
                 "{\"type\":\"string\"}",
                 extras(document, document, "FieldAnySetterOverStrings").toString(),
                 "a plain Map<String, String> any-setter extras value must render {\"type\":\"string\"},"
-                        + " unaffected by the N16 activation; document: " + document);
+                        + " unaffected by the type-use overlay; document: " + document);
     }
 
     // --- Fixtures: one per shape, named for it ---
 
-    /** N16 — a single, non-conjoined any-setter whose value type carries a type-use constraint. */
+    /** A single, non-conjoined any-setter whose value type carries a type-use constraint. */
     static final class TypeUseConstrainedAnySetter {
 
         /** An ordinary property, so the extras schema is proven beside a published property set. */
@@ -743,7 +743,7 @@ class AnySetterDescriptionTest {
 
     /**
      * A method {@code @JsonAnyGetter} over a private map field. Jackson fills that field through the
-     * getter, so its name is bound on input and never published — the SG1 bypass.
+     * getter, so its name is bound on input and never published.
      */
     static final class MethodAnyGetterStorage {
 
@@ -810,7 +810,7 @@ class AnySetterDescriptionTest {
         private final Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A name bound only through a setter, with no field behind it (SO1). */
+    /** A name bound only through a setter, with no field behind it. */
     static final class SetterOnlyName {
 
         /** An ordinary property. */
@@ -830,7 +830,7 @@ class AnySetterDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A name bound through an accessor pair over a differently named field (SO2). */
+    /** A name bound through an accessor pair over a differently named field. */
     static final class AccessorPairOverADifferentField {
 
         /** An ordinary property. */
@@ -863,7 +863,7 @@ class AnySetterDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A field Jackson binds that the Swagger annotation hides from the document (HID1). */
+    /** A field Jackson binds that the Swagger annotation hides from the document. */
     static final class SchemaHiddenField {
 
         /** An ordinary property. */
@@ -878,7 +878,7 @@ class AnySetterDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A transient field with accessors: bound by Jackson, never published (TR1). */
+    /** A transient field with accessors: bound by Jackson, never published. */
     static final class TransientFieldWithAccessors {
 
         /** An ordinary property. */

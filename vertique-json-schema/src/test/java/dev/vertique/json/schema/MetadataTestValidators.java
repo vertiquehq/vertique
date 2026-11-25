@@ -12,7 +12,7 @@ import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator
 /**
  * Builds {@link jakarta.validation.Validator} instances for the {@link MetadataConstraintSource}
  * coverage tests, bootstrapped with {@link ParameterMessageInterpolator} so no expression-language
- * implementation is needed on the classpath — the same finding the design's bv-metadata probes made.
+ * implementation is needed on the classpath.
  */
 final class MetadataTestValidators {
 

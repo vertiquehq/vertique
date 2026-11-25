@@ -30,7 +30,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 /**
- * Architecture and dependency-isolation guards for {@code vertique-json-schema} (FR-JSON-070, NFR-JSON-017).
+ * Architecture and dependency-isolation guards for {@code vertique-json-schema}.
  *
  * <p>Follows the source-level dependency-boundary pattern established by {@code
  * dev.vertique.kafka.CoreDependencyBoundaryTest} and {@code
@@ -80,7 +80,7 @@ class ModuleStructureTest {
      * Explicitly banned prefixes (no REST, MCP, transport, validator-runtime, or telemetry
      * type). Every one of these is already excluded by {@link
      * #ALLOWED_MAIN_IMPORT_PREFIXES} being an allowlist, not a denylist — this constant exists so
-     * the forbidden surface named in the plan is documented and independently assertable.
+     * the forbidden surface is documented and independently assertable.
      */
     private static final List<String> BANNED_MAIN_IMPORT_PREFIXES = List.of(
             "dev.vertique.rest.",
@@ -106,7 +106,7 @@ class ModuleStructureTest {
             "HiddenMember",
             "HidingMarker");
 
-    // --- #1: dependency allowlist ---
+    // --- Dependency allowlist ---
 
     @Test
     @DisplayName("vertique-json-schema pom.xml declares exactly the allowed compile-scope dependency set")
@@ -172,7 +172,7 @@ class ModuleStructureTest {
         return null;
     }
 
-    // --- #2: main-source import allowlist ---
+    // --- Main-source import allowlist ---
 
     @Test
     @DisplayName("dev.vertique.json.schema main sources import only the allowed packages")
@@ -189,7 +189,7 @@ class ModuleStructureTest {
         if (!violations.isEmpty()) {
             fail("dev.vertique.json.schema main sources must import only "
                     + ALLOWED_MAIN_IMPORT_PREFIXES
-                    + " (FR-JSON-070: no REST, MCP, Vert.x, Dagger, jakarta.inject, Micrometer, or"
+                    + " (no REST, MCP, Vert.x, Dagger, jakarta.inject, Micrometer, or"
                     + " OpenTelemetry). Found " + violations.size() + " violation(s):\n  "
                     + String.join("\n  ", violations));
         }
@@ -248,7 +248,7 @@ class ModuleStructureTest {
         }
     }
 
-    // --- #3: frozen public surface ---
+    // --- Frozen public surface ---
 
     @Test
     @DisplayName(
@@ -364,7 +364,7 @@ class ModuleStructureTest {
         }
     }
 
-    // --- #4: sibling-module dependency isolation (NFR-JSON-017) ---
+    // --- Sibling-module dependency isolation ---
 
     /**
      * Markers whose presence anywhere in a sibling module's {@code pom.xml} text proves that
@@ -372,27 +372,26 @@ class ModuleStructureTest {
      * {@code com.github.victools} and {@code io.swagger} are groupId prefixes; the remainder are
      * artifact ids. A substring search is sufficient here — unlike the allowlist-exactness proof
      * in {@link #dependencyAllowlistIsExact()}, this is a negative "must never appear" check, and
-     * neither sibling POM has any other occurrence of these strings (verified 2026-08-17).
+     * neither sibling POM has any other occurrence of these strings.
      */
     private static final List<String> SCHEMA_GENERATOR_FAMILY_MARKERS = List.of(
             "com.github.victools", "io.swagger", "jakarta.validation-api", "vertx-json-schema", "vertique-json-schema");
 
     /**
-     * NFR-JSON-017: a consumer of {@code vertique-json} alone must not inherit Victools, Swagger,
+     * A consumer of {@code vertique-json} alone must not inherit Victools, Swagger,
      * Jakarta Validation, or {@code vertx-json-schema} because of the schema-generation feature,
      * and {@code vertique-core} must gain no schema-generator or validator dependency.
      *
-     * <p>This module's own tests are the natural place for this proof (per the plan's S9 scope):
-     * both sibling POMs are read via a path relative to this module's basedir — Surefire always
-     * sets the working directory to the module basedir, so {@code ../vertique-json/pom.xml} and
+     * <p>This module's own tests are the natural place for this proof: both sibling POMs are read via
+     * a path relative to this module's basedir — Surefire always sets the working directory to the
+     * module basedir, so {@code ../vertique-json/pom.xml} and
      * {@code ../vertique-core/pom.xml} are stable, not brittle, for this repository's flat
      * reactor-root module layout. Both POMs currently declare zero matching dependencies in any
-     * scope, so the assertion is "contains none of the markers at all", matching the plan's S9
-     * scope note verbatim.
+     * scope, so the assertion is "contains none of the markers at all".
      */
     @Test
     @DisplayName(
-            "vertique-json and vertique-core do not depend on the Victools/Swagger/Jakarta-Validation schema-generator family (NFR-JSON-017)")
+            "vertique-json and vertique-core do not depend on the Victools/Swagger/Jakarta-Validation schema-generator family")
     void vertiqueJsonDoesNotInheritSchemaGeneratorFamily() throws IOException {
         Path jsonPom = Path.of(System.getProperty("user.dir"), "..", "vertique-json", "pom.xml")
                 .normalize();
@@ -419,7 +418,7 @@ class ModuleStructureTest {
                 .toList();
         assertTrue(
                 found.isEmpty(),
-                moduleLabel + "/pom.xml must not reference any of " + SCHEMA_GENERATOR_FAMILY_MARKERS
-                        + " (NFR-JSON-017); found: " + found);
+                moduleLabel + "/pom.xml must not reference any of " + SCHEMA_GENERATOR_FAMILY_MARKERS + "; found: "
+                        + found);
     }
 }

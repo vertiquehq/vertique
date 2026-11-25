@@ -31,8 +31,8 @@ class SchemaRenameCollisionTest {
 
     /**
      * {@code note} is private with no accessor, so Jackson never reads or writes it; {@code x} is a
-     * visible property published on the wire as {@code wire}. Before the refusal, both directions
-     * published {@code "x": {"type": "integer"}} — a key Jackson binds to nothing — carrying the
+     * visible property published on the wire as {@code wire}. Without the refusal, both directions
+     * would publish {@code "x": {"type": "integer"}} — a key Jackson binds to nothing — carrying the
      * visibility verdict looked up for {@code x}.
      */
     static final class RenamedOntoVisibleProperty {
@@ -44,8 +44,8 @@ class SchemaRenameCollisionTest {
     }
 
     /**
-     * {@code x} is read-only, so it is invisible on input. Before the refusal, the input schema was
-     * the empty object: {@code note} was hidden with {@code x}'s input verdict.
+     * {@code x} is read-only, so it is invisible on input. Without the refusal, the input schema would
+     * be the empty object: {@code note} would be hidden with {@code x}'s input verdict.
      */
     static final class RenamedOntoReadOnlyProperty {
         @JsonProperty(access = JsonProperty.Access.READ_ONLY)
@@ -172,7 +172,7 @@ class SchemaRenameCollisionTest {
     @Test
     void shouldDescribeNothingWhenTheBinderReadsNothing() {
         // 'x' is read-only and 'note' has no accessor the binder uses: the input document is the bare
-        // object, and the Swagger rename that used to collide with 'x' plays no part in it.
+        // object, and the Swagger rename onto 'x' plays no part in it.
         assertEquals(
                 SCHEMA + "\"type\":\"object\"}",
                 AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
@@ -180,8 +180,8 @@ class SchemaRenameCollisionTest {
     }
 
     @Test
-    void shouldDescribeAFallbackThatFindsTheMembersOwnPropertyOrNothingExactlyAsBefore() {
-        // Pinned to what the generator published before the refusal existed.
+    void shouldDescribeAFallbackThatFindsTheMembersOwnPropertyOrNothing() {
+        // Pinned to what the generator publishes when no refusal applies.
         assertAll(
                 () -> assertEquals(
                         "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
@@ -203,8 +203,8 @@ class SchemaRenameCollisionTest {
     }
 
     @Test
-    void shouldDescribeAFieldRenamedOntoItsOwnAccessorsPropertyExactlyAsBefore() {
-        // Pinned to what the generator published before the refusal existed: the landed-on property
+    void shouldDescribeAFieldRenamedOntoItsOwnAccessorsProperty() {
+        // Pinned to what the generator publishes when no refusal applies: the landed-on property
         // has no walked field of its own, so nothing else is published under the name.
         assertAll(
                 () -> assertEquals(
@@ -226,9 +226,9 @@ class SchemaRenameCollisionTest {
     }
 
     @Test
-    void shouldDescribeRenamedMembersThatReachTheFallbackWithoutACollisionExactlyAsBefore() {
+    void shouldDescribeRenamedMembersThatReachTheFallbackWithoutACollision() {
         // Both members miss by identity and reach the rename check, so a refusal that fires on any
-        // renamed fallback turns this red. Pinned to what the generator published before the refusal.
+        // renamed fallback turns this red. Pinned to what the generator publishes when no refusal applies.
         assertAll(
                 () -> assertEquals(
                         SCHEMA + "\"properties\":{\"first_name\":{\"type\":\"string\"}},\"type\":\"object\"}",

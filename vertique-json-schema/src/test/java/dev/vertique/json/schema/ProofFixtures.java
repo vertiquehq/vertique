@@ -19,7 +19,7 @@ import java.util.List;
  *
  * <p>Every DTO exposes public non-static fields, matching the shape the existing REST
  * {@code AnnotationSchemaSourceTest} fixtures use, so the differential comparison exercises the same
- * Victools property-discovery path REST exercises today.
+ * Victools property-discovery path REST exercises.
  */
 final class ProofFixtures {
 

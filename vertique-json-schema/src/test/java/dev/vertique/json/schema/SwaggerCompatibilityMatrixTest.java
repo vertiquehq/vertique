@@ -24,15 +24,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins FR-JSON-084: the shared generator's Swagger compatibility surface is exact at the pinned
+ * Pins the shared generator's Swagger compatibility surface is exact at the pinned
  * {@code swagger-annotations-jakarta 2.2.44} version. Three obligations:
  *
  * <ol>
  *   <li>{@link #swaggerAnnotationMembersArePartitionedExhaustively()} — every {@code @Schema} and
  *       {@code @ArraySchema} annotation member declared by the pinned library falls into exactly one
- *       of this test's own {@link #CONSUMED} or {@link #IGNORED} sets, built from the exact
- *       member table of consumed members. A future dependency upgrade that adds, removes, or renames a member fails this
- *       test loudly instead of silently drifting from the documented compatibility promise.
+ *       of this test's own {@link #CONSUMED} or {@link #IGNORED} sets. A future dependency upgrade
+ *       that adds, removes, or renames a member fails this test loudly instead of silently drifting
+ *       from the documented compatibility promise.
  *   <li>the {@code effect*} test group proves every {@link #CONSUMED} member actually influences a
  *       generated document.
  *   <li>the {@code ignored*} test group proves a representative sample of {@link #IGNORED} members
@@ -175,7 +175,7 @@ class SwaggerCompatibilityMatrixTest {
         assertTrue(
                 reflectedNotDeclared.isEmpty(),
                 "the pinned library declares a member absent from both CONSUMED and IGNORED — this is the"
-                        + " FR-JSON-084 version-upgrade tripwire; missing: " + reflectedNotDeclared);
+                        + " version-upgrade tripwire; missing: " + reflectedNotDeclared);
 
         Set<String> declaredNotReflected = new HashSet<>(declared);
         declaredNotReflected.removeAll(reflected);
@@ -257,7 +257,7 @@ class SwaggerCompatibilityMatrixTest {
      * DTO exercising the composition property members. Every field is declared {@code Object}-typed
      * so the contributed {@code allOf}/{@code anyOf}/{@code oneOf}/{@code not} target (an
      * object-shaped POJO) never conjoins with a disjoint declared type — the point of this group is
-     * proving each member's effect, not exercising {@code DisjointTypeDetector} (S4's job).
+     * proving each member's effect, not exercising {@code DisjointTypeDetector}.
      */
     static final class CompositionDto {
 
@@ -453,9 +453,9 @@ class SwaggerCompatibilityMatrixTest {
     @Test
     @DisplayName("implementation has an effect (redirects the property's schema to the replacement type)")
     void implementationHasEffect() {
-        // Reuses HardeningFixtures.ImplementationWithoutOverrideDto (S4) under withVictoolsDefaults(),
+        // Reuses HardeningFixtures.ImplementationWithoutOverrideDto under withVictoolsDefaults(),
         // showing the redirect fires with no profile-override machinery involved at all — the guard
-        // interplay itself is S4's job (GeneratorCompositionTest), not duplicated here.
+        // interplay itself is covered by GeneratorCompositionTest, not duplicated here.
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(HardeningFixtures.ImplementationWithoutOverrideDto.class);
         assertTrue(

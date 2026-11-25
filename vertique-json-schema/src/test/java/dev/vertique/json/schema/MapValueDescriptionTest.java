@@ -42,17 +42,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * rest-023 T003 ({@code D001}, TP-001, TP-002, TP-005, TP-007, TP-008). A {@code Map<K,V>} property,
- * parameter, extras value, collection item, or nested map is described, on the input direction only,
- * with {@code V}'s own schema — including a type-use constraint on {@code V} and {@code V}'s own
- * declared constraints, both through the shared value-position renderer (T001) — as the map's {@code
- * additionalProperties} schema. A {@code V} of {@code JsonNode}, {@code TreeNode}, or another
- * unconstrained value type stays unconstrained; an {@code Optional<T>}-valued map entry inherits T002's
- * own null-and-constraint rendering.
+ * A {@code Map<K,V>} property, parameter, extras value, collection item, or nested map is described,
+ * on the input direction only, with {@code V}'s own schema — including a type-use constraint on {@code
+ * V} and {@code V}'s own declared constraints, both through the shared value-position renderer — as
+ * the map's {@code additionalProperties} schema. A {@code V} of {@code JsonNode}, {@code TreeNode}, or
+ * another unconstrained value type stays unconstrained; an {@code Optional<T>}-valued map entry
+ * inherits the renderer's own null-and-constraint rendering.
  *
  * <p>Every document is generated under the registry's built-in {@code vertique} profile, matching the
- * package's other unit proofs, except where a test declares its own profile (TP-005's override
- * companion).
+ * package's other unit proofs, except where a test declares its own profile (the override companion).
  */
 class MapValueDescriptionTest {
 
@@ -120,15 +118,15 @@ class MapValueDescriptionTest {
         return resolve(document, mapSchema.get("additionalProperties"));
     }
 
-    // --- TP-001: a Map<K,V> property describes V's own schema, including a type-use constraint ---
+    // --- A Map<K,V> property describes V's own schema, including a type-use constraint ---
 
     @Test
     @DisplayName("A Map<K,V> property describes V's own schema, including a type-use constraint, as"
             + " additionalProperties")
     void mapValueDescribesTheValueTypesOwnSchemaIncludingATypeUseConstraint() {
-        JsonNode document = inputDocument(S2bTypeUseHolder.class);
+        JsonNode document = inputDocument(TypeUseHolder.class);
         JsonNode tags = property(document, "tags");
-        JsonNode additional = additionalProperties(document, tags, "S2bTypeUseHolder.tags");
+        JsonNode additional = additionalProperties(document, tags, "TypeUseHolder.tags");
 
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
@@ -140,17 +138,17 @@ class MapValueDescriptionTest {
     @Test
     @DisplayName("Sensitivity proof: the output-direction generator's own rendering is unaffected")
     void outputDirectionMapValueRenderingIsUnaffectedByTheOverlay() {
-        JsonNode document = outputDocument(S2bTypeUseHolder.class);
+        JsonNode document = outputDocument(TypeUseHolder.class);
         JsonNode tags = property(document, "tags");
 
         assertFalse(
                 tags.has("additionalProperties"),
-                "the output-direction generator must not route a map position through this task's own"
+                "the output-direction generator must not route a map position through the"
                         + " input-only renderer extension; document: " + document);
     }
 
     @Test
-    @DisplayName("N1: the type-use overlay is applied per position, not baked into a shared $defs entry")
+    @DisplayName("the type-use overlay is applied per position, not baked into a shared $defs entry")
     void typeUseOverlayIsAppliedPerPositionNotIntoASharedDefinition() {
         JsonNode document = inputDocument(TypeUseLeakageHolder.class);
 
@@ -206,13 +204,13 @@ class MapValueDescriptionTest {
                         + " document: " + document);
     }
 
-    // --- TP-002: a Map<K, Bean> and a Map<K, Optional<Bean>> property describe the value type's schema ---
+    // --- A Map<K, Bean> and a Map<K, Optional<Bean>> property describe the value type's schema ---
 
     @Test
     @DisplayName("A Map<K, Bean> property describes the bean value type's own schema as additionalProperties")
     void mapValueDescribesABeanValueTypesOwnSchemaAsAdditionalProperties() {
-        JsonNode document = inputDocument(S2aBeanHolder.class);
-        JsonNode labels = additionalProperties(document, property(document, "labels"), "S2aBeanHolder.labels");
+        JsonNode document = inputDocument(BeanHolder.class);
+        JsonNode labels = additionalProperties(document, property(document, "labels"), "BeanHolder.labels");
 
         assertEquals(
                 3,
@@ -224,7 +222,7 @@ class MapValueDescriptionTest {
     @Test
     @DisplayName("A Map<K, Optional<Bean>> property describes the bean value type's schema marked nullable")
     void mapValueDescribesAnOptionalBeanValueTypesOwnSchemaMarkedNullable() {
-        JsonNode document = inputDocument(S2dOptionalBeanHolder.class);
+        JsonNode document = inputDocument(OptionalBeanHolder.class);
         JsonNode opts = property(document, "opts");
 
         assertTrue(
@@ -236,8 +234,8 @@ class MapValueDescriptionTest {
         assertAll(
                 () -> assertTrue(
                         isMarkedNullable(additional),
-                        "opts.additionalProperties must be marked nullable, through T002's own renderer"
-                                + " step; document: " + document),
+                        "opts.additionalProperties must be marked nullable, through the renderer's own"
+                                + " Optional step; document: " + document),
                 () -> assertEquals(
                         3,
                         nonNull.path("properties")
@@ -250,18 +248,18 @@ class MapValueDescriptionTest {
     @Test
     @DisplayName("Sensitivity proof: a Map<K, JsonNode> property stays unconstrained")
     void mapValueOfJsonNodeStaysUnconstrained() {
-        JsonNode document = inputDocument(S2cJsonNodeHolder.class);
+        JsonNode document = inputDocument(JsonNodeHolder.class);
         JsonNode raw = property(document, "raw");
 
         assertEquals(
                 "{\"type\":\"object\"}",
                 raw.toString(),
                 "a Map<String, JsonNode> property must stay open — no additionalProperties member at all"
-                        + " — this control must be green both before and after this task's own fix;"
+                        + " — this is the unconstrained control;"
                         + " document: " + document);
     }
 
-    // --- TP-005: a map value whose type would itself be refused at a named position refuses at startup ---
+    // --- A map value whose type would itself be refused at a named position refuses at startup ---
 
     @Test
     @DisplayName("A map value of a refused type fails router construction, naming the override remedy")
@@ -282,21 +280,22 @@ class MapValueDescriptionTest {
     @DisplayName("Sensitivity proof: an override-declared map value type succeeds")
     void mapValueOfAnOverrideDeclaredTypeSucceeds() {
         JsonMapperProfile withOverride = overrideProfile(
-                RefusedValue.class, JsonSchemaFragment.parse("{\"type\":\"string\",\"format\":\"marker-t003-tp005\"}"));
+                RefusedValue.class,
+                JsonSchemaFragment.parse("{\"type\":\"string\",\"format\":\"marker-map-value-override\"}"));
 
         JsonNode document = inputDocument(RefusedMapValueHolder.class, withOverride);
         JsonNode additional =
                 additionalProperties(document, property(document, "values"), "RefusedMapValueHolder.values");
 
         assertEquals(
-                "marker-t003-tp005",
+                "marker-map-value-override",
                 additional.path("format").asText(null),
                 "an override declared for the refused value type must apply at the map-value position,"
                         + " proving the refusal is specific to the undeclared type, not every map value;"
                         + " document: " + document);
     }
 
-    // --- TP-007: a member-level additionalProperties annotation on a Map-typed member is ignored ---
+    // --- A member-level additionalProperties annotation on a Map-typed member is ignored ---
 
     @Test
     @DisplayName("A member-level or getter-level additionalProperties annotation on a Map-typed member is"
@@ -370,11 +369,11 @@ class MapValueDescriptionTest {
                 resolvedDetail.path("additionalProperties").isBoolean()
                         && !resolvedDetail.path("additionalProperties").asBoolean(),
                 "a class-level @Schema(additionalProperties = FALSE) on a bean (non-Map) value type must"
-                        + " still close it — this task's own ignore rule is scoped to a Map-typed member or"
+                        + " still close it — the ignore rule is scoped to a Map-typed member or"
                         + " getter specifically; document: " + document);
     }
 
-    // --- TP-008: a nested map inside an any-setter's own extras value is described (N9) ---
+    // --- A nested map inside an any-setter's own extras value is described ---
 
     @Test
     @DisplayName("A nested map inside an any-setter's own extras value is described through the shared renderer")
@@ -406,23 +405,22 @@ class MapValueDescriptionTest {
                         + " {\"type\":\"string\"}, unaffected by the nested-map fixture; document: " + document);
     }
 
-    // --- P01 gate security review (CWE-674 hypothesis, REFUTED): a self-referential Map subclass's own
-    // value type recurses back to itself, and ValuePositionRenderer.hasOverlayAnywhere(JavaType,
-    // AnnotatedType) (~:297) walks that content type with no visited set. The hypothesis was that this
-    // never terminates and overflows the stack. It does not manifest: Jackson's own TypeFactory represents
+    // --- A self-referential Map subclass renders a bounded cycle (CWE-674): its own value type recurses
+    // back to itself, and ValuePositionRenderer.hasOverlayAnywhere(JavaType, AnnotatedType) walks that
+    // content type with no visited set. It terminates regardless: Jackson's own TypeFactory represents
     // the self-referential value slot as a "[recursive type; ...]" placeholder, which is not map-like, so
     // hasOverlayAnywhere stops after one level; and the describer's own inProgress guard resolves the
     // type-level cycle as a $ref back to the describer's OWN $defs entry (or to the root), exactly as it
-    // already does for a self-referential bean at a named position. A recursive map DTO is therefore a
-    // legitimate, bounded schema, not a defect; D005's inline-re-entry refusal does not apply to a
-    // type-level $ref cycle. The four tests below pin this bounded behaviour as a regression guard: a
-    // change to either mechanism (the placeholder or the inProgress guard) that reintroduced unbounded
-    // recursion, or that silently substituted a reflection-built shape for the describer-driven $ref cycle,
-    // must turn one of them red. ---
+    // does for a self-referential bean at a named position. A recursive map DTO is therefore a
+    // legitimate, bounded schema; the refusal of inline re-entry does not apply to a type-level $ref
+    // cycle. The four tests below pin this bounded behaviour as a regression guard: a change to either
+    // mechanism (the placeholder or the inProgress guard) that reintroduced unbounded recursion, or that
+    // silently substituted a reflection-built shape for the describer-driven $ref cycle, must fail one
+    // of them. ---
 
     /**
-     * P01 gate security review (CWE-674 hypothesis, REFUTED): a self-referential {@link RecursiveMap} at a
-     * named property position does not overflow the stack. Jackson's {@code TypeFactory} resolves the
+     * A self-referential {@link RecursiveMap} at a named property position does not overflow the stack
+     * (CWE-674). Jackson's {@code TypeFactory} resolves the
      * value slot to a {@code [recursive type; ...]} placeholder rather than re-entering the map-like
      * content type, so {@code ValuePositionRenderer.hasOverlayAnywhere} stops after one level; the
      * describer's own {@code inProgress} guard then renders the type-level cycle as a {@code $ref} back to
@@ -431,7 +429,7 @@ class MapValueDescriptionTest {
      * reflection-built shape for the describer-driven cycle, would turn this test red.
      */
     @Test
-    @DisplayName("Security review (CWE-674, REFUTED): a self-referential Map subclass as a property renders"
+    @DisplayName("A self-referential Map subclass as a property renders"
             + " a bounded $ref cycle, never a StackOverflowError")
     void selfReferentialMapSubclassAsAPropertyRendersABoundedRefCycle() {
         JsonNode document = assertNoStackOverflow(() -> inputDocument(RecursiveMapHolder.class));
@@ -447,14 +445,14 @@ class MapValueDescriptionTest {
     }
 
     /**
-     * P01 gate security review (CWE-674 hypothesis, REFUTED): {@link RecursiveMap} as the document's own
-     * root type does not overflow the stack. The same placeholder-plus-inProgress-guard mechanism resolves
-     * the cycle back to the document root itself ({@code {"$ref":"#"}}), since the root has no named {@code
-     * $defs} entry of its own. A change to either mechanism would turn this test red.
+     * {@link RecursiveMap} as the document's own root type does not overflow the stack (CWE-674). The
+     * same placeholder-plus-inProgress-guard mechanism resolves the cycle back to the document root
+     * itself ({@code {"$ref":"#"}}), since the root has no named {@code $defs} entry of its own. A change to
+     * either mechanism would turn this test red.
      */
     @Test
-    @DisplayName("Security review (CWE-674, REFUTED): a self-referential Map subclass as the root renders a"
-            + " bounded $ref cycle, never a StackOverflowError")
+    @DisplayName(
+            "A self-referential Map subclass as the root renders a" + " bounded $ref cycle, never a StackOverflowError")
     void selfReferentialMapSubclassAsTheRootRendersABoundedRefCycle() {
         JsonNode document = assertNoStackOverflow(() -> inputDocument(RecursiveMap.class));
 
@@ -467,18 +465,18 @@ class MapValueDescriptionTest {
     }
 
     /**
-     * P01 gate security review (CWE-674 hypothesis, REFUTED): mutually recursive {@link MapA}/{@link MapB}
-     * (a two-map cycle) do not overflow the stack: Jackson's recursive-type placeholder stops the
-     * renderer's overlay pre-check after one level and the provider's own inProgress guard closes the
-     * type-level cycle as a {@code $ref}. Which of the two types receives the named {@code $defs} entry,
-     * and whether the other is inlined once inside it, is the schema library's own definition-naming
-     * choice (a type referenced once is inlined), so this test asserts the cycle structurally rather
-     * than pinning that layout: the property resolves to a named entry, every level on the way is a
-     * described object, and the chain closes back to that same entry. A change that let the cycle
-     * unroll, overflow, or fall back to a reflection-built definition would turn this test red.
+     * Mutually recursive {@link MapA}/{@link MapB} (a two-map cycle) do not overflow the stack
+     * (CWE-674): Jackson's recursive-type placeholder stops the renderer's overlay pre-check after one
+     * level and the provider's own inProgress guard closes the type-level cycle as a {@code $ref}.
+     * Which of the two types receives the named {@code $defs} entry, and whether the other is inlined
+     * once inside it, is the schema library's own definition-naming choice (a type referenced once is
+     * inlined), so this test asserts the cycle structurally rather than pinning that layout: the
+     * property resolves to a named entry, every level on the way is a described object, and the chain
+     * closes back to that same entry. A change that let the cycle unroll, overflow, or fall back to a
+     * reflection-built definition would turn this test red.
      */
     @Test
-    @DisplayName("Security review (CWE-674, REFUTED): mutually recursive Map subclasses (a two-map cycle)"
+    @DisplayName("Mutually recursive Map subclasses (a two-map cycle)"
             + " render a bounded $ref cycle, never a StackOverflowError")
     void mutuallyRecursiveMapSubclassesRenderABoundedRefCycle() {
         JsonNode document = assertNoStackOverflow(() -> inputDocument(MapAHolder.class));
@@ -511,13 +509,12 @@ class MapValueDescriptionTest {
     }
 
     /**
-     * P01 gate security review (CWE-674 hypothesis, REFUTED): a self-referential {@link RecursiveMap} as an
-     * any-setter's own extras value does not overflow the stack, through the same placeholder-plus-
-     * inProgress-guard mechanism as the named-property case (T003 TP-008's own shared renderer). A change
-     * to either mechanism would turn this test red.
+     * A self-referential {@link RecursiveMap} as an any-setter's own extras value does not overflow the
+     * stack (CWE-674), through the same placeholder-plus-inProgress-guard mechanism as the
+     * named-property case. A change to either mechanism would turn this test red.
      */
     @Test
-    @DisplayName("Security review (CWE-674, REFUTED): a self-referential Map subclass as an any-setter's"
+    @DisplayName("A self-referential Map subclass as an any-setter's"
             + " own value renders a bounded $ref cycle, never a StackOverflowError")
     void selfReferentialMapSubclassAsAnAnySetterValueRendersABoundedRefCycle() {
         JsonNode document = assertNoStackOverflow(() -> inputDocument(RecursiveMapAnySetterHolder.class));
@@ -532,7 +529,7 @@ class MapValueDescriptionTest {
     }
 
     @Test
-    @DisplayName("Control: a nested but finite Map subclass chain still renders (must stay green)")
+    @DisplayName("Control: a nested but finite Map subclass chain still renders")
     void nestedButFiniteMapSubclassChainStillRenders() {
         JsonNode document = inputDocument(OuterHolder.class);
         JsonNode outer = additionalProperties(document, property(document, "o"), "OuterHolder.o");
@@ -543,11 +540,11 @@ class MapValueDescriptionTest {
                 inner.path("maxLength").asInt(-1),
                 "o.additionalProperties.additionalProperties must describe Inner's own value type's"
                         + " maxLength: 3 — a nested but finite Map subclass chain must still render, proving"
-                        + " the self-referential refusal above is scoped to a genuine cycle, not every nested"
-                        + " Map subclass; document: " + document);
+                        + " a genuine cycle is rendered as a bounded $ref while every nested"
+                        + " Map subclass still renders; document: " + document);
     }
 
-    // --- Fixtures: security review (HIGH, CWE-674) — self-referential and mutually recursive Map subclasses ---
+    // --- Fixtures: self-referential and mutually recursive Map subclasses (CWE-674) ---
 
     /** A Map subclass whose own value type is itself: a direct self-reference (CWE-674). */
     static class RecursiveMap extends HashMap<String, RecursiveMap> {}
@@ -593,10 +590,9 @@ class MapValueDescriptionTest {
         public Outer o;
     }
 
-    // --- Review fix (Critical): a Map subclass that reorders its own type parameters must resolve the
-    // value slot through the type-parameter binding Jackson itself resolves, not through the fixed
-    // positional index [1] of the declaration site's own type arguments; see
-    // ValuePositionRenderer.mapValueSlot(AnnotatedType), formerly a positional lookup ---
+    // --- A Map subclass that reorders its own type parameters resolves the value slot through the
+    // type-parameter binding Jackson itself resolves, not through the fixed positional index [1] of the
+    // declaration site's own type arguments; see ValuePositionRenderer.mapValueSlot(AnnotatedType) ---
 
     @Test
     @DisplayName("A reordered Map subclass's own type-use constraint on the value slot is rendered")
@@ -641,7 +637,7 @@ class MapValueDescriptionTest {
                 additional.toString(),
                 "the any-setter's own value slot (V, written first) carries @Size(max = 3): the overlay"
                         + " must reach the same value-slot binding through the member-based"
-                        + " mapValueSlotOfMember(Member), formerly a reuse of the same positional lookup; document: "
+                        + " mapValueSlotOfMember(Member); document: "
                         + document);
     }
 
@@ -672,7 +668,7 @@ class MapValueDescriptionTest {
                 "ReorderedTags extends Reordered<@Size(max = 3) String, Integer>: the intermediate"
                         + " supertype's own value slot sits at index 0 of its written arguments (V is written"
                         + " first on Reordered<V, K>); the supertype-chain overlay source"
-                        + " (mapValueSlotOfClass, formerly a positional supertype-chain lookup) must"
+                        + " (mapValueSlotOfClass) must"
                         + " resolve the same value-slot binding, not the fixed positional index [1]; document: "
                         + document);
     }
@@ -716,7 +712,7 @@ class MapValueDescriptionTest {
         return resolve(document, schema);
     }
 
-    // --- Warning-capture helper (architecture round-3 R3) ---
+    // --- Warning-capture helper ---
 
     /**
      * Runs {@code generation}, capturing every {@code WARNING}-level record published through the
@@ -753,9 +749,9 @@ class MapValueDescriptionTest {
         }
     }
 
-    // --- Bounded-cycle helper (P01 gate security review, CWE-674 hypothesis, REFUTED: a self-referential
-    // Map subclass resolves to a bounded $ref cycle through Jackson's own recursive-type placeholder and
-    // the describer's inProgress guard, not through unbounded recursion) ---
+    // --- Bounded-cycle helper (CWE-674: a self-referential Map subclass resolves to a bounded $ref
+    // cycle through Jackson's own recursive-type placeholder and the describer's inProgress guard, not
+    // through unbounded recursion) ---
 
     /**
      * Runs {@code generation}, turning a {@link StackOverflowError} into an actionable, distinguishing
@@ -772,20 +768,20 @@ class MapValueDescriptionTest {
         } catch (StackOverflowError overflow) {
             return fail("generation overflowed the stack (StackOverflowError) instead of resolving the"
                     + " self-referential map through Jackson's own recursive-type placeholder and the"
-                    + " describer's inProgress guard — the P01 gate's CWE-674 hypothesis would no longer be"
-                    + " refuted; see ValuePositionRenderer.hasOverlayAnywhere and the describer's own"
+                    + " describer's inProgress guard — the CWE-674 bound no longer holds;"
+                    + " see ValuePositionRenderer.hasOverlayAnywhere and the describer's own"
                     + " cycle-closing $ref logic");
         }
     }
 
-    // --- Override-profile helper (TP-005 companion) ---
+    // --- Override-profile helper ---
 
     private static JsonMapperProfile overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
         List<JsonSchemaTypeOverride> overrides = List.of(JsonSchemaTypeOverride.input(overriddenClass, fragment));
         return new JsonMapperProfile() {
             @Override
             public JsonProfileId id() {
-                return JsonProfileId.of("t003-tp005-override");
+                return JsonProfileId.of("map-value-override");
             }
 
             @Override
@@ -800,16 +796,16 @@ class MapValueDescriptionTest {
         };
     }
 
-    // --- Fixtures: TP-001 ---
+    // --- Fixtures: ordinary map property ---
 
-    /** S2b — the ordinary-map-property type-use fixture. */
-    static final class S2bTypeUseHolder {
+    /** The ordinary-map-property type-use fixture. */
+    static final class TypeUseHolder {
 
         /** The type-use-constrained map value under test. */
         public Map<String, @Size(max = 3) String> tags;
     }
 
-    /** N1 — two members of the same underlying Map type, one constrained, one not. */
+    /** Two members of the same underlying Map type, one constrained, one not. */
     static final class TypeUseLeakageHolder {
 
         /** The type-use-constrained member. */
@@ -832,7 +828,7 @@ class MapValueDescriptionTest {
     /** A further subclass with no type argument of its own: the overlay source must follow the chain. */
     static class A extends Tags {}
 
-    // --- Fixtures: TP-002 ---
+    // --- Fixtures: bean and optional values ---
 
     /** {@code Plain}'s own declared constraint, translated exactly as for a non-map position. */
     static final class Plain {
@@ -842,30 +838,30 @@ class MapValueDescriptionTest {
         public String name;
     }
 
-    /** S2a — a Map<String, Bean> property. */
-    static final class S2aBeanHolder {
+    /** A Map<String, Bean> property. */
+    static final class BeanHolder {
 
         /** The bean-valued map under test. */
         public Map<String, Plain> labels;
     }
 
-    /** S2d — a Map<String, Optional<Bean>> property. */
-    static final class S2dOptionalBeanHolder {
+    /** A Map<String, Optional<Bean>> property. */
+    static final class OptionalBeanHolder {
 
         /** The Optional-bean-valued map under test. */
         public Map<String, Optional<Plain>> opts;
     }
 
-    /** S2c — a Map<String, JsonNode> property: the unconstrained-value control. */
-    static final class S2cJsonNodeHolder {
+    /** A Map<String, JsonNode> property: the unconstrained-value control. */
+    static final class JsonNodeHolder {
 
         /** The opaque-valued map under test. */
         public Map<String, JsonNode> raw;
     }
 
-    // --- Fixtures: TP-005 ---
+    // --- Fixtures: refused value type ---
 
-    /** A value type whose class-level deserializer override already fails router construction (F1). */
+    /** A value type whose class-level deserializer override already fails router construction. */
     @JsonDeserialize(using = RefusedValue.Deserializer.class)
     static final class RefusedValue {
 
@@ -891,7 +887,7 @@ class MapValueDescriptionTest {
         public Map<String, RefusedValue> values;
     }
 
-    // --- Fixtures: TP-007 (mirroring the eight hardened-annotation-shapes MCP goldens) ---
+    // --- Fixtures: member-level additionalProperties annotations (mirroring the eight hardened MCP goldens) ---
 
     /** Member-level Swagger additionalProperties = TRUE on a map-valued field. */
     static final class MemberLevelTrue {
@@ -1015,7 +1011,7 @@ class MapValueDescriptionTest {
         public String label;
     }
 
-    /** A bean (non-Map) value type carrying a class-level FALSE: TP-007's own sensitivity control. */
+    /** A bean (non-Map) value type carrying a class-level FALSE: the sensitivity control. */
     @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
     static final class ClosedBean {
 
@@ -1030,7 +1026,7 @@ class MapValueDescriptionTest {
         public ClosedBean detail;
     }
 
-    // --- Fixtures: TP-008 (N9) ---
+    // --- Fixtures: nested map extras ---
 
     /** An any-setter whose extras value is itself a nested, type-use-constrained map. */
     static final class NestedMapExtrasHolder {
@@ -1038,12 +1034,12 @@ class MapValueDescriptionTest {
         /** An ordinary property. */
         public String name;
 
-        /** The any-setter's backing storage: a nested map value (N9). */
+        /** The any-setter's backing storage: a nested map value. */
         @JsonAnySetter
         public Map<String, Map<String, @Size(max = 3) String>> extras = new LinkedHashMap<>();
     }
 
-    /** A plain, non-nested any-setter extras value: TP-008's own sensitivity control. */
+    /** A plain, non-nested any-setter extras value: the sensitivity control. */
     static final class PlainMapExtrasHolder {
 
         /** An ordinary property. */
@@ -1054,7 +1050,7 @@ class MapValueDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: review fix (Critical) — a reordered Map subclass's own value slot ---
+    // --- Fixtures: a reordered Map subclass's own value slot ---
 
     /**
      * A map subclass whose own type parameters are written value-first ({@code V, K}), while its

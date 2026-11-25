@@ -28,28 +28,27 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * rest-023 T004 ({@code D004}). Several any-setters (a parent's own and at least one {@code
- * @JsonUnwrapped} child's own) that Jackson feeds the same wire key into now describe that key's shared
- * {@code additionalProperties} schema as the conjunction of every any-setter's own value schema — {@code
- * {"allOf": [...]}}, composed directly by the shared value-position renderer (T001), replacing the
- * previous single-slot rule under which only one any-setter's own value schema was described.
+ * Several any-setters (a parent's own and at least one {@code @JsonUnwrapped} child's own) that Jackson
+ * feeds the same wire key into describe that key's shared {@code additionalProperties} schema as the
+ * conjunction of every any-setter's own value schema — {@code {"allOf": [...]}}, composed directly by
+ * the shared value-position renderer.
  *
  * <ul>
- *   <li><strong>TP-001</strong> — the shared key's {@code additionalProperties} schema is the
- *       conjunction of both any-setters' own value schemas, including a type-use constraint; a
- *       parent-only control stays unaffected, a three-any-setter set extends the conjunction to every
- *       member, {@code maxProperties} takes the stricter value rather than composing an {@code allOf} of
- *       {@code maxProperties} values, and a child's own named property is described by the child's own
- *       schema alone, never conjoined with the parent's any-setter.
- *   <li><strong>TP-003</strong> — the unconditional inline rule (architecture round-2 condition C5,
- *       corrected round-3 R4): a conjunction subschema whose own value type is a bean without a profile
- *       override is always rendered inline, never {@code $ref}'d; a profile-overridden value type keeps
- *       its override fragment; a self-referential value type fails with the single bounded diagnostic,
- *       never a {@code StackOverflowError} and never a silent standard {@code $defs} {@code $ref}.
+ *   <li>The shared key's {@code additionalProperties} schema is the conjunction of both any-setters'
+ *       own value schemas, including a type-use constraint; a parent-only control stays unaffected, a
+ *       three-any-setter set extends the conjunction to every member, {@code maxProperties} takes the
+ *       stricter value rather than composing an {@code allOf} of {@code maxProperties} values, and a
+ *       child's own named property is described by the child's own schema alone, never conjoined with
+ *       the parent's any-setter.
+ *   <li>The unconditional inline rule: a conjunction subschema whose own value type is a bean without a
+ *       profile override is always rendered inline, never {@code $ref}'d; a profile-overridden value
+ *       type keeps its override fragment; a self-referential value type fails with the single bounded
+ *       diagnostic, never a {@code StackOverflowError} and never a silent standard {@code $defs}
+ *       {@code $ref}.
  * </ul>
  *
  * <p>Every document is generated under the registry's built-in {@code vertique} profile, except where a
- * test declares its own profile (TP-003(b)'s override companion).
+ * test declares its own profile (the override companion).
  */
 class UnwrappedAnySetterExtrasConjunctionTest {
 
@@ -89,7 +88,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         return new JsonMapperProfile() {
             @Override
             public JsonProfileId id() {
-                return JsonProfileId.of("t004-tp003b-override");
+                return JsonProfileId.of("conjunction-override");
             }
 
             @Override
@@ -105,38 +104,29 @@ class UnwrappedAnySetterExtrasConjunctionTest {
     }
 
     // ==================================================================================================
-    // TP-001 — the shared key's additionalProperties schema is the conjunction of both any-setters'
-    // own constraints, including a type-use constraint (D004; UW-2AS,
-    // evidence/probe-report-327531b4.md).
+    // The shared key's additionalProperties schema is the conjunction of both any-setters' own
+    // constraints, including a type-use constraint.
     // ==================================================================================================
 
     /**
-     * Given: UW-2AS — a parent declaring its own, type-use-constrained any-setter ({@code
+     * Given: a parent declaring its own, type-use-constrained any-setter ({@code
      * Map<String,@Size(min=2) String>}) and an {@code @JsonUnwrapped} child declaring its own,
      * differently-type-use-constrained any-setter ({@code Map<String,@Size(max=3) String>}).
      *
      * <p>When: the input-direction schema is generated for the parent type.
      *
-     * <p>Then (coordinator ruling, binding — the observable outcome is the folded document): the
-     * describer's own {@link ValuePositionRenderer#renderConjunction} composes the shared wire key's
-     * {@code additionalProperties} schema as {@code {"allOf": [<parent-value-schema>,
-     * <child-value-schema>]}}, and the generator's {@code AllOfFold} post-pass (D004/C5;
-     * {@code AnnotationJsonSchemaGenerator.java:774}) folds that {@code allOf} of two plain parts into
-     * one object before the document is final — so the literal {@code allOf} node is never visible here;
-     * what must hold is that both any-setters' own constraints survive into the folded value schema. The
-     * parent's own {@code minLength: 2} — a bound that cannot be produced by the child's own {@code
-     * @Size(max=3)} alone — is what proves the parent's own part was actually conjoined, not silently
-     * dropped in favor of the child's.
-     *
-     * <p>Base ({@code 06404b58}, T003 merge, pre-T004 production): red — the pre-change generator
-     * describes only one any-setter's own value schema for the shared key, never the conjunction (L02,
-     * {@code evidence/T004.md}): the unwrapped child's own schema alone wins ({@code
-     * {"maxLength":3,"type":"string"}}), carrying no {@code minLength} at all — confirmed by reasoning
-     * against that measured baseline in {@code scratchpad/t004-l02/}, not by reverting today's production
-     * to re-observe.
+     * <p>Then (the observable outcome is the folded document): the describer's own {@link
+     * ValuePositionRenderer#renderConjunction} composes the shared wire key's {@code
+     * additionalProperties} schema as {@code {"allOf": [<parent-value-schema>,
+     * <child-value-schema>]}}, and the generator's {@code AllOfFold} post-pass folds that {@code allOf}
+     * of two plain parts into one object before the document is final — so the literal {@code allOf}
+     * node is never visible here; what must hold is that both any-setters' own constraints survive into
+     * the folded value schema. The parent's own {@code minLength: 2} — a bound that cannot be produced by
+     * the child's own {@code @Size(max=3)} alone — is what proves the parent's own part was actually
+     * conjoined, not silently dropped in favor of the child's.
      */
     @Test
-    @DisplayName("TP-001: a shared any-setter key's folded value schema carries both any-setters' own"
+    @DisplayName("a shared any-setter key's folded value schema carries both any-setters' own"
             + " constraints, including a type-use constraint")
     void sharedKeyDescribesBothAnySettersOwnConstraintAsAllOf() {
         JsonNode document = inputDocument(UwTwoAnySettersParent.class);
@@ -158,7 +148,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      * — must stay unaffected: no {@code allOf}, the parent's own plain value schema.
      */
     @Test
-    @DisplayName("TP-001 sensitivity (i): a parent-only any-setter, with no child any-setter, is"
+    @DisplayName("sensitivity (i): a parent-only any-setter, with no child any-setter, is"
             + " unaffected — no allOf, the plain value schema")
     void parentOnlyAnySetterIsUnaffectedByTheConjunctionRule() {
         JsonNode document = inputDocument(UwParentOnlyParent.class);
@@ -178,9 +168,9 @@ class UnwrappedAnySetterExtrasConjunctionTest {
     /**
      * Sensitivity proof (ii): a same-level, non-nested, non-polymorphic three-any-setter set (the
      * parent's own and two unwrapped children's own) extends the conjunction to every any-setter in the
-     * set, not only two — closing the coverage gap round-1 review found.
+     * set, not only two.
      *
-     * <p>Coordinator ruling, binding: the folded document, not a literal {@code allOf}, is the
+     * <p>The folded document, not a literal {@code allOf}, is the
      * observable outcome (see {@link #sharedKeyDescribesBothAnySettersOwnConstraintAsAllOf()}'s own
      * Javadoc). The parent's own bound is {@code @Size(min=2)} rather than {@code @Size(max=5)}
      * specifically because {@code minLength} cannot be produced by either child's own constraint, so its
@@ -188,7 +178,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      * conjoined.
      */
     @Test
-    @DisplayName("TP-001 sensitivity (ii): the folded value schema carries every any-setter's own"
+    @DisplayName("sensitivity (ii): the folded value schema carries every any-setter's own"
             + " constraint in a three-any-setter, same-level set, not only two")
     void conjunctionExtendsToEveryAnySetterInAThreeAnySetterSet() {
         JsonNode document = inputDocument(UwThreeAnySettersParent.class);
@@ -216,7 +206,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      * #stricterMaxPropertiesWinsAcrossTheConjunctionMirrored()} for the reversed-roles companion.
      */
     @Test
-    @DisplayName("TP-001 sensitivity (iii): the stricter maxProperties wins across the conjunction when"
+    @DisplayName("sensitivity (iii): the stricter maxProperties wins across the conjunction when"
             + " the parent is the stricter side, never composed as an allOf of maxProperties values")
     void stricterMaxPropertiesWinsAcrossTheConjunctionRatherThanComposingAnAllOf() {
         JsonNode document = inputDocument(UwStricterWinsParent.class);
@@ -246,7 +236,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      * genuinely comparing bounds.
      */
     @Test
-    @DisplayName("TP-001 sensitivity (iii) mirror: the stricter maxProperties still wins when the child,"
+    @DisplayName("sensitivity (iii) mirror: the stricter maxProperties still wins when the child,"
             + " not the parent, is the stricter side")
     void stricterMaxPropertiesWinsAcrossTheConjunctionMirrored() {
         JsonNode document = inputDocument(UwStricterWinsMirrorParent.class);
@@ -264,7 +254,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      * parent's any-setter's own schema.
      */
     @Test
-    @DisplayName("TP-001 sensitivity (iv): a child's own named key is described by the child's own"
+    @DisplayName("sensitivity (iv): a child's own named key is described by the child's own"
             + " schema alone, never conjoined with the parent's any-setter")
     void childsOwnNamedKeyIsDescribedByTheChildsOwnSchemaAloneNeverConjoined() {
         JsonNode document = inputDocument(UwNamedKeyParent.class);
@@ -279,15 +269,14 @@ class UnwrappedAnySetterExtrasConjunctionTest {
                 nameSchema.has("allOf"),
                 "a named property of the child must never be conjoined with the parent's any-setter's"
                         + " own schema, even though Jackson's own unwrapped-composition semantics still"
-                        + " feed that key to the parent's any-setter too (D004's disclosed residual);"
+                        + " feed that key to the parent's any-setter too (a known residual);"
                         + " document: " + document);
     }
 
     // ==================================================================================================
-    // TP-003 — the unconditional inline rule (architecture round-2 condition C5, corrected round-3 R4):
-    // a conjunction subschema whose own value type is a bean without a profile override is always
-    // inlined; an overridden value type keeps its override fragment; a self-referential value type
-    // fails with the single bounded diagnostic.
+    // The unconditional inline rule: a conjunction subschema whose own value type is a bean without a
+    // profile override is always inlined; an overridden value type keeps its override fragment; a
+    // self-referential value type fails with the single bounded diagnostic.
     // ==================================================================================================
 
     /**
@@ -297,28 +286,17 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      *
      * <p>When: the input-direction schema is generated for the parent type.
      *
-     * <p>Then (coordinator ruling, binding): both any-setters' own subschemas are inlined through the
-     * describer's own composer (C5's unconditional inline rule) — never {@code $ref} — and then folded by
-     * the generator's {@code AllOfFold} post-pass into one object schema carrying both beans' own
-     * property sets with their own constraints, since neither part carries a {@code $ref} and the two
-     * parts do not conflict. This is the rule's own proof, the non-overridden, non-self-referential
-     * companion TP-003(b)/(c) are measured against.
-     *
-     * <p>Base ({@code 06404b58}, pre-T004 production): red — measured baseline (L02, {@code
-     * evidence/T004.md}): the pre-change generator renders a single, ad hoc merged object schema carrying
-     * both {@code label} and {@code code} directly under one {@code properties} map from an existing
-     * mechanism unrelated to this task's own renderer-composed conjunction — an accidental partial merge,
-     * not this rule's own inline-then-fold outcome. The folded shape this test now asserts is
-     * byte-identical to that accidental baseline only because both fixture beans are plain and
-     * non-conflicting; TP-003(b)'s own override companion is where the two mechanisms provably diverge.
-     *
-     * <p>Naming note: the contract's own TP-003 label covers cases (a)-(c) across this method and its two
-     * sibling methods below ({@link #overriddenValueTypeKeepsItsOverrideFragmentNeverInlinedIntoTheConjunction()}
-     * for (b), {@link #selfReferentialValueTypeFailsWithTheSingleBoundedDiagnostic()} for (c)).
+     * <p>Then: both any-setters' own subschemas are inlined through the describer's own composer (the
+     * unconditional inline rule) — never {@code $ref} — and then folded by the generator's {@code
+     * AllOfFold} post-pass into one object schema carrying both beans' own property sets with their own
+     * constraints, since neither part carries a {@code $ref} and the two parts do not conflict. This is
+     * the non-overridden, non-self-referential companion of {@link
+     * #overriddenValueTypeKeepsItsOverrideFragmentNeverInlinedIntoTheConjunction()} and {@link
+     * #selfReferentialValueTypeFailsWithTheSingleBoundedDiagnostic()}.
      */
     @Test
-    @DisplayName("TP-003(a): an object-valued two-any-setter conjunction inlines both subschemas and"
-            + " folds them into one object, never $ref (C5)")
+    @DisplayName("an object-valued two-any-setter conjunction inlines both subschemas and"
+            + " folds them into one object, never $ref")
     void objectValuedPairInlinesBothSubschemasAndFolds() {
         JsonNode document = inputDocument(ConjObjectValuedParent.class);
         JsonNode additionalProperties = document.path("additionalProperties");
@@ -330,47 +308,39 @@ class UnwrappedAnySetterExtrasConjunctionTest {
                 "the shared key's folded value schema must be one object carrying both beans' own"
                         + " property sets with their own constraints — the parent's own ConjLeft.label"
                         + " (@Size(max=3)) and the unwrapped child's own ConjRight.code (@Size(max=2)) —"
-                        + " composed as allOf by the renderer's own inline composition (C5: every"
+                        + " composed as allOf by the renderer's own inline composition (every"
                         + " non-overridden bean-valued conjunction member is inlined, never $ref'd) and"
                         + " folded into one object by the generator (AllOfFold); document: " + document);
         assertFalse(
                 additionalProperties.toString().contains("$ref"),
                 "no part of the folded value schema may carry a $ref anywhere beneath it — both value"
-                        + " types are inlined, per C5's unconditional rule; document: " + document);
+                        + " types are inlined, per the unconditional inline rule; document: " + document);
     }
 
     /**
-     * TP-003(b): a companion fixture where one any-setter's own value type carries a profile override
+     * A companion fixture where one any-setter's own value type carries a profile override
      * ({@code validatedProfile.fragmentFor(V) != null}) — asserts the overridden value type's own
      * subschema stays the override fragment (never inlined from its bean description, which would
      * silently drop the override fragment), while the non-overridden any-setter's own bean-valued
-     * subschema still inlines, per C5's unconditional rule.
+     * subschema still inlines, per the unconditional inline rule.
      *
      * <p>The override fragment is object-compatible ({@code type: object}), matching the non-overridden
      * {@code ConjLeft} part's own {@code type: object} — unlike a scalar override fragment, which
      * conjoins a disjoint explicit {@code type} against the inlined object part and is genuinely
-     * unsatisfiable ({@link DisjointTypeDetector} correctly refuses it; that is a different, task-unrelated
-     * fixture shape, not this one). Coordinator ruling, binding: because this part carries a {@code $ref}
-     * (the override carve-out, F4), {@code AllOfFold} refuses to <em>dereference</em> it — the {@code $ref}
-     * is never expanded or dropped, and its own content is never silently replaced by a reflection-built
-     * bean description. Measured (not the ruling's own literal prediction of a two-element {@code allOf}
-     * array): 2020-12 permits {@code $ref} as a sibling keyword, so the fold still merges the
+     * unsatisfiable ({@link DisjointTypeDetector} correctly refuses it; that is a different fixture
+     * shape, not this one). Because this part carries a {@code $ref} (the override carve-out), {@code
+     * AllOfFold} refuses to <em>dereference</em> it — the {@code $ref} is never expanded or dropped, and
+     * its own content is never silently replaced by a reflection-built bean description. The outcome is
+     * not a two-element {@code allOf} array: 2020-12 permits {@code $ref} as a sibling keyword, so the
+     * fold still merges the
      * non-overridden {@code ConjLeft} part's own {@code label} property directly alongside the {@code
      * $ref} into <strong>one</strong> object — {@code additionalProperties} itself carries {@code $ref},
      * {@code type: object}, and {@code properties.label}, with no {@code allOf} wrapper — while the {@code
      * $ref} still resolves to the override fragment's own content ({@code code.maxLength: 9}), never
      * {@code ConjOverriddenRight}'s own reflection-built bean description ({@code code.maxLength: 2}).
-     *
-     * <p>Base ({@code 06404b58}, pre-T004 production): red, as a startup error rather than a failed
-     * assertion — measured baseline (L02, {@code evidence/T004.md}) with the original scalar override
-     * fragment: generation itself throws {@code JsonSchemaGenerationException} ("conjoins disjoint
-     * explicit \"type\" declarations, the last of which is [string]"), thrown by the pre-existing,
-     * task-unrelated {@code DisjointTypeDetector} guard — the override fragment's own {@code type: string}
-     * collided with the accidental partial-merge object schema TP-003(a)'s own baseline measured, before
-     * this task's own conjunction rule (or its override carve-out) existed to keep the two apart.
      */
     @Test
-    @DisplayName("TP-003(b): a conjunction subschema whose value type carries a profile override stays"
+    @DisplayName("a conjunction subschema whose value type carries a profile override stays"
             + " the override fragment's own $ref, never inlined, and survives folding")
     void overriddenValueTypeKeepsItsOverrideFragmentNeverInlinedIntoTheConjunction() {
         JsonMapperProfile withOverride = overrideProfile(
@@ -398,7 +368,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         assertTrue(
                 additionalProperties.path("properties").has("label"),
                 "the non-overridden any-setter's own bean-valued subschema (ConjLeft.label) must still be"
-                        + " inlined and merged alongside the $ref, per C5's unconditional rule,"
+                        + " inlined and merged alongside the $ref, per the unconditional inline rule,"
                         + " distinguishing the override carve-out from a general retreat to $ref;"
                         + " document: " + document);
 
@@ -420,20 +390,13 @@ class UnwrappedAnySetterExtrasConjunctionTest {
     }
 
     /**
-     * TP-003(c): a companion fixture where one any-setter's own value type is self-referential (a bean
-     * whose own field is the same type) — asserts the single, bounded-diagnostic outcome (corrected,
-     * round-3 security review MEDIUM): never a {@code StackOverflowError}, and never a silent {@code
-     * $ref} to a standard, reflection-built {@code $defs} entry.
-     *
-     * <p>Expected initial result: red (this test's own {@code assertThrows} fails) — measured baseline
-     * (L02, {@code evidence/T004.md}): generation succeeds today, throwing nothing — never a {@code
-     * StackOverflowError}, but also never the bounded diagnostic this test asserts. The pre-change
-     * generator's own accidental partial-merge mechanism (see TP-003(a)'s own measured baseline) renders a
-     * document for this self-referential fixture without recursing into it at all, so main-equivalent
-     * behavior here is silent success, not a diagnostic or an overflow.
+     * A companion fixture where one any-setter's own value type is self-referential (a bean
+     * whose own field is the same type) — asserts the single, bounded-diagnostic outcome: never a {@code
+     * StackOverflowError}, and never a silent {@code $ref} to a standard, reflection-built {@code $defs}
+     * entry.
      */
     @Test
-    @DisplayName("TP-003(c): a self-referential conjunction value type fails with the single, bounded"
+    @DisplayName("a self-referential conjunction value type fails with the single, bounded"
             + " diagnostic, never a StackOverflowError")
     void selfReferentialValueTypeFailsWithTheSingleBoundedDiagnostic() {
         JsonSchemaGenerationException failure =
@@ -451,7 +414,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
     }
 
     /**
-     * TP-003(c) companion (security review recommendation): a mutually recursive pair — the parent's own
+     * A mutually recursive pair — the parent's own
      * any-setter value type and the unwrapped child's own any-setter value type each hold a field of the
      * other type, rather than either holding a field of its own type — so the cycle only closes once both
      * conjunction members are on the inline/description stack together. Asserts the same single, bounded
@@ -471,7 +434,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
      * the other call site instead; either is an equally bounded outcome.
      */
     @Test
-    @DisplayName("TP-003(c) companion: a mutually recursive pair of conjunction value types fails with the"
+    @DisplayName("a mutually recursive pair of conjunction value types fails with the"
             + " single, bounded diagnostic, never a StackOverflowError")
     void mutuallyRecursiveValueTypesFailWithTheSingleBoundedDiagnostic() {
         JsonSchemaGenerationException failure =
@@ -499,20 +462,20 @@ class UnwrappedAnySetterExtrasConjunctionTest {
                         + "); was: " + failure.getMessage());
     }
 
-    // --- Fixtures: TP-001 primary (UW-2AS) ---
+    // --- Fixtures: the primary shape ---
 
-    /** UW-2AS child: a named property and a type-use-constrained any-setter. */
+    /** Child: a named property and a type-use-constrained any-setter. */
     static final class UwTwoAnySettersChild {
 
         /** A named property, folded onto the parent alongside the extras conjunction. */
         public String name;
 
-        /** The child's own any-setter, type-use-constrained (N16 shape). */
+        /** The child's own any-setter, type-use-constrained. */
         @JsonAnySetter
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 
-    /** UW-2AS parent: its own type-use-constrained any-setter, plus the unwrapped child's own. */
+    /** Parent: its own type-use-constrained any-setter, plus the unwrapped child's own. */
     static final class UwTwoAnySettersParent {
 
         /** The unwrapped child, declaring its own any-setter. */
@@ -528,7 +491,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, @Size(min = 2) String> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-001 sensitivity (i) — parent-only control ---
+    // --- Fixtures: sensitivity (i) — parent-only control ---
 
     /** A child with no any-setter of its own: the parent's own any-setter is the only one. */
     static final class UwParentOnlyChild {
@@ -549,7 +512,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-001 sensitivity (ii) — three same-level any-setters ---
+    // --- Fixtures: sensitivity (ii) — three same-level any-setters ---
 
     /** The first unwrapped sibling, declaring its own, differently-constrained any-setter. */
     static final class UwThreeAnySettersChildA {
@@ -587,7 +550,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, @Size(min = 2) String> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-001 sensitivity (iii) — stricter-wins maxProperties ---
+    // --- Fixtures: sensitivity (iii) — stricter-wins maxProperties ---
 
     /** A child whose own any-setter's map is bound with a looser @Size than the parent's own. */
     static final class UwStricterWinsChild {
@@ -611,7 +574,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-001 sensitivity (iii) mirror — roles reversed (child stricter) ---
+    // --- Fixtures: sensitivity (iii) mirror — roles reversed (child stricter) ---
 
     /** A child whose own any-setter's map is bound with a stricter @Size than the parent's own. */
     static final class UwStricterWinsMirrorChild {
@@ -635,7 +598,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-001 sensitivity (iv) — child named key ---
+    // --- Fixtures: sensitivity (iv) — child named key ---
 
     /** A child declaring a named, constrained property beside its own any-setter. */
     static final class UwNamedKeyChild {
@@ -661,7 +624,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-003(a) — object-valued two-any-setter pair ---
+    // --- Fixtures: object-valued two-any-setter pair ---
 
     /** The parent's own any-setter value type: a bean with its own constraint. */
     static final class ConjLeft {
@@ -699,7 +662,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, ConjLeft> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-003(b) — one value type carries a profile override ---
+    // --- Fixtures: one value type carries a profile override ---
 
     /** The same shape as {@link ConjRight}, kept distinct so the override applies to this fixture alone. */
     static final class ConjOverriddenRight {
@@ -729,7 +692,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, ConjLeft> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-003(c) — one value type is self-referential ---
+    // --- Fixtures: one value type is self-referential ---
 
     /** A bean value type whose own field is the same type — the self-referential shape under test. */
     static final class ConjSelfReferentialRight {
@@ -761,7 +724,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         public Map<String, ConjLeft> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: TP-003(c) companion — mutually recursive value types (security review) ---
+    // --- Fixtures: mutually recursive value types ---
 
     /** A bean value type whose own field is {@link MutualRight} — half of the mutual-recursion pair. */
     static final class MutualLeft {

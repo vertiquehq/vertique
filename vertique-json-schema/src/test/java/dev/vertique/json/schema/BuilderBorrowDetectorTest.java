@@ -173,9 +173,8 @@ class BuilderBorrowDetectorTest {
 
         assertTrue(
                 BuilderBorrowDetector.isSoundBorrow(setter, HandWrittenShapedDto.class, field),
-                "the owner ruling tolerates a hand-written builder resolving when it reproduces the shape"
-                        + " exactly — it allows a hand-written builder to go unresolved, it never requires"
-                        + " it");
+                "a hand-written builder is tolerated resolving when it reproduces the shape exactly — a"
+                        + " hand-written builder may go unresolved, but is never required to");
     }
 
     @Test

@@ -44,8 +44,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * JSON pointer — a JSON Schema {@code $anchor}, which the Swagger module publishes verbatim from a
  * {@code @Schema(ref = ...)} value — generates cleanly: the closure follows only pointers it can
  * locally resolve, so an unresolvable reference is skipped rather than crashing generation. Second,
- * whatever escapes a post-generation walk surfaces as a bounded {@link JsonSchemaGenerationException}
- * (FR-JSON-075/076), never as a raw runtime exception carrying unbounded third-party text.
+ * whatever escapes a post-generation walk surfaces as a bounded {@link JsonSchemaGenerationException},
+ * never as a raw runtime exception carrying unbounded third-party text.
  *
  * <p>The class additionally pins the walks' <strong>position awareness</strong>. Draft 2020-12 treats
  * an unknown keyword as an annotation — arbitrary JSON data by specification — so a walk that

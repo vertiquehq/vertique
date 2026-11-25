@@ -34,16 +34,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Three bounded corrections to the deserializer-driven input description, each closing a loosening
- * against {@code main} (7c50dd21) the owner required before accepting the hybrid generator (design
- * proof, issue594-v4 shapes CR1/CR1c, DC1/DC1c, N6/CI2/CI3):
+ * Three behaviors of the deserializer-driven input description:
  *
  * <ul>
- *   <li><strong>Change 1</strong> — a creator parameter renamed away from every member, carrying no
+ *   <li><strong>Creator parameters</strong> — a creator parameter renamed away from every member, carrying no
  *       constraint of its own, is excluded entirely rather than published bare.
- *   <li><strong>Change 2</strong> — a delegating {@code @JsonCreator} is refused exactly like a
+ *   <li><strong>Delegating creators</strong> — a delegating {@code @JsonCreator} is refused exactly like a
  *       type-level custom deserializer, remediable the same way (a profile override).
- *   <li><strong>Change 3</strong> — case-insensitive binding (mapper-wide, class-level, or
+ *   <li><strong>Case-insensitivity</strong> — case-insensitive binding (mapper-wide, class-level, or
  *       member-level) is described with {@code patternProperties} instead of refused outright.
  * </ul>
  */
@@ -87,12 +85,12 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         return document.path("properties");
     }
 
-    // ================================================================== Change 1: creator parameters
+    // ================================================================== creator parameters
 
     @Test
     @DisplayName("A creator parameter renamed away from its constrained field is excluded, not published bare")
     void unjoinableConstraintFreeCreatorParameterIsExcludedOnAnAnySetterType() {
-        JsonNode document = inputDocument(CR1AnySetter.class);
+        JsonNode document = inputDocument(RenamedCreatorParameterOnAnySetterType.class);
 
         assertEquals(
                 "{\"maximum\":10,\"type\":\"integer\"}",
@@ -101,17 +99,17 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         assertFalse(
                 properties(document).has("amount_cents"),
                 "the unjoinable creator parameter must not be published bare — that drops the @Max(10) the"
-                        + " field carries and lets 999 through where main rejected it (design proof CR1c);"
+                        + " field carries and lets 999 through;"
                         + " document: " + document);
         JsonNode reservedNames = document.path("propertyNames").path("not").path("enum");
         if (reservedNames.isArray()) {
             for (JsonNode reserved : reservedNames) {
                 assertFalse(
                         "amount_cents".equals(reserved.asText()),
-                        "the unjoinable creator parameter must not be reserved either: main published no"
-                                + " property by this name and reserved none, so a key by that name must still"
-                                + " reach the extras schema unconstrained rather than being rejected outright;"
-                                + " document: " + document);
+                        "the unjoinable creator parameter must not be reserved either: no property"
+                                + " is published by this name and none is reserved, so a key by that name must"
+                                + " still reach the extras schema unconstrained rather than being rejected"
+                                + " outright; document: " + document);
             }
         }
     }
@@ -119,14 +117,14 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @Test
     @DisplayName("On a closed type the same shape publishes only the field-bound property")
     void unjoinableConstraintFreeCreatorParameterIsExcludedOnAClosedType() {
-        JsonNode document = inputDocument(CR1Closed.class);
+        JsonNode document = inputDocument(RenamedCreatorParameterClosedType.class);
 
         assertEquals(
                 "{\"amount\":{\"maximum\":10,\"type\":\"integer\"}}",
                 properties(document).toString(),
-                "a closed type must publish exactly the field-bound property, matching main byte for byte:"
-                        + " amount_cents is not published, so the MCP hardener's additionalProperties: false"
-                        + " rejects it as an unrecognized key, exactly as main did; document: " + document);
+                "a closed type must publish exactly the field-bound property, amount_cents"
+                        + " is not published, so the MCP hardener's additionalProperties: false rejects it as an"
+                        + " unrecognized key; document: " + document);
         assertFalse(
                 document.has("propertyNames"), "nothing is left to reserve on a closed type; document: " + document);
     }
@@ -144,11 +142,11 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     }
 
     @Test
-    @DisplayName("ADVERSARIAL: a creator parameter renamed to a name differing from a field only by case is excluded")
+    @DisplayName("a creator parameter renamed to a name differing from a field only by case is excluded")
     void creatorParameterDifferingFromItsFieldOnlyByCaseIsExcluded() {
         // Under ordinary (case-sensitive) binding, "Amount" and "amount" are different property names
         // to Jackson too — it does not join them into one BeanPropertyDefinition — so the join this
-        // generator attempts must fail exactly the way it fails for an unrelated name (CR1c), not
+        // generator attempts must fail exactly the way it fails for an unrelated name, not
         // succeed by accident through a case-insensitive string comparison in backingField or
         // hasAccessorDerivedProperty.
         JsonNode document = inputDocument(CaseOnlyRenamedCreatorParameter.class);
@@ -161,21 +159,21 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                         + " document: " + document);
     }
 
-    // ================================================================== Change 2: delegating creators
+    // ================================================================== delegating creators
 
     @Test
     @DisplayName("A delegating creator is refused exactly like a type-level custom deserializer")
     void delegatingCreatorIsRefusedWithoutAnOverride() {
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
-                () -> inputDocument(DC1Delegating.class),
+                () -> inputDocument(DelegatingCreatorOnAnySetterType.class),
                 "a delegating creator must be refused: its wire shape is whatever the delegate type"
                         + " accepts, which is not this type's own named properties");
 
         String message = failure.getMessage();
         assertNotNull(message, "the refusal must carry a message");
         assertTrue(
-                message.contains(DC1Delegating.class.getSimpleName()),
+                message.contains(DelegatingCreatorOnAnySetterType.class.getSimpleName()),
                 "the message must name the refused type; was: " + message);
         assertTrue(
                 message.contains("JsonSchemaTypeOverride"),
@@ -192,10 +190,11 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         String marker = "delegating-override-marker";
         JsonMapperProfile overridden = profile(
                 new ObjectMapper(),
-                List.of(JsonSchemaTypeOverride.input(DC1Delegating.class, HardeningFixtures.markerFragment(marker))));
+                List.of(JsonSchemaTypeOverride.input(
+                        DelegatingCreatorOnAnySetterType.class, HardeningFixtures.markerFragment(marker))));
 
-        String document =
-                AnnotationJsonSchemaGenerator.forInputProfile(overridden).generateCanonical(DC1Delegating.class);
+        String document = AnnotationJsonSchemaGenerator.forInputProfile(overridden)
+                .generateCanonical(DelegatingCreatorOnAnySetterType.class);
 
         assertTrue(
                 document.contains(marker),
@@ -214,14 +213,14 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                 "the message must name the concrete subtype that actually refused; was: " + failure.getMessage());
     }
 
-    // ================================================================== Change 3: case-insensitivity
+    // ================================================================== case-insensitivity
 
     @Test
     @DisplayName("Mapper-wide case-insensitive binding is described with patternProperties")
     void mapperWideCaseInsensitiveTypePublishesPatternProperties() {
         ObjectMapper caseInsensitive =
                 new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
-        JsonNode document = inputDocument(N6CaseInsensitiveByMapper.class, caseInsensitive);
+        JsonNode document = inputDocument(CaseInsensitiveByMapper.class, caseInsensitive);
 
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
@@ -233,7 +232,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @Test
     @DisplayName("Class-level @JsonFormat case-insensitive binding is described with patternProperties")
     void classLevelCaseInsensitiveTypePublishesPatternProperties() {
-        JsonNode document = inputDocument(CI2CaseInsensitiveByClass.class);
+        JsonNode document = inputDocument(CaseInsensitiveByClass.class);
 
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
@@ -245,7 +244,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @Test
     @DisplayName("Member-level @JsonFormat case-insensitive binding is described inline at that position")
     void memberLevelCaseInsensitiveNestedTypeIsDescribedInline() {
-        JsonNode document = inputDocument(CI3Holder.class);
+        JsonNode document = inputDocument(MemberCaseInsensitiveHolder.class);
 
         JsonNode child = properties(document).path("child");
         assertFalse(
@@ -268,17 +267,17 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                 "an ordinary sibling property must be unaffected; document: " + document);
     }
 
-    // ================================================================== F4: member-level CI inline refusals
+    // ================================================================== member-level case-insensitive inline refusals
 
     @Test
-    @DisplayName("F4: a delegating creator behind a member-level case-insensitive @JsonFormat is refused, not"
+    @DisplayName("a delegating creator behind a member-level case-insensitive @JsonFormat is refused, not"
             + " described inline (the same refusal describe() runs for the type at any other position)")
     void memberLevelCaseInsensitiveDelegatingChildIsRefused() {
-        JsonSchemaGenerationException failure =
-                assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(CI6Holder.class));
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class, () -> inputDocument(MemberCaseInsensitiveDelegatingHolder.class));
 
         assertTrue(
-                failure.getMessage().contains(CI6DelegatingChild.class.getSimpleName()),
+                failure.getMessage().contains(MemberCaseInsensitiveDelegatingChild.class.getSimpleName()),
                 "was: " + failure.getMessage());
         assertTrue(
                 failure.getMessage().contains("JsonSchemaTypeOverride"),
@@ -286,17 +285,17 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     }
 
     @Test
-    @DisplayName("F4: a profile override declared for the case-insensitive child's type is honored at that"
+    @DisplayName("a profile override declared for the case-insensitive child's type is honored at that"
             + " position, not silently ignored by the inline path")
     void memberLevelCaseInsensitiveOverrideIsHonored() {
         String marker = "ci-delegating-override-marker";
         JsonMapperProfile overridden = profile(
                 new ObjectMapper(),
                 List.of(JsonSchemaTypeOverride.input(
-                        CI6DelegatingChild.class, HardeningFixtures.markerFragment(marker))));
+                        MemberCaseInsensitiveDelegatingChild.class, HardeningFixtures.markerFragment(marker))));
 
-        String document =
-                AnnotationJsonSchemaGenerator.forInputProfile(overridden).generateCanonical(CI6Holder.class);
+        String document = AnnotationJsonSchemaGenerator.forInputProfile(overridden)
+                .generateCanonical(MemberCaseInsensitiveDelegatingHolder.class);
 
         assertTrue(
                 document.contains(marker),
@@ -304,31 +303,27 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                         + " other position, never be bypassed by the inline description; document: " + document);
     }
 
-    // ============================================ S2: scalar creator on the member-level CI inline path
+    // ============================================ scalar creator on the member-level inline path
 
     /**
-     * S2 (spike/deserializer-driven-schema round 4 ruling): {@code describe()}'s own root path checks
-     * {@code scalarCreator(instantiator)} before ever building an object schema, so a from-string
-     * scalar-creator type is described as {@code {"type":"string"}} wherever it is referenced by
-     * {@code $ref}. The member-level case-insensitive inline path ({@code propertySchema}, F4) builds its
-     * schema by hand instead of asking Victools for the member's type, and never runs that same
-     * {@code scalarCreator} check — it calls {@code populateObjectSchema} unconditionally — so a
-     * scalar-creator type reached only through this inline path is described as an object instead.
-     *
-     * <p>The owner ruling records the fix direction (apply the scalar-creator branch on the inline path
-     * too) but this class only authors the proof, never the production change.
+     * {@code describe()}'s own root path checks {@code scalarCreator(instantiator)} before ever
+     * building an object schema, so a from-string scalar-creator type is described as
+     * {@code {"type":"string"}} wherever it is referenced by {@code $ref}. The member-level
+     * case-insensitive inline path ({@code propertySchema}) builds its schema by hand instead of
+     * asking Victools for the member's type, so it must apply that same {@code scalarCreator} check
+     * rather than describe a scalar-creator type as an object.
      */
     @Test
-    @DisplayName("S2: a from-string scalar-creator type bound case-insensitively at member level is described"
+    @DisplayName("a from-string scalar-creator type bound case-insensitively at member level is described"
             + " as a string, not an object")
     void memberLevelCaseInsensitiveScalarCreatorTypeIsDescribedAsAString() {
-        JsonNode document = inputDocument(S2Holder.class);
+        JsonNode document = inputDocument(ScalarCreatorHolder.class);
         JsonNode child = properties(document).path("child");
 
         assertEquals(
                 "string",
                 child.path("type").asText(null),
-                "S2 DECISIVE: a from-string scalar-creator type must be described as {\"type\":\"string\"}"
+                "a from-string scalar-creator type must be described as {\"type\":\"string\"}"
                         + " at the member-level case-insensitive inline position, exactly as describe()'s own"
                         + " root path already describes it wherever it is referenced by $ref (scalarCreator),"
                         + " rather than as an object; document: " + document);
@@ -337,21 +332,21 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                 "a scalar-creator type carries no properties of its own to publish; document: " + document);
     }
 
-    // ================================================================== W1: array-delegating creators
+    // ================================================================== array-delegating creators
 
     @Test
-    @DisplayName("W1: an array-delegating creator is refused exactly like an object-delegating one")
+    @DisplayName("an array-delegating creator is refused exactly like an object-delegating one")
     void arrayDelegatingCreatorIsRefusedWithoutAnOverride() {
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
-                () -> inputDocument(W1ArrayDelegating.class),
+                () -> inputDocument(ArrayDelegatingCreator.class),
                 "an array-delegating creator must be refused: its wire shape is a JSON array, which a"
                         + " schema's properties cannot describe any more than an object delegate's shape could");
 
         String message = failure.getMessage();
         assertNotNull(message, "the refusal must carry a message");
         assertTrue(
-                message.contains(W1ArrayDelegating.class.getSimpleName()),
+                message.contains(ArrayDelegatingCreator.class.getSimpleName()),
                 "the message must name the refused type; was: " + message);
         assertTrue(
                 message.contains("JsonSchemaTypeOverride"),
@@ -363,16 +358,16 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     }
 
     @Test
-    @DisplayName("W1: a profile override remedies the array-delegating-creator refusal")
+    @DisplayName("a profile override remedies the array-delegating-creator refusal")
     void arrayDelegatingCreatorGeneratesWithAnOverride() {
         String marker = "array-delegating-override-marker";
         JsonMapperProfile overridden = profile(
                 new ObjectMapper(),
                 List.of(JsonSchemaTypeOverride.input(
-                        W1ArrayDelegating.class, HardeningFixtures.markerFragment(marker))));
+                        ArrayDelegatingCreator.class, HardeningFixtures.markerFragment(marker))));
 
-        String document =
-                AnnotationJsonSchemaGenerator.forInputProfile(overridden).generateCanonical(W1ArrayDelegating.class);
+        String document = AnnotationJsonSchemaGenerator.forInputProfile(overridden)
+                .generateCanonical(ArrayDelegatingCreator.class);
 
         assertTrue(
                 document.contains(marker),
@@ -383,7 +378,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @Test
     @DisplayName("A reserved name on a case-insensitive type is excluded by a folded pattern, not an enum")
     void reservedNameOnCaseInsensitiveTypeUsesAFoldedPattern() {
-        JsonNode document = inputDocument(CI2WithReservedName.class);
+        JsonNode document = inputDocument(CaseInsensitiveWithReservedName.class);
         // The reserved-name refusal is the second entry of propertyNames' allOf, beside the non-ASCII
         // refusal in the first.
         JsonNode reservedNameRefusal =
@@ -406,7 +401,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @Test
     @DisplayName("required stays keyed by the canonical spelling only under case-insensitive binding")
     void requiredStaysByCanonicalSpellingUnderCaseInsensitiveBinding() {
-        JsonNode document = inputDocument(CI2WithRequiredField.class);
+        JsonNode document = inputDocument(CaseInsensitiveWithRequiredField.class);
 
         JsonNode required = document.path("required");
         assertTrue(required.isArray(), "document: " + document);
@@ -423,11 +418,11 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @Test
     @DisplayName("A non-ASCII property name on a case-insensitive type is refused with a bounded diagnostic")
     void nonAsciiPropertyNameOnCaseInsensitiveTypeIsRefused() {
-        JsonSchemaGenerationException failure =
-                assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(CI4NonAsciiProperty.class));
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class, () -> inputDocument(CaseInsensitiveNonAsciiProperty.class));
 
         assertTrue(
-                failure.getMessage().contains(CI4NonAsciiProperty.class.getSimpleName()),
+                failure.getMessage().contains(CaseInsensitiveNonAsciiProperty.class.getSimpleName()),
                 "was: " + failure.getMessage());
         assertTrue(failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH, "was: " + failure.getMessage());
     }
@@ -436,9 +431,11 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @DisplayName("An alias on a case-insensitive type is refused rather than folded")
     void aliasOnCaseInsensitiveTypeIsRefused() {
         JsonSchemaGenerationException failure =
-                assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(CI5WithAlias.class));
+                assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(CaseInsensitiveWithAlias.class));
 
-        assertTrue(failure.getMessage().contains(CI5WithAlias.class.getSimpleName()), "was: " + failure.getMessage());
+        assertTrue(
+                failure.getMessage().contains(CaseInsensitiveWithAlias.class.getSimpleName()),
+                "was: " + failure.getMessage());
         assertTrue(failure.getMessage().contains("alias"), "was: " + failure.getMessage());
     }
 
@@ -470,10 +467,10 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                         + canonicalName + "\"; document: " + document);
     }
 
-    // --- Fixtures: Change 1 ---
+    // --- Fixtures: creator parameters ---
 
-    /** CR1: a creator parameter renamed away from a @Max-constrained field, on an any-setter type. */
-    static final class CR1AnySetter {
+    /** A creator parameter renamed away from a @Max-constrained field, on an any-setter type. */
+    static final class RenamedCreatorParameterOnAnySetterType {
         @Max(10)
         private final int amount;
 
@@ -481,7 +478,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         private final Map<String, Object> extras = new HashMap<>();
 
         @JsonCreator
-        CR1AnySetter(@JsonProperty("amount_cents") int amount) {
+        RenamedCreatorParameterOnAnySetterType(@JsonProperty("amount_cents") int amount) {
             this.amount = amount;
         }
 
@@ -490,13 +487,13 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         }
     }
 
-    /** CR1c: the same shape, closed (no any-setter). */
-    static final class CR1Closed {
+    /** The same shape, closed (no any-setter). */
+    static final class RenamedCreatorParameterClosedType {
         @Max(10)
         private final int amount;
 
         @JsonCreator
-        CR1Closed(@JsonProperty("amount_cents") int amount) {
+        RenamedCreatorParameterClosedType(@JsonProperty("amount_cents") int amount) {
             this.amount = amount;
         }
 
@@ -534,10 +531,10 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         }
     }
 
-    // --- Fixtures: Change 2 ---
+    // --- Fixtures: delegating creators ---
 
-    /** DC1: a delegating creator over a Map, on an any-setter type. */
-    static final class DC1Delegating {
+    /** A delegating creator over a Map, on an any-setter type. */
+    static final class DelegatingCreatorOnAnySetterType {
         @jakarta.validation.constraints.Size(max = 3)
         public String name;
 
@@ -545,7 +542,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         private final Map<String, Object> extras = new HashMap<>();
 
         @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
-        DC1Delegating(Map<String, Object> body) {
+        DelegatingCreatorOnAnySetterType(Map<String, Object> body) {
             this.name = String.valueOf(body.get("nm"));
         }
     }
@@ -568,10 +565,10 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         }
     }
 
-    // --- Fixtures: Change 3 ---
+    // --- Fixtures: case-insensitivity ---
 
-    /** N6: case-insensitivity through the profile's mapper feature. */
-    static final class N6CaseInsensitiveByMapper {
+    /** Case-insensitivity through the profile's mapper feature. */
+    static final class CaseInsensitiveByMapper {
         @jakarta.validation.constraints.Size(max = 3)
         public String name;
 
@@ -579,9 +576,9 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         private final Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** CI2: case-insensitivity through a class-level @JsonFormat. */
+    /** Case-insensitivity through a class-level @JsonFormat. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class CI2CaseInsensitiveByClass {
+    static final class CaseInsensitiveByClass {
         @jakarta.validation.constraints.Size(max = 3)
         public String name;
 
@@ -589,9 +586,9 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         private final Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** CI2 plus a name never published: proves the reserved-name pattern form. */
+    /** Class-level case-insensitivity plus a name never published: proves the reserved-name pattern form. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class CI2WithReservedName {
+    static final class CaseInsensitiveWithReservedName {
         @jakarta.validation.constraints.Size(max = 3)
         public String name;
 
@@ -602,87 +599,87 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         private final Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** CI2 plus a required field: proves required stays canonical-only. */
+    /** Class-level case-insensitivity plus a required field: proves required stays canonical-only. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class CI2WithRequiredField {
+    static final class CaseInsensitiveWithRequiredField {
         @NotNull
         public String name;
     }
 
-    /** CI3: case-insensitivity through a member-level @JsonFormat. */
-    static final class CI3Child {
+    /** Case-insensitivity through a member-level @JsonFormat. */
+    static final class MemberCaseInsensitiveChild {
         @jakarta.validation.constraints.Size(max = 3)
         public String name;
     }
 
-    static final class CI3Holder {
+    static final class MemberCaseInsensitiveHolder {
         public String label;
 
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public CI3Child child;
+        public MemberCaseInsensitiveChild child;
     }
 
     /** A case-insensitive type whose property name carries a non-ASCII letter. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class CI4NonAsciiProperty {
+    static final class CaseInsensitiveNonAsciiProperty {
         @JsonProperty("café")
         public String value;
     }
 
     /** A case-insensitive type declaring an alias spelling. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class CI5WithAlias {
+    static final class CaseInsensitiveWithAlias {
         @JsonAlias("nm")
         public String name;
     }
 
-    /** F4: a delegating creator, the same shape as {@link DC1Delegating} minus the any-setter. */
-    static final class CI6DelegatingChild {
+    /** A delegating creator, the same shape as {@link DelegatingCreatorOnAnySetterType} minus the any-setter. */
+    static final class MemberCaseInsensitiveDelegatingChild {
         @jakarta.validation.constraints.Size(max = 3)
         public String name;
 
         @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
-        CI6DelegatingChild(Map<String, Object> body) {
+        MemberCaseInsensitiveDelegatingChild(Map<String, Object> body) {
             this.name = String.valueOf(body.get("nm"));
         }
     }
 
-    /** F4: the delegating child is bound case-insensitively only through this member's own @JsonFormat. */
-    static final class CI6Holder {
+    /** The delegating child is bound case-insensitively only through this member's own @JsonFormat. */
+    static final class MemberCaseInsensitiveDelegatingHolder {
         public String label;
 
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public CI6DelegatingChild child;
+        public MemberCaseInsensitiveDelegatingChild child;
     }
 
-    // --- Fixtures: S2 ---
+    // --- Fixtures: scalar creator ---
 
-    /** S2: a from-string scalar-creator type — no properties, just a delegating creator over String. */
-    static final class S2ScalarCreatorChild {
+    /** A from-string scalar-creator type — no properties, just a delegating creator over String. */
+    static final class ScalarCreatorChild {
         final String value;
 
         @JsonCreator
-        S2ScalarCreatorChild(String value) {
+        ScalarCreatorChild(String value) {
             this.value = value;
         }
     }
 
-    /** S2: the scalar-creator child is bound case-insensitively only through this member's own @JsonFormat. */
-    static final class S2Holder {
+    /** The scalar-creator child is bound case-insensitively only through this member's own @JsonFormat. */
+    static final class ScalarCreatorHolder {
         public String label;
 
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public S2ScalarCreatorChild child;
+        public ScalarCreatorChild child;
     }
 
-    // --- Fixtures: W1 ---
+    // --- Fixtures: array-delegating creator ---
 
-    /** W1: a single-argument delegating creator whose parameter type is array-like (a List). */
-    static final class W1ArrayDelegating {
+    /** A single-argument delegating creator whose parameter type is array-like (a List). */
+    static final class ArrayDelegatingCreator {
         private final List<String> items;
 
         @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
-        W1ArrayDelegating(List<String> items) {
+        ArrayDelegatingCreator(List<String> items) {
             this.items = items;
         }
 

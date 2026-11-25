@@ -37,22 +37,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * W2 (spike/deserializer-driven-schema round 4 ruling): a mapper-wide {@link BeanDeserializerModifier}
- * that wraps <em>every</em> bean deserializer in a {@link DelegatingDeserializer} subclass — forwarding
- * every operation to the original bean deserializer through {@link DelegatingDeserializer#getDelegatee()}
- * — is a legitimate, if unusual, module shape: {@code deserialize} still ends up calling the wrapped
- * bean deserializer, so the type binds exactly as it would unwrapped.
+ * A mapper-wide {@link BeanDeserializerModifier} that wraps <em>every</em> bean deserializer in a
+ * {@link DelegatingDeserializer} subclass — forwarding every operation to the original bean
+ * deserializer through {@link DelegatingDeserializer#getDelegatee()} — is a legitimate, if unusual,
+ * module shape: {@code deserialize} still ends up calling the wrapped bean deserializer, so the type
+ * binds exactly as it would unwrapped.
  *
- * <p>{@code InputPropertyDescriber#describe} only recognizes a root deserializer that is directly an
- * instance of {@code BeanDeserializerBase} (after unwrapping a {@code TypeWrappedDeserializer}); a
- * {@code DelegatingDeserializer} wrapper is not unwrapped the same way, so the wrapped bean is
- * misclassified exactly like a genuine type-level deserializer override — refused (F1's own posture),
- * even though the wrapped type is bean-like and its own {@code BeanDeserializerBase} is reachable one
- * hop away through {@code getDelegatee()}.
- *
- * <p>The owner ruling records the fix direction (unwrap through {@code getDelegatee()} before deciding
- * bean-ness, mirroring the existing {@code TypeWrappedDeserializer} unwrap) but this class only authors
- * the proof, never the production change.
+ * <p>{@code InputPropertyDescriber#describe} unwraps such a pure forwarder through {@code
+ * getDelegatee()} before deciding bean-ness, mirroring its {@code TypeWrappedDeserializer} unwrap, so
+ * the wrapped bean is described like any other bean rather than refused like a genuine type-level
+ * deserializer override. The unwrap applies at every seam that inspects a deserializer: the root, an
+ * {@code @JsonUnwrapped} child, and a member-level case-insensitive child. A wrapper that changes the
+ * wire shape is still refused.
  */
 class DelegatingDeserializerWrapperTest {
 
@@ -119,7 +115,7 @@ class DelegatingDeserializerWrapperTest {
     }
 
     @Test
-    @DisplayName("W2: a mapper-wide DelegatingDeserializer wrapper over every bean deserializer must still"
+    @DisplayName("a mapper-wide DelegatingDeserializer wrapper over every bean deserializer must still"
             + " generate a document for an ordinary constrained DTO, described through the delegate")
     void mapperWideDelegatingWrapperStillGenerates() {
         ObjectMapper mapper = mapperWithForwardingWrapperForEveryBean();
@@ -128,81 +124,75 @@ class DelegatingDeserializerWrapperTest {
 
         assertFalse(
                 document.path("properties").isMissingNode(),
-                "W2 DECISIVE: the wrapped bean must still be described as an object with properties, not"
+                "the wrapped bean must still be described as an object with properties, not"
                         + " refused as an opaque custom-deserializer type; document: " + document);
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
                 document.path("properties").path("name").toString(),
-                "W2 DECISIVE: the wrapped bean's own @Size(max = 3) must still be published, unwrapping"
+                "the wrapped bean's own @Size(max = 3) must still be published, unwrapping"
                         + " through DelegatingDeserializer#getDelegatee() to reach the real bean deserializer;"
                         + " document: " + document);
     }
 
-    // --- C-1 (round 5 review finding, spike/deserializer-driven-schema): the unwrap is root-seam only ---
+    // --- The unwrap reaches an @JsonUnwrapped child's deserializer too ---
 
     /** An ordinary constrained member, unwrapped onto the parent rather than published as its own object. */
-    static final class C1Child {
+    static final class UnwrappedPlainChild {
         @Size(max = 3)
         public String name;
     }
 
-    /** Carries {@link C1Child} through {@code @JsonUnwrapped}, wrapped at the mapper level like {@link ConstrainedDto}. */
-    static final class C1Parent {
+    /**
+     * Carries {@link UnwrappedPlainChild} through {@code @JsonUnwrapped}, wrapped at the mapper level like
+     * {@link ConstrainedDto}.
+     */
+    static final class UnwrappedPlainParent {
         @JsonUnwrapped
-        public C1Child child;
+        public UnwrappedPlainChild child;
     }
 
     /**
-     * C-1 (independent review, by-reading finding): {@code populateObjectSchema}'s unwrapped-child
-     * loop (around {@code InputPropertyDescriber} lines 485-518) obtains the child's root deserializer
-     * through {@code rootDeserializer(property.getType())} and calls {@code unwrappingDeserializer(...)}
-     * on it directly — it never routes through {@link InputPropertyDescriber}'s {@code unwrapDelegating}
-     * helper the way {@code describe}'s own root seam does (W2). Under the same mapper-wide {@code
+     * {@code populateObjectSchema}'s unwrapped-child loop obtains the child's root deserializer through
+     * {@code rootDeserializer(property.getType())} and calls {@code unwrappingDeserializer(...)} on it,
+     * so it must route through {@link InputPropertyDescriber}'s {@code unwrapDelegating} helper the way
+     * {@code describe}'s own root seam does. Under the same mapper-wide {@code
      * BeanDeserializerModifier} {@link #mapperWithForwardingWrapperForEveryBean()} installs, the child's
      * root deserializer is itself a {@code ForwardingDelegatingDeserializer}, whose {@code
-     * unwrappingDeserializer(transformer)} never yields a {@code BeanDeserializerBase} — the loop's
-     * {@code instanceof BeanDeserializerBase} check fails and the unwrapped child is silently skipped,
-     * publishing neither its property nor its {@code @Size(max = 3)} constraint.
+     * unwrappingDeserializer(transformer)} never yields a {@code BeanDeserializerBase}; without the
+     * unwrap the loop's {@code instanceof BeanDeserializerBase} check would fail and the unwrapped
+     * child would be silently skipped.
      *
-     * <p>REOPENED (round 6 finding): this assertion does not discriminate the loop's own bug and never
-     * exercised it. {@code C1Child}'s {@code name} member is an <em>ordinary, plain</em> property — not
-     * hidden, not an alias, not on an any-setter type — and the schema library's own generation
-     * independently publishes a bare {@code @JsonUnwrapped} member's plain properties onto the parent,
-     * entirely apart from this describer's own unwrapped-child loop above. Measured directly: with the
-     * loop's {@code renamed} assignment forced to always yield {@code null} (so every unwrapped child is
-     * unconditionally skipped by the {@code instanceof BeanDeserializerBase} check, wrapper or no
-     * wrapper), this exact shape still generates {@code "name":{"maxLength":3,"type":"string"}} — so the
-     * loop's own output was never what this assertion is checking. It is kept as a positive regression
-     * guard for that already-independent library behavior, never as the loop's own discriminating proof
-     * — the loop's own bug is discriminating only for a shape the library's own flattening does not cover
-     * on its own: a hidden member or an alias spelling that must be reserved or published through the
-     * loop's own alias/reservation fold, which this class's hidden-member test below and {@code
-     * ProfiledSchemaSynthesisIT}'s C-2 gate row exercise instead.
+     * <p>This assertion is a positive guard rather than the loop's own discriminating proof. {@code
+     * UnwrappedPlainChild}'s {@code name} member is an <em>ordinary, plain</em> property — not hidden,
+     * not an alias, not on an any-setter type — and the schema library's own generation independently
+     * publishes a bare {@code @JsonUnwrapped} member's plain properties onto the parent, entirely apart
+     * from this describer's unwrapped-child loop. The loop is discriminating only for a shape the
+     * library's own flattening does not cover: a hidden member or an alias spelling that must be
+     * reserved or published through the loop's own alias/reservation fold, which this class's
+     * hidden-member test below and {@code ProfiledSchemaSynthesisIT} exercise instead.
      */
     @Test
-    @DisplayName("C-1: under a mapper-wide DelegatingDeserializer wrapper, an @JsonUnwrapped child's own"
+    @DisplayName("under a mapper-wide DelegatingDeserializer wrapper, an @JsonUnwrapped child's own"
             + " constraint must still be published, not silently skipped by the unwrapped-child loop")
     void unwrappedChildUnderMapperWideDelegatingWrapperIsDescribed() {
         ObjectMapper mapper = mapperWithForwardingWrapperForEveryBean();
 
-        JsonNode document = document(C1Parent.class, mapper);
+        JsonNode document = document(UnwrappedPlainParent.class, mapper);
 
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
                 document.path("properties").path("name").toString(),
-                "C-1 DECISIVE: the unwrapped child's own @Size(max = 3) must be published even though the"
-                        + " child's root deserializer is itself wrapped by the mapper-wide"
-                        + " DelegatingDeserializer forwarder — the unwrapped-child loop obtains the child's"
-                        + " deserializer through rootDeserializer(...).unwrappingDeserializer(...) directly,"
-                        + " never through the unwrapDelegating(...) helper W2's root-seam fix added, so the"
-                        + " wrapper is never unwrapped here and the instanceof BeanDeserializerBase check"
-                        + " fails, silently skipping the child; document: " + document);
+                "the unwrapped child's own @Size(max = 3) must be published even though the child's root"
+                        + " deserializer is itself wrapped by the mapper-wide DelegatingDeserializer forwarder:"
+                        + " the unwrapped-child loop must unwrap it through the unwrapDelegating(...) helper,"
+                        + " or the instanceof BeanDeserializerBase check fails and the child is silently"
+                        + " skipped; document: " + document);
     }
 
-    // --- W-1 (round 5 review finding): the root-seam unwrap does not check the subclass changes nothing ---
+    // --- The root-seam unwrap refuses a subclass that changes the wire shape ---
 
     /** A bean-like DTO whose deserializer a profile module replaces with a shape-changing wrapper. */
-    static final class W1Dto {
+    static final class ShapeChangedDto {
         @Size(max = 3)
         public String name;
     }
@@ -211,10 +201,10 @@ class DelegatingDeserializerWrapperTest {
      * A {@link DelegatingDeserializer} subclass that is <em>not</em> a pure forwarder: it accepts a
      * compact string form ({@code "abc"} instead of {@code {"name":"abc"}}) before ever reaching the
      * delegate, so the type it wraps binds a wire shape the delegate's own bean description does not
-     * capture. {@code unwrapDelegating} (W2's root-seam fix) accepts any {@code DelegatingDeserializer}
-     * subclass unconditionally — it has no way to tell this shape-changing override apart from {@link
-     * ForwardingDelegatingDeserializer}'s pure forwarding — so it unwraps straight to the delegate's
-     * {@code BeanDeserializerBase} and describes the type from there, as if the override did not exist.
+     * capture. Unwrapping every {@code DelegatingDeserializer} subclass unconditionally would have no
+     * way to tell this shape-changing override apart from {@link ForwardingDelegatingDeserializer}'s
+     * pure forwarding, and would describe the type from the delegate's {@code BeanDeserializerBase} as
+     * if the override did not exist.
      */
     static final class StringFormAcceptingDelegatingDeserializer extends DelegatingDeserializer {
         StringFormAcceptingDelegatingDeserializer(JsonDeserializer<?> delegate) {
@@ -229,7 +219,7 @@ class DelegatingDeserializerWrapperTest {
         @Override
         public Object deserialize(JsonParser parser, DeserializationContext ctxt) throws IOException {
             if (parser.currentToken() == JsonToken.VALUE_STRING) {
-                W1Dto dto = new W1Dto();
+                ShapeChangedDto dto = new ShapeChangedDto();
                 dto.name = parser.getValueAsString();
                 return dto;
             }
@@ -237,7 +227,7 @@ class DelegatingDeserializerWrapperTest {
         }
     }
 
-    private static JsonMapperProfile w1ProfileWithShapeChangingWrapper() {
+    private static JsonMapperProfile profileWithShapeChangingWrapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new SimpleModule() {
             @Override
@@ -247,7 +237,7 @@ class DelegatingDeserializerWrapperTest {
                     @Override
                     public JsonDeserializer<?> modifyDeserializer(
                             DeserializationConfig config, BeanDescription beanDesc, JsonDeserializer<?> deserializer) {
-                        if (beanDesc.getBeanClass() == W1Dto.class) {
+                        if (beanDesc.getBeanClass() == ShapeChangedDto.class) {
                             return new StringFormAcceptingDelegatingDeserializer(deserializer);
                         }
                         return deserializer;
@@ -259,82 +249,71 @@ class DelegatingDeserializerWrapperTest {
     }
 
     /**
-     * W-1 (independent review, by-reading finding): {@code unwrapDelegating} accepts any {@code
-     * DelegatingDeserializer} subclass, including one that overrides {@code deserialize} to accept a
-     * wire form the delegate's own bean description does not describe. Expected red (pre-fix):
-     * generation succeeds and describes the type from the delegate's plain bean shape, silently
-     * dropping the string-form override this profile actually binds.
+     * {@code unwrapDelegating} must not accept just any {@code DelegatingDeserializer} subclass: one
+     * that overrides {@code deserialize} to accept a wire form the delegate's own bean description does
+     * not describe is refused, rather than described from the delegate's plain bean shape with the
+     * string-form override this profile actually binds silently dropped.
      */
     @Test
-    @DisplayName("W-1: a DelegatingDeserializer subclass that changes the wire shape must be refused, not"
+    @DisplayName("a DelegatingDeserializer subclass that changes the wire shape must be refused, not"
             + " unwrapped straight to the delegate's bean description")
     void delegatingDeserializerThatChangesTheWireShapeIsRefused() {
-        JsonMapperProfile profile = w1ProfileWithShapeChangingWrapper();
+        JsonMapperProfile profile = profileWithShapeChangingWrapper();
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
-                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(W1Dto.class),
-                "W-1 DECISIVE: a DelegatingDeserializer subclass that overrides deserialize(...) to accept a"
-                        + " different wire form must be refused with the existing custom-deserializer"
-                        + " diagnostic (F1), not unwrapped straight to the delegate's plain bean description");
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(ShapeChangedDto.class),
+                "a DelegatingDeserializer subclass that overrides deserialize(...) to accept a different"
+                        + " wire form must be refused with the custom-deserializer diagnostic, not unwrapped"
+                        + " straight to the delegate's plain bean description");
         assertTrue(
                 failure.getMessage().contains("whose wire shape the generator cannot describe"),
                 "unexpected message: " + failure.getMessage());
     }
 
-    // --- S-1 (round 5 review finding): the inline case-insensitive member path unwraps TypeWrappedDeserializer only
-    // ---
+    // --- The inline case-insensitive member path unwraps a delegating wrapper too ---
 
     /** The case-insensitively bound member's own type, carrying a constraint like {@link ConstrainedDto}. */
-    static final class S1Child {
+    static final class MemberCaseInsensitiveChild {
         @Size(max = 3)
         public String name;
     }
 
-    /** Binds {@link S1Child} case-insensitively only through this member's own {@code @JsonFormat}. */
-    static final class S1Holder {
+    /** Binds {@link MemberCaseInsensitiveChild} case-insensitively only through this member's {@code @JsonFormat}. */
+    static final class MemberCaseInsensitiveHolder {
         public String label;
 
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public S1Child child;
+        public MemberCaseInsensitiveChild child;
     }
 
     /**
-     * S-1 (independent review, by-reading finding): {@code propertySchema}'s inline case-insensitive
-     * path (around {@code InputPropertyDescriber} lines 733-735) computes {@code
-     * unwrap(property.getValueDeserializer())} — {@code unwrap} strips only {@code
-     * TypeWrappedDeserializer}, never a {@code DelegatingDeserializer} — before checking {@code
-     * instanceof BeanDeserializerBase nestedBean && nestedBean.isCaseInsensitive()}. Under the same
-     * mapper-wide wrapper as {@link #mapperWithForwardingWrapperForEveryBean()}, the member's own
-     * contextual deserializer is still a {@code ForwardingDelegatingDeserializer}, so this check fails
-     * and the member falls through to the ordinary reference path, describing it by {@code $ref} to the
-     * type's plain, case-sensitive shared definition instead of inline with {@code patternProperties}.
-     *
-     * <p>Note (as directed): this pre-fix, ref-sharing description is <em>stricter</em> than the real
-     * Jackson binder, which still binds the member case-insensitively regardless of how this description
-     * is built — the gap is over-restriction of the generated schema against traffic the binder actually
-     * accepts, not a validation bypass the way F2's or C-1's probes are.
-     *
-     * <p>Expected red (pre-fix): {@code document.path("properties").path("child")} carries a {@code $ref}
-     * rather than an inline object with its own {@code patternProperties}.
+     * {@code propertySchema}'s inline case-insensitive path computes {@code
+     * unwrap(property.getValueDeserializer())} before checking {@code instanceof BeanDeserializerBase
+     * nestedBean && nestedBean.isCaseInsensitive()}, so that {@code unwrap} must see through a {@code
+     * DelegatingDeserializer} as well as a {@code TypeWrappedDeserializer}. Under the same mapper-wide
+     * wrapper as {@link #mapperWithForwardingWrapperForEveryBean()}, the member's own contextual
+     * deserializer is still a {@code ForwardingDelegatingDeserializer}; the member must nevertheless be
+     * described inline with {@code patternProperties}, not by {@code $ref} to the type's plain,
+     * case-sensitive shared definition. A {@code $ref} description would be <em>stricter</em> than the
+     * real Jackson binder, which binds the member case-insensitively regardless of how the description
+     * is built — over-restriction of the generated schema against traffic the binder accepts.
      */
     @Test
-    @DisplayName("S-1: under a mapper-wide DelegatingDeserializer wrapper, a member-level case-insensitive"
+    @DisplayName("under a mapper-wide DelegatingDeserializer wrapper, a member-level case-insensitive"
             + " child must still be described inline with patternProperties, not by $ref to the plain"
             + " (case-sensitive) shared definition")
     void memberLevelCaseInsensitiveChildUnderMapperWideWrapperIsDescribedInline() {
         ObjectMapper mapper = mapperWithForwardingWrapperForEveryBean();
 
-        JsonNode document = document(S1Holder.class, mapper);
+        JsonNode document = document(MemberCaseInsensitiveHolder.class, mapper);
         JsonNode child = document.path("properties").path("child");
 
         assertFalse(
                 child.has("$ref"),
-                "S-1 CURRENT STATE (pre-fix expected red): a member bound case-insensitively only through"
-                        + " its own @JsonFormat must not fall back to the type's ordinary, case-sensitive"
-                        + " $ref under the wrapper module — note the pre-fix ref-sharing behavior is"
-                        + " stricter than the real binder (which binds case-insensitively regardless), not a"
-                        + " bypass; document: " + document);
+                "a member bound case-insensitively only through its own @JsonFormat must not fall back to"
+                        + " the type's ordinary, case-sensitive $ref under the wrapper module; document: "
+                        + document);
         assertEquals("object", child.path("type").asText(null), "document: " + document);
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
@@ -343,51 +322,46 @@ class DelegatingDeserializerWrapperTest {
         JsonNode childPatternProperties = child.path("patternProperties");
         assertTrue(
                 childPatternProperties.isObject() && !childPatternProperties.isEmpty(),
-                "S-1 DECISIVE: the inline nested description under the wrapper module must carry its own"
+                "the inline nested description under the wrapper module must carry its own"
                         + " patternProperties, exactly as it does without the wrapper; document: " + document);
     }
 
-    // --- C-2 (reopened, round 6 finding): a hidden member on an unwrapped child of an any-setter parent ---
+    // --- A hidden member on an unwrapped child of an any-setter parent ---
 
     /**
      * A {@code @Schema(hidden = true)}-constrained unwrapped member — the same shape {@code
      * UnwrappedAnySetterFoldingTest.HiddenChild} probes without the wrapper.
      */
-    static final class C2HiddenChild {
+    static final class UnwrappedHiddenChild {
         @Schema(hidden = true)
         @Size(max = 3)
         public String token;
     }
 
-    /** Carries {@link C2HiddenChild} through {@code @JsonUnwrapped} on an any-setter type. */
-    static final class C2AnySetterParent {
+    /** Carries {@link UnwrappedHiddenChild} through {@code @JsonUnwrapped} on an any-setter type. */
+    static final class UnwrappedHiddenChildAnySetterParent {
         @JsonUnwrapped
-        public C2HiddenChild child;
+        public UnwrappedHiddenChild child;
 
         @JsonAnySetter
         private final Map<String, Object> extras = new LinkedHashMap<>();
     }
 
     /**
-     * C-2 (reopened, round 6 finding): unlike the plain-property C-1 case above, a hidden member is
-     * never published by the type's own class-level members — it can only reach the document through
-     * {@code foldUnwrappedChildIntoParentPlan}, which runs only for a sibling the unwrapped-child loop
-     * actually processed as a {@code BeanDeserializerBase}. Under the mapper-wide wrapper, the loop skips
-     * {@link C2HiddenChild} for the same reason C-1's own Javadoc explains (the {@code instanceof
-     * BeanDeserializerBase} check on {@code renamed} fails), so the fold never runs and {@code "token"} is
-     * neither published nor reserved — falling through to the extras bucket unconstrained, exactly the
-     * bypass F2 fixed for the unwrapped case.
-     *
-     * <p>Expected red now: {@code document.path("propertyNames").path("not").path("enum")} does not
-     * contain {@code "token"}.
+     * Unlike the plain-property case above, a hidden member is never published by the type's own
+     * class-level members — it can only reach the document through {@code
+     * foldUnwrappedChildIntoParentPlan}, which runs only for a sibling the unwrapped-child loop
+     * processed as a {@code BeanDeserializerBase}. Under the mapper-wide wrapper the loop must unwrap
+     * {@link UnwrappedHiddenChild} so the fold runs and {@code "token"} is reserved; otherwise it would
+     * be neither published nor reserved and would fall through to the extras bucket unconstrained.
      */
     @Test
-    @DisplayName("C-2: under a mapper-wide DelegatingDeserializer wrapper, an unwrapped child's hidden member"
+    @DisplayName("under a mapper-wide DelegatingDeserializer wrapper, an unwrapped child's hidden member"
             + " on an any-setter parent must still be reserved, not left to fall through to the extras bucket")
     void hiddenUnwrappedChildMemberIsReservedUnderMapperWideDelegatingWrapper() {
         ObjectMapper mapper = mapperWithForwardingWrapperForEveryBean();
 
-        JsonNode document = document(C2AnySetterParent.class, mapper);
+        JsonNode document = document(UnwrappedHiddenChildAnySetterParent.class, mapper);
 
         assertFalse(
                 document.path("properties").has("token"),
@@ -403,42 +377,42 @@ class DelegatingDeserializerWrapperTest {
         }
         assertTrue(
                 reserved,
-                "C-2 DECISIVE (expected red now): the unwrapped child's hidden member \"token\" must be"
+                "the unwrapped child's hidden member \"token\" must be"
                         + " reserved under the mapper-wide wrapper profile too, exactly as it is without the"
                         + " wrapper (UnwrappedAnySetterFoldingTest.unwrappedChildHiddenMemberIsReserved),"
                         + " refusing a key spelling it outright rather than letting it fall through to"
                         + " additionalProperties as an unconstrained extra; document: " + document);
     }
 
-    // --- C-3 (reopened, round 6 finding): a case-insensitive unwrapped child is silently skipped, not refused ---
+    // --- A case-insensitive unwrapped child is refused, not silently skipped ---
 
     /** Bound case-insensitively at the class level, so any position unwrapping it inherits that binding. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class C3CaseInsensitiveChild {
+    static final class CaseInsensitiveUnwrappedChild {
         public String name;
     }
 
-    /** Carries {@link C3CaseInsensitiveChild} through a bare {@code @JsonUnwrapped}. */
-    static final class C3Parent {
+    /** Carries {@link CaseInsensitiveUnwrappedChild} through a bare {@code @JsonUnwrapped}. */
+    static final class CaseInsensitiveUnwrappedParent {
         @JsonUnwrapped
-        public C3CaseInsensitiveChild child;
+        public CaseInsensitiveUnwrappedChild child;
     }
 
     /**
-     * C-3 control (no wrapper): {@code requireCaseSensitive} — called immediately after the loop's
-     * {@code instanceof BeanDeserializerBase} check succeeds — refuses a case-insensitively bound
-     * unwrapped child with a bounded diagnostic. This establishes the behavior the wrapper case below is
-     * measured against.
+     * Control (no wrapper): {@code requireCaseSensitive} — called immediately after the loop's {@code
+     * instanceof BeanDeserializerBase} check succeeds — refuses a case-insensitively bound unwrapped
+     * child with a bounded diagnostic. This is the behavior the wrapper case below must match.
      */
     @Test
-    @DisplayName("C-3 control: without the wrapper, a case-insensitively bound unwrapped child is refused")
+    @DisplayName("control: without the wrapper, a case-insensitively bound unwrapped child is refused")
     void caseInsensitiveUnwrappedChildIsRefusedWithoutTheWrapper() {
         JsonMapperProfile profile = profile(new ObjectMapper());
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
-                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(C3Parent.class),
-                "C-3 CONTROL: a case-insensitively bound unwrapped child must be refused, not silently"
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile)
+                        .generateCanonical(CaseInsensitiveUnwrappedParent.class),
+                "a case-insensitively bound unwrapped child must be refused, not silently"
                         + " described, when the loop actually reaches requireCaseSensitive");
         assertTrue(
                 failure.getMessage().contains("bound case-insensitively"),
@@ -446,35 +420,28 @@ class DelegatingDeserializerWrapperTest {
     }
 
     /**
-     * C-3 (reopened, round 6 finding): under the mapper-wide wrapper, {@link C3CaseInsensitiveChild}'s
-     * root deserializer is itself a {@code ForwardingDelegatingDeserializer}, so {@code renamed} fails
-     * the loop's {@code instanceof BeanDeserializerBase} check and the loop {@code continue}s <em>before</em>
-     * ever reaching the {@code requireCaseSensitive} call a few lines later — the refusal this member
-     * would otherwise trigger never runs, and generation succeeds silently instead, describing the parent
-     * with no {@code "name"} property and no diagnostic at all: a soundness posture regression, not merely
-     * a missing description, since the type is genuinely case-insensitively bound and no schema describes
-     * that fact one way or the other.
-     *
-     * <p>Expected red now: generation does not throw, unlike the identical shape without the wrapper —
-     * this test asserts the correct, refusing behavior (mirroring the control above) and therefore fails
-     * pre-fix.
+     * Under the mapper-wide wrapper, {@link CaseInsensitiveUnwrappedChild}'s root deserializer is
+     * itself a {@code ForwardingDelegatingDeserializer}. The loop must unwrap it so the {@code
+     * instanceof BeanDeserializerBase} check succeeds and the {@code requireCaseSensitive} refusal
+     * runs; otherwise the loop would {@code continue} <em>before</em> that call and generation would
+     * succeed silently, describing the parent with no {@code "name"} property and no diagnostic at all
+     * — a soundness regression, since the type is genuinely case-insensitively bound.
      */
     @Test
-    @DisplayName("C-3: under a mapper-wide DelegatingDeserializer wrapper, a case-insensitively bound unwrapped"
+    @DisplayName("under a mapper-wide DelegatingDeserializer wrapper, a case-insensitively bound unwrapped"
             + " child must be refused, exactly as it is without the wrapper, not silently skipped")
-    void caseInsensitiveUnwrappedChildIsNotRefusedUnderMapperWideDelegatingWrapper() {
+    void caseInsensitiveUnwrappedChildIsRefusedUnderMapperWideDelegatingWrapper() {
         ObjectMapper mapper = mapperWithForwardingWrapperForEveryBean();
         JsonMapperProfile profile = profile(mapper);
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
-                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(C3Parent.class),
-                "C-3 DECISIVE (expected red now): generation must refuse this shape exactly as it does"
-                        + " without the wrapper (see the control above) — instead, under the wrapper the loop's"
-                        + " instanceof BeanDeserializerBase check on \"renamed\" fails and continue runs before"
-                        + " requireCaseSensitive is ever reached, so generation currently succeeds silently"
-                        + " with the case-insensitively bound child's own property simply missing, and no"
-                        + " diagnostic at all");
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile)
+                        .generateCanonical(CaseInsensitiveUnwrappedParent.class),
+                "generation must refuse this shape exactly as it does without the wrapper (see the"
+                        + " control above): the loop must unwrap the wrapper so that requireCaseSensitive is"
+                        + " reached, rather than skipping the child and succeeding silently with the"
+                        + " case-insensitively bound child's own property missing and no diagnostic at all");
         assertTrue(
                 failure.getMessage().contains("bound case-insensitively"),
                 "unexpected message: " + failure.getMessage());

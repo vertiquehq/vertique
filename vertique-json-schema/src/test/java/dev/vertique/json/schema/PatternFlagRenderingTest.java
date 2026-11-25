@@ -32,8 +32,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The measurement design point 4 requires: whether {@code io.vertx.json.schema}'s {@code
- * pattern} keyword honors an embedded Java regex modifier group, which decides whether
+ * Measures whether {@code io.vertx.json.schema}'s {@code pattern} keyword honors an embedded Java
+ * regex modifier group, which decides whether
  * {@link MetadataConstraintSource} may render a flagged {@code @Pattern} inline or must refuse it.
  *
  * <p>{@code io.vertx.json.schema} compiles the {@code pattern} keyword with plain
@@ -73,11 +73,11 @@ class PatternFlagRenderingTest {
     @Test
     @DisplayName("a CASE_INSENSITIVE @Pattern renders as an embedded (?i:...) group that the real gate enforces")
     void caseInsensitiveFlagRendersAndValidates() {
-        Validator validator = generatedValidatorFor(MetadataFixtures.Sharp606Dto.class);
+        Validator validator = generatedValidatorFor(MetadataFixtures.RenderGapsDto.class);
 
-        assertTrue(validator.validate(sharp606Instance("abc")).getValid());
-        assertTrue(validator.validate(sharp606Instance("ABC")).getValid());
-        assertFalse(validator.validate(sharp606Instance("xyz")).getValid());
+        assertTrue(validator.validate(patternInstance("abc")).getValid());
+        assertTrue(validator.validate(patternInstance("ABC")).getValid());
+        assertFalse(validator.validate(patternInstance("xyz")).getValid());
     }
 
     @Test
@@ -390,11 +390,11 @@ class PatternFlagRenderingTest {
                 .generateCanonical(type);
         JsonObject schema = new JsonObject(canonical);
         JsonSchemaOptions options =
-                new JsonSchemaOptions().setDraft(Draft.DRAFT202012).setBaseUri("https://vertique.local/sharp606/");
+                new JsonSchemaOptions().setDraft(Draft.DRAFT202012).setBaseUri("https://vertique.local/pattern-flags/");
         return Validator.create(JsonSchema.of(schema), options);
     }
 
-    private static JsonObject sharp606Instance(String pattern) {
+    private static JsonObject patternInstance(String pattern) {
         return new JsonObject()
                 .put("range", 15)
                 .put("length", "abcd")

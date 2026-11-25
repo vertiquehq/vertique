@@ -21,23 +21,22 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * W4 (review finding): the custom-deserializer refusal in {@link InputPropertyDescriber#describe}
+ * The custom-deserializer refusal in {@link InputPropertyDescriber#describe}
  * must fire only for a <em>bean-like</em> type whose own deserializer was replaced by an explicit
  * type-level {@code @JsonDeserialize(using = ...)} — never for a foreign, opaque type a module
  * registers a plain {@link com.fasterxml.jackson.databind.JsonDeserializer} for (a scalar, container,
- * node, or Vert.x-style wrapper such as {@code JsonObject}/{@code JsonArray}/{@code Buffer}). Before
- * the fix, {@link InputPropertyDescriber#describe} refused <em>any</em> type whose resolved
- * deserializer was not a {@code BeanDeserializerBase}, which included every module-registered
- * deserializer regardless of whether the type looked like a bean at all — confirmed by disassembly
- * that Vert.x's own {@code JsonObjectDeserializer}/{@code JsonArrayDeserializer}/{@code
+ * node, or Vert.x-style wrapper such as {@code JsonObject}/{@code JsonArray}/{@code Buffer}).
+ * Refusing <em>any</em> type whose resolved deserializer is not a {@code BeanDeserializerBase} would
+ * include every module-registered deserializer regardless of whether the type looks like a bean at
+ * all: Vert.x's own {@code JsonObjectDeserializer}/{@code JsonArrayDeserializer}/{@code
  * BufferDeserializer} extend the plain {@code JsonDeserializer<T>} base, not a bean deserializer.
  *
  * <p>This module does not depend on {@code vertx-core} (its own architecture rule freezes that), so
  * the opaque-wrapper shape is reproduced here with a hand-rolled type carrying a module-registered
  * {@link StdDeserializer}, no bean properties, and no class-level {@code @JsonDeserialize} annotation
  * — exactly the shape a module-registered Vert.x deserializer has from this generator's point of
- * view. A DTO carrying an explicit type-level override stays refused, proving the narrowing did not
- * also swallow the genuine bean-like case.
+ * view. A DTO carrying an explicit type-level override stays refused, proving the genuine bean-like
+ * case is still refused.
  */
 class OpaqueDeserializerDescriptionTest {
 
@@ -102,12 +101,12 @@ class OpaqueDeserializerDescriptionTest {
     }
 
     /**
-     * F1 (security review round 1, HIGH): a bean-like application DTO whose deserializer is attached
-     * through a profile module — {@code SimpleModule.addDeserializer(Money.class, ...)} — rather than
-     * a class-level {@code @JsonDeserialize(using = ...)}. {@code declaresOwnDeserializerOverride}
-     * alone missed this: the class carries no annotation, so before the fix this fell into the same
-     * "opaque wrapper" branch as {@link OpaqueWrapper} and was described as {@code {}}, dropping the
-     * {@code @Max(100)} constraint the field walk on {@code main} always published.
+     * A bean-like application DTO whose deserializer is attached through a profile module — {@code
+     * SimpleModule.addDeserializer(Money.class, ...)} — rather than a class-level {@code
+     * @JsonDeserialize(using = ...)}. {@code declaresOwnDeserializerOverride} alone cannot see this:
+     * the class carries no annotation, so without a further check it would fall into the same "opaque
+     * wrapper" branch as {@link OpaqueWrapper} and be described as {@code {}}, dropping the
+     * {@code @Max(100)} constraint the field walk always published.
      */
     static final class Money {
         @jakarta.validation.constraints.Max(100)
@@ -141,7 +140,7 @@ class OpaqueDeserializerDescriptionTest {
     }
 
     @Test
-    @DisplayName("F1: a bean-like type with a module-registered (non-annotated) deserializer is refused, not"
+    @DisplayName("a bean-like type with a module-registered (non-annotated) deserializer is refused, not"
             + " described as {} — every constraint on it must not be silently dropped")
     void beanLikeTypeWithModuleRegisteredDeserializerIsRefused() {
         JsonMapperProfile profile = profileWithModuleRegisteredBeanDeserializer();
@@ -159,7 +158,7 @@ class OpaqueDeserializerDescriptionTest {
     }
 
     @Test
-    @DisplayName("W4: a module-registered, non-bean deserializer for a foreign opaque type is not refused")
+    @DisplayName("a module-registered, non-bean deserializer for a foreign opaque type is not refused")
     void opaqueTypeAtRootIsDescribedNotRefused() {
         JsonNode document = inputDocument(OpaqueWrapper.class);
         // Unconstrained: the generator cannot know the wire shape of an opaque wrapper it has no bean
@@ -170,7 +169,7 @@ class OpaqueDeserializerDescriptionTest {
     }
 
     @Test
-    @DisplayName("W4: an opaque wrapper nested as a member is described, not refused")
+    @DisplayName("an opaque wrapper nested as a member is described, not refused")
     void opaqueTypeAsMemberIsDescribedNotRefused() {
         JsonNode document = inputDocument(HoldsOpaqueWrapper.class);
         JsonNode wrapperSchema = document.path("properties").path("wrapper");
@@ -178,8 +177,7 @@ class OpaqueDeserializerDescriptionTest {
     }
 
     @Test
-    @DisplayName(
-            "W4 regression guard: a bean-like type with its own class-level @JsonDeserialize override stays refused")
+    @DisplayName("regression guard: a bean-like type with its own class-level @JsonDeserialize override stays refused")
     void beanLikeTypeWithOwnOverrideStaysRefused() {
         JsonSchemaGenerationException failure =
                 assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(OverriddenBean.class));

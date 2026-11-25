@@ -35,45 +35,36 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Red proofs for CO-001 (the rest-021 package's carried obligation) and two sibling defects found in
- * review, all in {@link InputPropertyDescriber}'s keyword-composition seam (FR-009: a constraint
- * keyword is never removed). As of the fix now in the working tree, Defect A and Defect B are green;
- * the two sibling defects (S1, S2) are not yet fixed and remain red.
+ * Proofs for {@link InputPropertyDescriber}'s keyword-composition seam: a constraint keyword is never
+ * removed, and a looser value never overwrites a stricter one.
  *
- * <p>Defect A ({@link #allOfCorrectionAppendsToExistingAllOf()}, {@link
- * #allOfCorrectionSkipsDuplicatePattern()}) — {@code putKeyword(schema, "allOf", patterns)} replaced
- * an {@code allOf} array the schema already carried ({@code schema.putArray("allOf")} was
- * unconditional) instead of appending to it and skipping duplicates. {@link
- * #patternCorrectionAppendsOntoExistingAllOf()} is the contrasting proof that {@link
+ * <p>The {@code "allOf"} correction ({@link #allOfCorrectionAppendsToExistingAllOf()}, {@link
+ * #allOfCorrectionSkipsDuplicatePattern()}) — {@code putKeyword(schema, "allOf", patterns)} appends to
+ * an {@code allOf} array the schema already carries and skips duplicates, rather than replacing the
+ * array. {@link #patternCorrectionAppendsOntoExistingAllOf()} is the contrasting proof that {@link
  * InputPropertyDescriber#mergePatternAsAllOf} — the sibling method a {@code "pattern"} correction goes
- * through — already appends correctly; only {@code putKeyword}'s {@code "allOf"} branch had the
- * defect.
+ * through — appends correctly too.
  *
- * <p>Defect B ({@link #swaggerPatternNeverDropsConstraintSourcePattern()} and friends) — {@link
- * InputPropertyDescriber#translateSwagger} wrote {@code pattern}, {@code minLength}/{@code maxLength},
- * and {@code minimum}/{@code exclusiveMinimum}/{@code maximum}/{@code exclusiveMaximum}
- * unconditionally over whatever a constraint source (Bean Validation annotation, read by the
- * always-active {@link WalkConstraintSource} floor) already wrote for an unscoped member (a creator
- * parameter here), loosening or dropping it instead of composing (pattern) or keeping the stricter
- * value (a bound). {@link #swaggerStricterMaxLengthStillWinsContrast()} is a contrasting control, like
- * A2: the pre-fix unconditional overwrite happened to coincide with the stricter value there, so it
- * was green even before the fix and stays green after — it never exercised the defect.
+ * <p>Swagger translation ({@link #swaggerPatternNeverDropsConstraintSourcePattern()} and friends) —
+ * {@link InputPropertyDescriber#translateSwagger} writes {@code pattern}, {@code
+ * minLength}/{@code maxLength}, and {@code minimum}/{@code exclusiveMinimum}/{@code
+ * maximum}/{@code exclusiveMaximum} over whatever a constraint source (Bean Validation annotation,
+ * read by the always-active {@link WalkConstraintSource} floor) already wrote for an unscoped member (a
+ * creator parameter here), composing (pattern) or keeping the stricter value (a bound) instead of
+ * loosening or dropping it. {@link #swaggerStricterMaxLengthStillWinsContrast()} is a contrasting
+ * control: the stricter value there comes from {@code @Schema}, so it wins.
  *
- * <p>S1 ({@link #anySetterMaxPropertiesNeverLoosensStricterConstraintSourceBound()}) — the sibling
- * defect in {@code describeExtras}: an any-setter map's {@code @Schema(minProperties/maxProperties)}
- * is written with a plain {@code definition.put(...)} over a {@code @Size}-derived value, the same
- * unconditional-overwrite shape as Defect B, not yet fixed.
+ * <p>Any-setter cardinality ({@link #anySetterMaxPropertiesNeverLoosensStricterConstraintSourceBound()})
+ * — {@code describeExtras} keeps a {@code @Size}-derived {@code maxProperties} when a looser
+ * {@code @Schema(maxProperties)} is declared on the same any-setter map.
  *
- * <p>S2 ({@code applyEncodedKeywords}, ~1066-1097, the scoped-member counterpart of {@link
- * InputPropertyDescriber#applyCorrection}) — its {@code "allOf"} correction falls through to the
- * unconditional {@code schema.set(key, value)} at the end of the method, the scoped-member analogue of
- * Defect A, also not yet fixed. No test is added for it here: the method is {@code private}, not
- * package-private, so it is not directly callable from this test class, and the task's own fallback
- * for that case is to skip.
+ * <p>The scoped-member counterpart of {@link InputPropertyDescriber#applyCorrection}, {@code
+ * applyEncodedKeywords}, is {@code private}, not package-private, so it is not directly callable from
+ * this test class and has no test here.
  */
 class KeywordCompositionTest {
 
-    // ============================================================ Defect A: putKeyword("allOf", ...)
+    // ============================================================ putKeyword("allOf", ...)
 
     private static ObjectNode schemaWithAllOfPatterns(String... patterns) {
         ObjectNode schema = JsonNodeFactory.instance.objectNode();
@@ -93,7 +84,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 A1: an \"allOf\" correction must append its patterns to an existing allOf, not replace it")
+    @DisplayName("an \"allOf\" correction must append its patterns to an existing allOf, not replace it")
     void allOfCorrectionAppendsToExistingAllOf() {
         ObjectNode schema = schemaWithAllOfPatterns("^a+$", "^b+$");
 
@@ -103,14 +94,14 @@ class KeywordCompositionTest {
                 List.of("^a+$", "^b+$", "^c+$"),
                 allOfPatterns(schema),
                 "putKeyword's \"allOf\" branch must append the new pattern subschemas onto the existing"
-                        + " allOf array (FR-009: a constraint keyword is never removed), not replace it via an"
+                        + " allOf array (a constraint keyword is never removed), not replace it via an"
                         + " unconditional schema.putArray(\"allOf\"); schema: " + schema);
     }
 
     @Test
-    @DisplayName("CO-001 A2 (contrast): mergePatternAsAllOf already appends onto an existing allOf, unlike putKeyword")
+    @DisplayName("contrast: mergePatternAsAllOf already appends onto an existing allOf, unlike putKeyword")
     void patternCorrectionAppendsOntoExistingAllOf() {
-        // Same starting shape as A1 (a pre-existing allOf of two patterns), plus an independent plain
+        // Same starting shape as above (a pre-existing allOf of two patterns), plus an independent plain
         // "pattern" keyword — the shape applyCorrection's "pattern" branch (mergePatternAsAllOf) sees.
         ObjectNode schema = schemaWithAllOfPatterns("^a+$", "^b+$");
         schema.put("pattern", "^z+$");
@@ -122,14 +113,14 @@ class KeywordCompositionTest {
                 allOfPatterns(schema),
                 "mergePatternAsAllOf must append both the pre-existing plain \"pattern\" and the new"
                         + " correction onto the existing allOf, keeping every prior branch — the correct"
-                        + " shape putKeyword's own \"allOf\" branch (A1) fails to reproduce; schema: " + schema);
+                        + " shape putKeyword's own \"allOf\" branch must reproduce; schema: " + schema);
         assertFalse(
                 schema.has("pattern"),
                 "the merged plain \"pattern\" keyword must be removed once folded into allOf; schema: " + schema);
     }
 
     @Test
-    @DisplayName("CO-001 A3: an \"allOf\" correction must skip a pattern already present, not add a duplicate")
+    @DisplayName("an \"allOf\" correction must skip a pattern already present, not add a duplicate")
     void allOfCorrectionSkipsDuplicatePattern() {
         ObjectNode schema = schemaWithAllOfPatterns("^a+$", "^b+$");
 
@@ -142,7 +133,7 @@ class KeywordCompositionTest {
                         + " again; schema: " + schema);
     }
 
-    // ============================================================ Defect B: translateSwagger
+    // ============================================================ translateSwagger
 
     private static JsonMapperProfile vertiqueProfile() {
         return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
@@ -196,7 +187,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a differing @Schema(pattern) must compose with, not drop, a creator parameter's @Pattern")
+    @DisplayName("a differing @Schema(pattern) must compose with, not drop, a creator parameter's @Pattern")
     void swaggerPatternNeverDropsConstraintSourcePattern() {
         JsonNode document = document(SwaggerNeverLoosensDto.class);
         List<JsonNode> closure = propertyClosure(document, "code");
@@ -210,7 +201,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a looser @Schema(maxLength) must not overwrite a stricter creator-parameter @Size bound")
+    @DisplayName("a looser @Schema(maxLength) must not overwrite a stricter creator-parameter @Size bound")
     void swaggerMaxLengthNeverLoosensStricterConstraintSourceBound() {
         JsonNode document = document(SwaggerNeverLoosensDto.class);
         JsonNode name = document.at("/properties/name");
@@ -223,8 +214,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B (contrast): a stricter @Schema(maxLength) still wins over a looser creator-parameter"
-            + " @Size bound")
+    @DisplayName("contrast: a stricter @Schema(maxLength) still wins over a looser creator-parameter" + " @Size bound")
     void swaggerStricterMaxLengthStillWinsContrast() {
         JsonNode document = document(SwaggerNeverLoosensDto.class);
         JsonNode tag = document.at("/properties/tag");
@@ -237,7 +227,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a looser @Schema(minimum) must not overwrite a stricter creator-parameter @Min bound")
+    @DisplayName("a looser @Schema(minimum) must not overwrite a stricter creator-parameter @Min bound")
     void swaggerMinimumNeverLoosensStricterConstraintSourceBound() {
         JsonNode document = document(SwaggerNeverLoosensDto.class);
         JsonNode level = document.at("/properties/level");
@@ -294,7 +284,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a looser @Schema(minLength) must not overwrite a stricter creator-parameter @Size bound")
+    @DisplayName("a looser @Schema(minLength) must not overwrite a stricter creator-parameter @Size bound")
     void swaggerMinLengthNeverLoosensStricterConstraintSourceBound() {
         JsonNode document = document(SwaggerCoexistenceDto.class);
         JsonNode label = document.at("/properties/label");
@@ -307,7 +297,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a looser @Schema(maximum) must not overwrite a stricter creator-parameter @Max bound")
+    @DisplayName("a looser @Schema(maximum) must not overwrite a stricter creator-parameter @Max bound")
     void swaggerMaximumNeverLoosensStricterConstraintSourceBound() {
         JsonNode document = document(SwaggerCoexistenceDto.class);
         JsonNode score = document.at("/properties/score");
@@ -320,7 +310,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a @Schema(maximum, exclusiveMaximum = true) writes a different keyword and must coexist"
+    @DisplayName("a @Schema(maximum, exclusiveMaximum = true) writes a different keyword and must coexist"
             + " with the constraint source's own maximum, not replace it")
     void swaggerExclusiveMaximumCoexistsWithConstraintSourceMaximum() {
         JsonNode document = document(SwaggerCoexistenceDto.class);
@@ -341,7 +331,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 B: a @Schema(minimum, exclusiveMinimum = true) writes a different keyword and must coexist"
+    @DisplayName("a @Schema(minimum, exclusiveMinimum = true) writes a different keyword and must coexist"
             + " with the constraint source's own minimum, not replace it")
     void swaggerExclusiveMinimumCoexistsWithConstraintSourceMinimum() {
         JsonNode document = document(SwaggerCoexistenceDto.class);
@@ -361,13 +351,12 @@ class KeywordCompositionTest {
                         + " \"minimum\"; document: " + document);
     }
 
-    // ============================================================ S1: describeExtras (any-setter map)
+    // ============================================================ describeExtras (any-setter map)
 
     /**
-     * S1 (sibling defect, not yet fixed): {@code describeExtras} writes an any-setter map's {@code
-     * @Schema(maxProperties)} with a plain {@code definition.put(...)} over the {@code @Size}-derived
-     * {@code maxProperties} it already wrote for the same member — the same unconditional-overwrite
-     * shape Defect B had for {@code translateSwagger}.
+     * An any-setter map carrying both {@code @Size} and a looser {@code @Schema(maxProperties)}:
+     * {@code describeExtras} must keep the {@code @Size}-derived {@code maxProperties} it already wrote
+     * for the same member, as {@code translateSwagger} does for the other keywords.
      */
     static final class AnySetterCardinalityDto {
         @Size(max = 3)
@@ -377,7 +366,7 @@ class KeywordCompositionTest {
     }
 
     @Test
-    @DisplayName("CO-001 S1: a looser @Schema(maxProperties) on an any-setter map must not overwrite a stricter"
+    @DisplayName("a looser @Schema(maxProperties) on an any-setter map must not overwrite a stricter"
             + " @Size bound (describeExtras)")
     void anySetterMaxPropertiesNeverLoosensStricterConstraintSourceBound() {
         JsonNode document = document(AnySetterCardinalityDto.class);

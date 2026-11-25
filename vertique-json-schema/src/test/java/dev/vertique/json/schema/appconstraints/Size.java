@@ -14,10 +14,10 @@ import java.lang.annotation.Target;
 /**
  * An application-defined constraint named {@code Size}, deliberately colliding with {@code
  * jakarta.validation.constraints.Size}'s simple name — in a different package, with a different
- * fully-qualified class name — composing {@code @Pattern} instead of a size bound (W3).
+ * fully-qualified class name — composing {@code @Pattern} instead of a size bound.
  *
  * <p>Declares its own {@code min}/{@code max} attributes, shaped like the real {@code @Size}'s, so
- * that matching this annotation by simple name alone (as the metadata renderer did before W3) risks
+ * that matching this annotation by simple name alone risks
  * misreading these differently-typed attributes as if they were {@code jakarta.validation.constraints
  * .Size}'s own — {@code min}/{@code max} here are {@link String}, not {@code int}, so a simple-name
  * match that tries {@code (Integer) attributes.get("max")} fails outright instead of silently

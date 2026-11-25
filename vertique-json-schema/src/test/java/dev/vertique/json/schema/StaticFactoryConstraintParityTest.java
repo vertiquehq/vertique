@@ -33,18 +33,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * rest-023 T006 (D003, TP-001). {@link WalkConstraintSource}'s unscoped-member translation gains the
+ * {@link WalkConstraintSource}'s unscoped-member translation covers the
  * {@code @Positive}/{@code @PositiveOrZero}/{@code @Negative}/{@code @NegativeOrZero} keyword family
- * for every unscoped member kind the floor already translates — a static-factory creator parameter, a
- * constructor creator parameter, a setter, and a builder method — plus the type-use value position the
- * coordinator's P01-gate ruling extends the same widened table to (the walk vocabulary shared between
- * {@link WalkConstraintSource#forUnscopedMember} and {@link WalkConstraintSource#forTypeUse} before the
- * family is added). A scoped field/getter's own rendering (the schema library's own Jakarta module) is
- * pinned as the parity target every other member kind must match once widened.
+ * for every unscoped member kind the floor translates — a static-factory creator parameter, a
+ * constructor creator parameter, a setter, and a builder method — plus the type-use value position
+ * (the walk vocabulary is shared between {@link WalkConstraintSource#forUnscopedMember} and {@link
+ * WalkConstraintSource#forTypeUse}). A scoped field/getter's own rendering (the schema library's own
+ * Jakarta module) is pinned as the parity target every other member kind must match.
  *
- * <p>Retained class name (the contract's own TP-001 identifier), extended in scope beyond the
- * static-factory case its own name suggests: every unscoped member kind, plus the type-use overlay and
- * the {@code @Email}/Hibernate-only/non-numeric-misapplication controls (AC-005.2, R16).
+ * <p>Beyond the static-factory case its name suggests, the class covers every unscoped member kind,
+ * plus the type-use overlay and the {@code @Email}/Hibernate-only/non-numeric-misapplication controls.
  *
  * <p>Per member kind, the floor reads the family from: a creator parameter (static-factory or
  * constructor) — the parameter's own annotation, including a same-named field Jackson's own
@@ -118,10 +116,10 @@ class StaticFactoryConstraintParityTest {
         assertKeywordValueBothModes(type, property, keyword, 0);
     }
 
-    // --- C3p: a static-factory creator parameter, every family member ---
+    // --- A static-factory creator parameter, every family member ---
 
     @Test
-    @DisplayName("C3p: a static-factory creator parameter renders the Positive/Negative family exactly as the"
+    @DisplayName("a static-factory creator parameter renders the Positive/Negative family exactly as the"
             + " floor's other keywords already do")
     void staticFactoryCreatorParameterRendersThePositiveFamily() {
         assertFamilyKeywordBothModes(StaticFactoryPositiveDto.class, "amount", "exclusiveMinimum");
@@ -130,13 +128,12 @@ class StaticFactoryConstraintParityTest {
         assertFamilyKeywordBothModes(StaticFactoryNegativeOrZeroDto.class, "amount", "maximum");
     }
 
-    // --- C3c: a constructor creator parameter ---
+    // --- A constructor creator parameter ---
 
     @Test
-    @DisplayName("C3c: a constructor creator parameter renders exclusiveMinimum: 0 in walk-only mode (red until"
-            + " the floor is widened); the validator-supplemented mode already renders it today"
-            + " (characterization control — Bean Validation exposes a constrained constructor's own"
-            + " parameters), asserted here as parity with the floor's own rendering")
+    @DisplayName("a constructor creator parameter renders exclusiveMinimum: 0 in walk-only mode, and the"
+            + " validator-supplemented mode renders it too (Bean Validation exposes a constrained"
+            + " constructor's own parameters), asserted here as parity with the floor's own rendering")
     void constructorCreatorParameterRendersThePositiveFamily() {
         assertFamilyKeywordBothModes(ConstructorPositiveDto.class, "amount", "exclusiveMinimum");
     }
@@ -147,10 +144,10 @@ class StaticFactoryConstraintParityTest {
     @DisplayName("Characterization: a setter backed by an annotated field renders the Positive/Negative"
             + " family through the scoped borrow — Bean Validation forbids a method-level constraint on a"
             + " void method (JSR-380 §8.2, Hibernate HV000132), so the backing field is the only legal"
-            + " placement for a void setter's own constraint besides the invisible parameter; already"
-            + " green before this task, since InputPropertyDescriber#borrowFieldAttributes joins the"
-            + " setter to its Jackson-introspected field and the schema library's own always-on Jakarta"
-            + " module renders it, independent of WalkConstraintSource's own widening")
+            + " placement for a void setter's own constraint besides the invisible parameter;"
+            + " InputPropertyDescriber#borrowFieldAttributes joins the setter to its Jackson-introspected"
+            + " field and the schema library's own always-on Jakarta module renders it, independent of"
+            + " WalkConstraintSource")
     void setterBackedByAnAnnotatedFieldRendersThePositiveFamilyThroughTheScopedBorrow() {
         assertFamilyKeywordBothModes(SetterFieldPositiveDto.class, "amount", "exclusiveMinimum");
     }
@@ -159,8 +156,8 @@ class StaticFactoryConstraintParityTest {
     @DisplayName("Characterization: a setter's own PARAMETER annotation (@Positive or @Max) is invisible to"
             + " the floor in both constraint-source modes — AnnotatedMethod#getAnnotation never consults"
             + " parameter annotations, and Bean Validation's own property-descriptor join reflects the"
-            + " built field directly, never the setter parameter; pre-existing gap, unchanged by this"
-            + " task, affects every walk keyword (documented for T008's Known gaps)")
+            + " built field directly, never the setter parameter; a known gap that affects every walk"
+            + " keyword")
     void setterParameterAnnotationIsNotReadByTheFloor() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode withoutValidator = walkDocument(SetterPositiveParameterOnlyDto.class);
@@ -192,22 +189,20 @@ class StaticFactoryConstraintParityTest {
     @Test
     @DisplayName("A @JsonPOJOBuilder builder's own METHOD (not its parameter) carries @Positive — the shape"
             + " the floor actually reads; renders exclusiveMinimum: 0 in both constraint-source modes,"
-            + " matching the floor's own pre-existing method-level @Max idiom for a builder method"
+            + " matching the floor's own method-level @Max idiom for a builder method"
             + " (discriminator below)")
     void builderMethodRendersThePositiveFamily() {
         assertFamilyKeywordBothModes(BuilderPositiveDto.class, "amount", "exclusiveMinimum");
 
-        // Discriminator: a method-level @Max(5) on a builder method already renders today, proving the
-        // floor's merged-annotation read of a builder method is not something new invented for this
-        // family.
+        // Discriminator: a method-level @Max(5) on a builder method renders too, proving the
+        // floor's merged-annotation read of a builder method is not specific to this family.
         assertKeywordValueBothModes(BuilderMaxControlDto.class, "amount", "maximum", 5);
     }
 
     @Test
     @DisplayName("Characterization: a builder method's own PARAMETER annotation (@Positive or @Max) is"
             + " invisible to the floor in both constraint-source modes — the same AnnotatedMethod gap as"
-            + " the setter's own parameter; pre-existing, unchanged by this task, documented for T008's"
-            + " Known gaps")
+            + " the setter's own parameter; a known gap")
     void builderMethodParameterAnnotationIsNotReadByTheFloor() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode withoutValidator = walkDocument(BuilderPositiveParameterOnlyDto.class);
@@ -238,7 +233,7 @@ class StaticFactoryConstraintParityTest {
 
     @Test
     @DisplayName("Parity control: a scoped field/getter already renders the Positive family identically with or"
-            + " without a validator — the exact node text every other member kind must match once widened")
+            + " without a validator — the exact node text every other member kind must match")
     void scopedFieldAndGetterRenderTheFamilyIdenticallyToTheFloor() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode withoutValidator = walkDocument(ScopedPositiveDto.class);
@@ -259,11 +254,11 @@ class StaticFactoryConstraintParityTest {
                         + " scoped @Positive int; document: " + withoutValidator);
     }
 
-    // --- Type-use value position (coordinator ruling, P01 gate) ---
+    // --- Type-use value position ---
 
     @Test
-    @DisplayName("Coordinator ruling: a Map<String, @Positive Integer> value position renders exclusiveMinimum: 0"
-            + " on additionalProperties — red today, since forTypeUse lacks the family")
+    @DisplayName(
+            "a Map<String, @Positive Integer> value position renders exclusiveMinimum: 0" + " on additionalProperties")
     void typeUseValueRendersThePositiveFamily() {
         JsonNode document = walkDocument(TypeUsePositiveFamilyHolder.class);
         JsonNode additionalProperties = document.at("/properties/counts/additionalProperties");
@@ -275,14 +270,14 @@ class StaticFactoryConstraintParityTest {
                         + " the scoped-member parity control's own exact text; document: " + document);
     }
 
-    // --- Security review MEDIUM: the family must not loosen a stricter declared bound ---
+    // --- The family must not loosen a stricter declared bound ---
     //
     // WalkConstraintSource#translateWalkVocabulary runs the family's own unconditional `put` after
     // @DecimalMin/@DecimalMax, so a member carrying both a stricter declared bound and a family
     // annotation on the same keyword must keep the declared bound, not the family's own zero.
 
     @Test
-    @DisplayName("Security review MEDIUM: @Positive must not loosen a stricter declared @DecimalMin"
+    @DisplayName("@Positive must not loosen a stricter declared @DecimalMin"
             + " exclusiveMinimum — the family's own unconditional put must not overwrite a stricter"
             + " already-translated bound on the same keyword")
     void positiveDoesNotLoosenAStricterExclusiveMinimum() {
@@ -290,7 +285,7 @@ class StaticFactoryConstraintParityTest {
     }
 
     @Test
-    @DisplayName("Security review MEDIUM: @PositiveOrZero must not loosen a stricter declared @DecimalMin"
+    @DisplayName("@PositiveOrZero must not loosen a stricter declared @DecimalMin"
             + " minimum — the family's own unconditional put must not overwrite a stricter"
             + " already-translated bound on the same keyword")
     void positiveOrZeroDoesNotLoosenAStricterInclusiveMinimum() {
@@ -298,7 +293,7 @@ class StaticFactoryConstraintParityTest {
     }
 
     @Test
-    @DisplayName("Security review MEDIUM: @Negative must not loosen a stricter declared @DecimalMax"
+    @DisplayName("@Negative must not loosen a stricter declared @DecimalMax"
             + " exclusiveMaximum — the family's own unconditional put must not overwrite a stricter"
             + " already-translated bound on the same keyword")
     void negativeDoesNotLoosenAStricterExclusiveMaximum() {
@@ -306,7 +301,7 @@ class StaticFactoryConstraintParityTest {
     }
 
     @Test
-    @DisplayName("Security review MEDIUM: @NegativeOrZero must not loosen a stricter declared @DecimalMax"
+    @DisplayName("@NegativeOrZero must not loosen a stricter declared @DecimalMax"
             + " maximum — the family's own unconditional put must not overwrite a stricter"
             + " already-translated bound on the same keyword")
     void negativeOrZeroDoesNotLoosenAStricterInclusiveMaximum() {
@@ -314,7 +309,7 @@ class StaticFactoryConstraintParityTest {
     }
 
     @Test
-    @DisplayName("Security review MEDIUM: @PositiveOrZero must not loosen a stricter declared @Min"
+    @DisplayName("@PositiveOrZero must not loosen a stricter declared @Min"
             + " minimum — mirrors the @DecimalMin case above for existingAsBigDecimal's own Long branch"
             + " (a plain @Min/@Max value), not just its BigDecimal branch")
     void positiveOrZeroDoesNotLoosenAStricterMin() {
@@ -322,7 +317,7 @@ class StaticFactoryConstraintParityTest {
     }
 
     @Test
-    @DisplayName("Security review MEDIUM: @NegativeOrZero must not loosen a stricter declared @Max"
+    @DisplayName("@NegativeOrZero must not loosen a stricter declared @Max"
             + " maximum — mirrors the @DecimalMax case above for existingAsBigDecimal's own Long branch"
             + " (a plain @Min/@Max value), not just its BigDecimal branch")
     void negativeOrZeroDoesNotLoosenAStricterMax() {
@@ -331,7 +326,7 @@ class StaticFactoryConstraintParityTest {
 
     @Test
     @DisplayName("Discriminator: the family must still tighten a looser declared bound in either direction —"
-            + " proves the fix above only blocks loosening, never legitimate tightening")
+            + " proves the merge only blocks loosening, never legitimate tightening")
     void theFamilyStillTightensALooserDeclaredBound() {
         // Same keyword ("minimum") both ways: the family's own zero is stricter than the declared -3, so
         // it must still win here, unlike the exclusiveMinimum/minimum cases above where the declared
@@ -371,8 +366,8 @@ class StaticFactoryConstraintParityTest {
     // --- Controls ---
 
     @Test
-    @DisplayName("R16: @Email at a static-factory parameter is not translated by the floor (a format constraint,"
-            + " excluded from this keyword family — stays undescribed, green before and after this task)")
+    @DisplayName("@Email at a static-factory parameter is not translated by the floor (a format constraint,"
+            + " excluded from this keyword family — stays undescribed)")
     void emailIsNotTranslatedByTheFloor() {
         JsonNode document = walkDocument(EmailStaticFactoryDto.class);
         JsonNode email = document.at("/properties/email");
@@ -388,7 +383,7 @@ class StaticFactoryConstraintParityTest {
 
     @Test
     @DisplayName("A Hibernate-only @Range at a static-factory parameter has no metadata source and stays"
-            + " undescribed by the floor (documented gap, excluded from this task's own scope)")
+            + " undescribed by the floor (documented gap)")
     void hibernateOnlyRangeIsNotTranslatedByTheFloor() {
         JsonNode document = walkDocument(RangeStaticFactoryDto.class);
         JsonNode amount = document.at("/properties/amount");
@@ -401,17 +396,15 @@ class StaticFactoryConstraintParityTest {
     }
 
     /**
-     * Pre-existing, inert rendering: the floor's translation is unconditional on the annotated position's
+     * Inert rendering: the floor's translation is unconditional on the annotated position's
      * declared type, so {@code @Positive} on a {@code String} renders {@code exclusiveMinimum: 0} exactly
      * as {@code @Max}/{@code @Min} already do on the same shape — a JSON Schema numeric keyword simply has
-     * no effect on a non-number instance. This is a hygiene follow-up for the module owner (should the
-     * floor someday validate the annotated type before translating), not this task's own scope.
+     * no effect on a non-number instance.
      */
     @Test
     @DisplayName("@Positive on a non-numeric static-factory parameter renders exclusiveMinimum: 0 exactly as"
-            + " @Max already does on the same shape — pre-existing, inert (a JSON Schema numeric keyword"
-            + " has no effect on a non-number instance); a hygiene follow-up for the owner, not this"
-            + " task's own scope")
+            + " @Max already does on the same shape — inert (a JSON Schema numeric keyword"
+            + " has no effect on a non-number instance)")
     void positiveOnANonNumericMemberRendersLikeTheExistingBoundKeywords() {
         JsonNode positiveDocument = walkDocument(PositiveOnStringStaticFactoryDto.class);
         JsonNode positiveAmount = positiveDocument.at("/properties/amount");
@@ -424,20 +417,20 @@ class StaticFactoryConstraintParityTest {
                         + " keywords already do (translation is unconditional on the annotated position's"
                         + " declared type); document: " + positiveDocument);
 
-        // Discriminator: @Max(5) on the same kind of String parameter already renders, unconditionally,
-        // today — proving the family merely matches pre-existing floor behaviour rather than introducing
-        // a new non-numeric rendering path.
+        // Discriminator: @Max(5) on the same kind of String parameter renders, unconditionally —
+        // proving the family merely matches the floor's behaviour for the other bound keywords rather
+        // than introducing a separate non-numeric rendering path.
         JsonNode maxDocument = walkDocument(MaxOnStringStaticFactoryDto.class);
         JsonNode maxAmount = maxDocument.at("/properties/amount");
 
         assertEquals(
                 "{\"maximum\":5,\"type\":\"string\"}",
                 maxAmount.toString(),
-                "@Max(5) on a String static-factory parameter already renders unconditionally today,"
+                "@Max(5) on a String static-factory parameter renders unconditionally,"
                         + " matching @Positive's own inert rendering above; document: " + maxDocument);
     }
 
-    // --- Fixtures: C3p (static-factory creator parameter), one per family member ---
+    // --- Fixtures: static-factory creator parameter, one per family member ---
 
     static final class StaticFactoryPositiveDto {
         private final int amount;
@@ -507,7 +500,7 @@ class StaticFactoryConstraintParityTest {
         }
     }
 
-    // --- Fixture: C3c (constructor creator parameter) ---
+    // --- Fixture: constructor creator parameter ---
 
     static final class ConstructorPositiveDto {
         private final int amount;
@@ -532,10 +525,10 @@ class StaticFactoryConstraintParityTest {
      * InputPropertyDescriber#borrowFieldAttributes}'s own scope-attribute borrow: Jackson's introspection
      * resolves this setter's backing field via {@code BeanPropertyDefinition#getField()}, and the borrow
      * routes the field's constraint through the schema library's own always-on Jakarta module — the same
-     * scoped path {@link ScopedPositiveDto} exercises directly — rendering this family already, before
-     * and independent of {@link WalkConstraintSource}'s own widening. This is therefore a
-     * characterization (expected green in both constraint-source modes), documenting the one legal
-     * placement for a void setter's own constraint besides the invisible parameter ({@link
+     * scoped path {@link ScopedPositiveDto} exercises directly — rendering this family independent of
+     * {@link WalkConstraintSource}. This is therefore a characterization (green in both
+     * constraint-source modes), documenting the one legal placement for a void setter's own
+     * constraint besides the invisible parameter ({@link
      * #setterParameterAnnotationIsNotReadByTheFloor}).
      */
     static final class SetterFieldPositiveDto {
@@ -572,7 +565,7 @@ class StaticFactoryConstraintParityTest {
      * parameter): a getter-backed built field is also reachable through {@link InputPropertyDescriber
      * #borrowBuilderFieldAttributes}'s own unconditional borrow, which already routes through the
      * schema library's own always-on Jakarta module and would render this family regardless of {@link
-     * WalkConstraintSource}'s own gap — masking exactly the seam this test exists to exercise. The built
+     * WalkConstraintSource} — masking exactly the seam this test exists to exercise. The built
      * field here carries no annotation of its own, so the borrow finds nothing to add; {@link
      * WalkConstraintSource#forUnscopedMember}'s own reading of the builder method's merged annotation
      * map is the only path that can render this family at all. The annotation sits on the method itself
@@ -580,7 +573,7 @@ class StaticFactoryConstraintParityTest {
      * setter, a builder method is legal to annotate directly — it returns the builder, not {@code void},
      * so Bean Validation's method-level restriction does not apply here);
      * {@link #builderMethodParameterAnnotationIsNotReadByTheFloor} pins
-     * the parameter-level shape as a separate, still-red characterization.
+     * the parameter-level shape as a separate characterization.
      */
     @JsonDeserialize(builder = BuilderPositiveDto.Builder.class)
     static final class BuilderPositiveDto {
@@ -614,8 +607,7 @@ class StaticFactoryConstraintParityTest {
     /**
      * Discriminator sibling of {@link BuilderPositiveDto}: a method-level {@code @Max(5)} on a builder
      * method, proving the floor already reads a builder method's own annotation for its pre-existing
-     * keywords — {@code @Positive} above merely extends the family to that same, already-working read
-     * path.
+     * keywords — {@code @Positive} above uses that same read path.
      */
     @JsonDeserialize(builder = BuilderMaxControlDto.Builder.class)
     static final class BuilderMaxControlDto {
@@ -700,7 +692,7 @@ class StaticFactoryConstraintParityTest {
         public Map<String, @Positive Integer> counts;
     }
 
-    // --- Fixtures: security review — the family must not loosen a stricter declared bound ---
+    // --- Fixtures: the family must not loosen a stricter declared bound ---
 
     static final class DecimalMinExclusivePositiveDto {
         private final int amount;
@@ -926,7 +918,7 @@ class StaticFactoryConstraintParityTest {
     /**
      * Same shape as {@link PositiveOnStringStaticFactoryDto}, with the existing {@code @Max} keyword in
      * place of {@code @Positive} — the discriminator proving that keyword's own unconditional, inert
-     * rendering on a non-numeric parameter predates this family and is not something new.
+     * rendering on a non-numeric parameter is not specific to this family.
      */
     static final class MaxOnStringStaticFactoryDto {
         private final String amount;

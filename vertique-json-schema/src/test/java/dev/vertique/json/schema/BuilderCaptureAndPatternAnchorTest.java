@@ -20,8 +20,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * S1 (the {@code builderFor} capturing-mapper guard) and S2 (the {@code (?![\s\S])} pattern anchor
- * for case-folded property names).
+ * The {@code builderFor} capturing-mapper guard and the {@code (?![\s\S])} pattern anchor for
+ * case-folded property names.
  */
 class BuilderCaptureAndPatternAnchorTest {
 
@@ -44,7 +44,7 @@ class BuilderCaptureAndPatternAnchorTest {
         };
     }
 
-    // ================================================================== S1
+    // ================================================================== capturing-mapper guard
 
     /** An {@link ObjectMapper} that refuses to copy itself, simulating a hostile or misconfigured subclass. */
     static final class RefusesToCopyMapper extends ObjectMapper {
@@ -59,7 +59,7 @@ class BuilderCaptureAndPatternAnchorTest {
     }
 
     @Test
-    @DisplayName("S1: a mapper whose copy() throws yields the bounded generation diagnostic, not a raw exception")
+    @DisplayName("a mapper whose copy() throws yields the bounded generation diagnostic, not a raw exception")
     void mapperCopyFailureYieldsBoundedDiagnostic() {
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
@@ -74,9 +74,10 @@ class BuilderCaptureAndPatternAnchorTest {
                 "the message must name the type being described; was: " + failure.getMessage());
         // Decisive, not merely "some JsonSchemaGenerationException": AnnotationJsonSchemaGenerator's
         // own outer catch (RuntimeException | StackOverflowError) around generator.generateSchema(...)
-        // already wraps any raw exception, S1 or not — so a bare assertThrows(JsonSchemaGenerationException
-        // .class, ...) alone cannot tell the two apart. What only S1's guarded builderFor produces is
-        // this specific message; the outer catch's fallback message never names the mapper at all.
+        // already wraps any raw exception, guarded or not — so a bare assertThrows(
+        // JsonSchemaGenerationException.class, ...) alone cannot tell the two apart. What only the
+        // guarded builderFor produces is this specific message; the outer catch's fallback message
+        // never names the mapper at all.
         assertTrue(
                 failure.getMessage().contains("the profile's mapper cannot deserialize it"),
                 "the message must be builderFor's own specific diagnostic, not the generator's generic"
@@ -86,7 +87,7 @@ class BuilderCaptureAndPatternAnchorTest {
                 "the original failure must be preserved as the cause; was: " + failure.getCause());
     }
 
-    // ================================================================== S2
+    // ================================================================== pattern anchor
 
     static final class CaseInsensitiveDto {
         @jakarta.validation.constraints.Size(max = 10)
@@ -98,7 +99,7 @@ class BuilderCaptureAndPatternAnchorTest {
 
     @Test
     @DisplayName(
-            "S2: the case-folded property pattern is anchored with (?![\\s\\S]), not $ — a trailing newline must not match")
+            "the case-folded property pattern is anchored with (?![\\s\\S]), not $ — a trailing newline must not match")
     void caseFoldedPatternDoesNotMatchAKeyWithATrailingNewline() {
         ObjectMapper mapper = new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
         JsonNode document = assertCanonicalForm(AnnotationJsonSchemaGenerator.forInputProfile(profile(mapper))
