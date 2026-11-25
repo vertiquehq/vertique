@@ -665,6 +665,12 @@ This module implements the workflow-side durable context propagation surfaces fo
 
 ---
 
+## Upgrade notes
+
+- **The `V1` script comments changed, so its checksum changed.** `V1__create_workflow_tables.sql` creates the same objects as before; only comments were reworded. Flyway checksums the file text, so a database that applied the earlier `V1` fails validation with a checksum mismatch: `MIGRATE` mode stops at startup while `validateOnMigrate` is `true` (the default), and `VALIDATE` mode reports the mismatch. The framework has no repair setting of its own. Run Flyway's `repair` once, before the first node of this version starts, against every history that holds the script, with the same `locations`, schemas and history table the application uses: `flyway_schema_history_workflow` in the schema of the `workflow` instance in the named layout, or `flyway_schema_history` in the single layout. `repair` realigns the recorded checksum with the shipped file and applies no migration. A new database is unaffected.
+
+---
+
 ## Invariants & Gotchas
 
 - **Branch columns have no FK to workflow_branch_tokens.** `workflow_tasks` and `workflow_timers` carry nullable `branch_token_id` / `fork_step_id` / `branch_id` columns but no FK constraint to `workflow_branch_tokens`, by design — branch tokens are always written before the tasks and timers that name them. Each of the tasks, timers and branch tokens does carry a `workflow_id` FK to `workflow_instances` with `ON DELETE CASCADE`, so the instance cascade removes all of them.

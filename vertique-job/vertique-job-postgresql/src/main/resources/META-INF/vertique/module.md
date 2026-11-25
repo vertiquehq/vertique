@@ -123,8 +123,9 @@ Flyway migration:
 - `V005__drop_job_schedules_max_attempts.sql` — drops `job_schedules.max_attempts`, the attempt limit of a cron schedule that nothing reads: cron never retries, and an execution records its own limit in `job_executions.max_attempts`, which is unchanged. The drop is catalog-only and rewrites no row. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, and can be rerun after a failure. During a rolling upgrade a node still on the earlier version reads and writes the dropped column at startup, when it persists its schedules and when its misfire recovery looks up the schedule of each single-instance job; both fail after the migration and are logged and ignored, so that node skips its misfire catch-up until it is upgraded.
 
 **The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
-as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
-would fail Flyway checksum validation, which is why the fold-back practice ends here.
+as a new `V2+` migration file; `V1` is not edited for a schema change. A database that applied an earlier `V1`
+would fail Flyway checksum validation, which is why the fold-back practice ends here. The one exception is a
+comment-only edit that changed the checksum (see [Upgrade notes](#upgrade-notes)).
 
 ### `job_executions`
 
@@ -286,6 +287,12 @@ contain it, for example `["classpath:db/migration/job", "classpath:db/app"]`. Do
 In this mode the migration lands where the single-run configuration says. If `db.schemas.job` is also
 set, the repository queries that schema, so make the `flyway.schemas` list (first entry) or the
 connection default match it, or the repository will look in a schema the migration never filled.
+
+---
+
+## Upgrade notes
+
+- **The `V1` script comments changed, so its checksum changed.** `V1__create_job_tables.sql` creates the same objects as before; only comments were reworded. Flyway checksums the file text, so a database that applied the earlier `V1` fails validation with a checksum mismatch: `MIGRATE` mode stops at startup while `validateOnMigrate` is `true` (the default), and `VALIDATE` mode reports the mismatch. The framework has no repair setting of its own. Run Flyway's `repair` once, before the first node of this version starts, against every history that holds the script, with the same `locations`, schemas and history table the application uses: `flyway_schema_history_job` in the schema of the `job` instance in the named layout, or `flyway_schema_history` in the single layout. `repair` realigns the recorded checksum with the shipped file and applies no migration. A new database is unaffected.
 
 ---
 

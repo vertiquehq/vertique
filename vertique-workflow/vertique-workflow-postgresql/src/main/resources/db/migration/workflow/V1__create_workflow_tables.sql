@@ -20,13 +20,13 @@ CREATE TABLE workflow_instances (
     state_json            JSONB NOT NULL,
     error_type            VARCHAR(255),
     error_message         TEXT,
-    -- durable context captured at start time (ADR-0065 {"context": ...} carrier shape);
+    -- durable context captured at start time (carrier shape {"context": ...});
     -- NULL means no ambient durable context was present at start (empty capture)
     metadata              JSONB NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at          TIMESTAMPTZ,
-    -- cycle 4: soft-delete timestamp; NULL means not yet archived
+    -- soft-delete timestamp; NULL means not yet archived
     archived_at           TIMESTAMPTZ NULL
 );
 
@@ -50,13 +50,13 @@ CREATE INDEX idx_workflow_instances_wait_aux_id
     ON workflow_instances (wait_aux_id)
     WHERE wait_aux_id IS NOT NULL;
 
--- cycle 4: drives the archive-sweep background job (status + completed_at cutoff, unarchived only)
+-- drives the archive-sweep background job (status + completed_at cutoff, unarchived only)
 CREATE INDEX idx_workflow_instances_archive_sweep
     ON workflow_instances (status, completed_at)
     WHERE archived_at IS NULL
       AND status IN ('COMPLETED','FAILED','CANCELLED','EXPIRED','COMPENSATED');
 
--- cycle 4: drives the purge-archived background job (cutoff on archived_at, archived rows only)
+-- drives the purge-archived background job (cutoff on archived_at, archived rows only)
 CREATE INDEX idx_workflow_instances_archived_at
     ON workflow_instances (archived_at)
     WHERE archived_at IS NOT NULL;
@@ -76,8 +76,8 @@ CREATE TABLE workflow_history (
 --   kind='signal',       scope=workflow_instance_id::text, key=signal_dedup_key
 --   kind='task-complete',scope=task_id::text,              key=idempotency_key
 --   kind='task-reassign',scope=task_id::text,              key=idempotency_key
--- fingerprint is NULL for cycle-1 'start' and cycle-2 'signal' rows; populated
--- for cycle-3 'task-complete' and 'task-reassign' rows (SHA-256 hex, 64 chars).
+-- fingerprint is NULL for 'start' and 'signal' rows; populated
+-- for 'task-complete' and 'task-reassign' rows (SHA-256 hex, 64 chars).
 CREATE TABLE workflow_dedup (
     kind                  VARCHAR(16) NOT NULL,
     scope                 VARCHAR(255) NOT NULL,
@@ -90,7 +90,7 @@ CREATE TABLE workflow_dedup (
 
 CREATE INDEX idx_workflow_dedup_workflow_id ON workflow_dedup (workflow_id);
 
--- cycle 4: CASCADE FK so dedup rows are cleaned up when the workflow instance is purged.
+-- CASCADE FK so dedup rows are cleaned up when the workflow instance is purged.
 -- DEFERRABLE INITIALLY DEFERRED is required because the start path INSERTs the dedup row before the
 -- workflow_instances row (race-claim ordering); a non-deferred FK would fail at the dedup INSERT
 -- because its workflow_id has not been inserted yet. The constraint is checked at COMMIT time, by
@@ -110,7 +110,7 @@ ALTER TABLE workflow_dedup
 -- delayed_jobs row first, then inserts the workflow_timers row in the same tx —
 -- there is no observable NULL window. Recovery re-enqueue replaces the value
 -- in a single tx via TimerStore.updateExecutionId(...).
--- metadata carries durable propagation context (FR-CTX-178) captured at timer-create
+-- metadata carries durable propagation context captured at timer-create
 -- time; it is the recovery-state copy of job_executions.metadata for the same timer.
 CREATE TABLE workflow_timers (
     timer_id                    UUID         PRIMARY KEY,
@@ -124,16 +124,16 @@ CREATE TABLE workflow_timers (
     cancelled_at                TIMESTAMPTZ  NULL,
     failed_at                   TIMESTAMPTZ  NULL,
     failure_reason              TEXT         NULL,
-    -- cycle 4: timer purpose drives executor dispatch and cancel-cascade routing
+    -- timer purpose drives executor dispatch and cancel-cascade routing
     purpose                     TEXT         NOT NULL DEFAULT 'STANDALONE'
                                     CHECK (purpose IN ('STANDALONE','SIGNAL_TIMEOUT','TASK_DUE','TASK_REMINDER')),
-    -- cycle 4: task identity for TASK_DUE and TASK_REMINDER timers (no FK — avoids insert-order deadlock)
+    -- task identity for TASK_DUE and TASK_REMINDER timers (no FK — avoids insert-order deadlock)
     task_id                     UUID         NULL,
-    -- durable propagation context (FR-CTX-178); NULL ≡ empty map
+    -- durable propagation context; NULL ≡ empty map
     metadata                    JSONB        NULL
 );
 
--- cycle 4: enforce purpose/task_id pairing invariant declared on TimerRecord
+-- enforce purpose/task_id pairing invariant declared on TimerRecord
 ALTER TABLE workflow_timers
     ADD CONSTRAINT ck_workflow_timers_task_id_purpose
     CHECK (
@@ -148,7 +148,7 @@ CREATE INDEX idx_workflow_timers_orphan_scan
 CREATE INDEX idx_workflow_timers_workflow_id
     ON workflow_timers (workflow_id);
 
--- cycle 4: supports reminder cancel-cascade when a task reaches a terminal status
+-- supports reminder cancel-cascade when a task reaches a terminal status
 CREATE INDEX idx_workflow_timers_task_reminders
     ON workflow_timers (task_id, status)
     WHERE purpose = 'TASK_REMINDER' AND status = 'SCHEDULED';
@@ -158,7 +158,7 @@ CREATE INDEX idx_workflow_timers_task_reminders
 -- decisions_snapshot_json carries the plan's decision options at creation time.
 -- completed_by/cancelled_by/reassigned_by JSONB columns are NULL unless the transition occurred.
 -- due_at + due_date_timer_id are NULL when no due-date was configured.
--- Lock-order invariant (cycle 3): workflow_timers → workflow_tasks → workflow_instances.
+-- Lock-order invariant: workflow_timers → workflow_tasks → workflow_instances.
 CREATE TABLE workflow_tasks (
     task_id              UUID         PRIMARY KEY,
     workflow_id          UUID         NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
@@ -166,7 +166,7 @@ CREATE TABLE workflow_tasks (
     status               TEXT         NOT NULL CHECK (status IN ('OPEN','COMPLETED','CANCELLED','EXPIRED')),
     -- Current queryable assignee snapshot. Full assignment history (creates and reassignments)
     -- lives immutably in workflow_history (TASK_CREATED / TASK_REASSIGNED entries). Kept as
-    -- separate columns (rather than JSONB) because cycle 3 needs efficient task-list queries by
+    -- separate columns (rather than JSONB) because the task list needs efficient queries by
     -- assignee target — see idx_workflow_tasks_open_by_user/_role/_queue below.
     assignee_type        TEXT         NOT NULL CHECK (assignee_type IN ('USER','ROLE','QUEUE')),
     assignee_key         VARCHAR(255) NOT NULL,
@@ -174,8 +174,8 @@ CREATE TABLE workflow_tasks (
     decision_name        VARCHAR(64)  NULL,
     decision_payload_json JSONB       NULL,
     -- Actor audit snapshots: serialized WorkflowActor as `{"kind": "...", "value": "..."}`.
-    -- JSONB rather than split kind/value column pairs because cycle 3 has no SQL queries that
-    -- index or filter by actor identity — actors are pure audit metadata.
+    -- JSONB rather than split kind/value column pairs because no SQL query
+    -- indexes or filters by actor identity — actors are pure audit metadata.
     completed_by         JSONB        NULL,
     cancelled_by         JSONB        NULL,
     reassigned_by        JSONB        NULL,
@@ -186,9 +186,9 @@ CREATE TABLE workflow_tasks (
     cancelled_at         TIMESTAMPTZ  NULL,
     expired_at           TIMESTAMPTZ  NULL,
     cancellation_reason  TEXT         NULL,
-    -- cycle 4: durable reminder-fire counter. Incremented atomically when a TASK_REMINDER timer
-    -- fires for this task; replaces the (slow + fragile) JSONB-path COUNT(*) over workflow_history
-    -- the engine used in the first cycle-4 cut. Single SQL UPDATE returns the new count, which the
+    -- durable reminder-fire counter. Incremented atomically when a TASK_REMINDER timer
+    -- fires for this task; counting workflow_history rows by JSONB path instead would be slow and
+    -- fragile. Single SQL UPDATE returns the new count, which the
     -- engine uses as the 1-based reminderIndex for the TASK_REMINDER_FIRED history entry and the
     -- TASK_REMINDER event attribute.
     reminders_fired_count INTEGER     NOT NULL DEFAULT 0,
@@ -208,12 +208,12 @@ CREATE INDEX idx_workflow_tasks_open_due_at   ON workflow_tasks (due_at)
 CREATE INDEX idx_workflow_tasks_updated_at_keyset ON workflow_tasks (updated_at DESC, task_id ASC);
 
 -- ────────────────────────────────────────────────────────────────────
--- PRD-WF-002: Durable parallel fan-out / fan-in
+-- Durable parallel fan-out / fan-in
 -- ────────────────────────────────────────────────────────────────────
 --
 -- Adds two new tables and three nullable columns to existing tables to support
 -- branch tokens and fan-in joins. Purely additive: existing single-path
--- workflows continue to work unchanged (NFR-WF-PAR-005). Branch tokens have no
+-- workflows continue to work unchanged. Branch tokens have no
 -- FK from workflow_tasks/workflow_timers to workflow_branch_tokens to preserve
 -- the existing lock-order invariant (workflow_timers → workflow_tasks →
 -- workflow_instances); CASCADE cleanup still flows through workflow_id.
@@ -225,13 +225,13 @@ CREATE INDEX idx_workflow_tasks_updated_at_keyset ON workflow_tasks (updated_at 
 --   key=SHA-256 hex of (forkStepId|US|branchId|US|stepId|US|targetId|US|operation)  (64 chars)
 -- The engine inserts the dedup row inside BranchTransitionEngine BEFORE invoking
 -- RecorderRouter; ON CONFLICT (kind, scope, key) DO NOTHING gates duplicate
--- dispatches across branch retries (FR-WF-PAR-038). No schema change required —
+-- dispatches across branch retries. No schema change required —
 -- the existing (kind, scope, key) PRIMARY KEY admits arbitrary kinds.
 
 -- ────────────────────────────────────────────────────────────────────
 -- workflow_branch_tokens — one row per fork-group branch
 -- ────────────────────────────────────────────────────────────────────
--- metadata carries durable propagation context (FR-CTX-178) captured at branch-create
+-- metadata carries durable propagation context captured at branch-create
 -- time; persisted so the recovery sweep can rebind context per branch without
 -- re-executing the capture path.
 CREATE TABLE workflow_branch_tokens (
@@ -261,7 +261,7 @@ CREATE TABLE workflow_branch_tokens (
     version            BIGINT NOT NULL DEFAULT 0,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- durable propagation context (FR-CTX-178); NULL ≡ empty map
+    -- durable propagation context; NULL ≡ empty map
     metadata           JSONB NULL,
     UNIQUE (workflow_id, fork_step_id, branch_id)
 );
@@ -329,10 +329,10 @@ CREATE INDEX idx_workflow_timers_branch_token
     WHERE branch_token_id IS NOT NULL;
 
 -- ────────────────────────────────────────────────────────────────────
--- Cycle 5 — Phase 2: object-centric workflows (FR-WF-120..127)
+-- Object-centric workflows
 -- ────────────────────────────────────────────────────────────────────
 
--- Partial composite index for subject-version queries (FR-WF-123).
+-- Partial composite index for subject-version queries.
 -- Most instances do not carry a subject_version. The existing
 -- idx_workflow_instances_subject (subject_type, subject_id) covers type+id queries
 -- already; this index is purely for the version-aware path.
@@ -340,9 +340,9 @@ CREATE INDEX idx_workflow_instances_subject_versioned
     ON workflow_instances (subject_type, subject_id, subject_version)
     WHERE subject_version IS NOT NULL;
 
--- Snapshot column populated at task creation (FR-WF-124).
+-- Snapshot column populated at task creation.
 -- Per-task semantics: a NULL snapshot is fine for tasks where requireVersionStability=false;
 -- for stability-required tasks the engine fails the transition with
 -- WorkflowSubjectVersionUnavailableException, the tx rolls back, and the workflow stays
--- in its prior step. See ADR-0055.
+-- in its prior step.
 ALTER TABLE workflow_tasks ADD COLUMN subject_version_at_creation VARCHAR(64) NULL;

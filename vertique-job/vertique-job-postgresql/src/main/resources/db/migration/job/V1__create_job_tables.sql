@@ -12,7 +12,7 @@ CREATE TABLE job_executions (
     payload         JSONB,
     progress        JSONB,
     parameters      JSONB,
-    -- Durable context-propagation metadata (FR-CTX-177) stored as a DurableMetadata carrier:
+    -- Durable context-propagation metadata stored as a DurableMetadata carrier:
     -- {"context": {"namespace": {...}, ...}}
     -- Captured at enqueue by DelayedJobService.toExecution via DurableMetadata.toCarrier()
     -- after DurableContextPropagator.mergeCaptured(..., DELAYED_JOB).
