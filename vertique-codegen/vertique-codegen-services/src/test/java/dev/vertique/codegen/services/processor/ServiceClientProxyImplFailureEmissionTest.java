@@ -94,7 +94,12 @@ class ServiceClientProxyImplFailureEmissionTest {
     private static final JavaFileObject CONDITIONAL_ON_PROPERTY_SOURCE =
             SourceFiles.inline("dev.vertique.codegen.ConditionalOnProperty", """
                     package dev.vertique.codegen;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.Documented;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Repeatable;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE) @Retention(RetentionPolicy.SOURCE)
                     @Repeatable(ConditionalOnProperties.class) @Documented
                     public @interface ConditionalOnProperty {
@@ -107,7 +112,11 @@ class ServiceClientProxyImplFailureEmissionTest {
     private static final JavaFileObject CONDITIONAL_ON_PROPERTIES_SOURCE =
             SourceFiles.inline("dev.vertique.codegen.ConditionalOnProperties", """
                     package dev.vertique.codegen;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.Documented;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE) @Retention(RetentionPolicy.SOURCE) @Documented
                     public @interface ConditionalOnProperties {
                         ConditionalOnProperty[] value();

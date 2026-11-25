@@ -56,7 +56,10 @@ class ServiceContractProcessorRoundtripTest {
     private static final JavaFileObject TIMEOUT_ANNOTATION =
             SourceFiles.inline("dev.vertique.resilience.annotation.Timeout", """
                     package dev.vertique.resilience.annotation;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     import java.util.concurrent.TimeUnit;
                     @Target({ElementType.TYPE, ElementType.METHOD})
                     @Retention(RetentionPolicy.RUNTIME)
@@ -69,7 +72,10 @@ class ServiceContractProcessorRoundtripTest {
     private static final JavaFileObject CIRCUIT_BREAKER_ANNOTATION =
             SourceFiles.inline("dev.vertique.resilience.annotation.CircuitBreaker", """
                     package dev.vertique.resilience.annotation;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target({ElementType.TYPE, ElementType.METHOD})
                     @Retention(RetentionPolicy.RUNTIME)
                     public @interface CircuitBreaker {
@@ -82,7 +88,10 @@ class ServiceContractProcessorRoundtripTest {
     private static final JavaFileObject AUDIT_TIER_ANNOTATION =
             SourceFiles.inline("com.example.annotation.AuditTier", """
                     package com.example.annotation;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE)
                     @Retention(RetentionPolicy.RUNTIME)
                     public @interface AuditTier {
@@ -147,7 +156,10 @@ class ServiceContractProcessorRoundtripTest {
     private static final JavaFileObject RUNTIME_AUDIT_TIER_ANNOTATION =
             SourceFiles.inline("com.example.annotation.AuditTier", """
                     package com.example.annotation;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE)
                     @Retention(RetentionPolicy.RUNTIME)
                     public @interface AuditTier {

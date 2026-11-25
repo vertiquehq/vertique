@@ -37,7 +37,10 @@ class KafkaSignalListenerGenerationTest {
             SourceFiles.inline("dev.vertique.workflow.kafka.KafkaSignalListener", """
             package dev.vertique.workflow.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.CLASS)
@@ -51,7 +54,10 @@ class KafkaSignalListenerGenerationTest {
     private static final JavaFileObject KAFKA_LISTENER = SourceFiles.inline("dev.vertique.kafka.KafkaListener", """
             package dev.vertique.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.RUNTIME)
@@ -65,7 +71,10 @@ class KafkaSignalListenerGenerationTest {
     private static final JavaFileObject KAFKA_HANDLER = SourceFiles.inline("dev.vertique.kafka.KafkaHandler", """
             package dev.vertique.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.RUNTIME)
@@ -77,7 +86,10 @@ class KafkaSignalListenerGenerationTest {
     private static final JavaFileObject JSON_PROFILE = SourceFiles.inline("dev.vertique.core.json.JsonProfile", """
             package dev.vertique.core.json;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target({ElementType.TYPE, ElementType.METHOD})
             @Retention(RetentionPolicy.RUNTIME)
@@ -97,7 +109,11 @@ class KafkaSignalListenerGenerationTest {
             SourceFiles.inline("dev.vertique.workflow.source.WorkflowSignalTarget", """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Repeatable;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -116,7 +132,10 @@ class KafkaSignalListenerGenerationTest {
             SourceFiles.inline("dev.vertique.workflow.source.WorkflowSignalTargets", """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -129,7 +148,10 @@ class KafkaSignalListenerGenerationTest {
             SourceFiles.inline("dev.vertique.workflow.contract.WorkflowContract", """
             package dev.vertique.workflow.contract;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.RUNTIME)
@@ -142,7 +164,10 @@ class KafkaSignalListenerGenerationTest {
             SourceFiles.inline("dev.vertique.workflow.contract.WorkflowSignal", """
             package dev.vertique.workflow.contract;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.RUNTIME)
@@ -155,7 +180,10 @@ class KafkaSignalListenerGenerationTest {
             SourceFiles.inline("dev.vertique.workflow.contract.SignalDedupKey", """
             package dev.vertique.workflow.contract;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.PARAMETER)
             @Retention(RetentionPolicy.RUNTIME)

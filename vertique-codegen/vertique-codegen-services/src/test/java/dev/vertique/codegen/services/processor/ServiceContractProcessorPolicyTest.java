@@ -499,14 +499,20 @@ class ServiceContractProcessorPolicyTest {
 
     private static final JavaFileObject PATH_SOURCE = SourceFiles.inline("jakarta.ws.rs.Path", """
             package jakarta.ws.rs;
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
             @Target({ElementType.TYPE, ElementType.METHOD}) @Retention(RetentionPolicy.RUNTIME)
             public @interface Path { String value(); }
             """);
 
     private static final JavaFileObject GET_SOURCE = SourceFiles.inline("jakarta.ws.rs.GET", """
             package jakarta.ws.rs;
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
             @Target(ElementType.METHOD) @Retention(RetentionPolicy.RUNTIME)
             public @interface GET {}
             """);

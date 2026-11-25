@@ -113,7 +113,11 @@ class RestClientProcessorHttpVerbTest {
                 SourceFiles.inline("jakarta.ws.rs.OPTIONS", """
                                 package jakarta.ws.rs;
 
-                                import java.lang.annotation.*;
+                                import java.lang.annotation.Documented;
+                                import java.lang.annotation.ElementType;
+                                import java.lang.annotation.Retention;
+                                import java.lang.annotation.RetentionPolicy;
+                                import java.lang.annotation.Target;
 
                                 @Target({ElementType.METHOD})
                                 @Retention(RetentionPolicy.RUNTIME)
@@ -124,7 +128,11 @@ class RestClientProcessorHttpVerbTest {
                 SourceFiles.inline("jakarta.ws.rs.HttpMethod", """
                                 package jakarta.ws.rs;
 
-                                import java.lang.annotation.*;
+                                import java.lang.annotation.Documented;
+                                import java.lang.annotation.ElementType;
+                                import java.lang.annotation.Retention;
+                                import java.lang.annotation.RetentionPolicy;
+                                import java.lang.annotation.Target;
 
                                 @Target({ElementType.ANNOTATION_TYPE})
                                 @Retention(RetentionPolicy.RUNTIME)
@@ -160,7 +168,12 @@ class RestClientProcessorHttpVerbTest {
 
                                 import dev.vertique.rest.client.RestClient;
                                 import io.vertx.core.Future;
-                                import jakarta.ws.rs.*;
+                                import jakarta.ws.rs.DELETE;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.HEAD;
+                                import jakarta.ws.rs.PATCH;
+                                import jakarta.ws.rs.POST;
+                                import jakarta.ws.rs.PUT;
 
                                 @RestClient
                                 public interface UserClient {

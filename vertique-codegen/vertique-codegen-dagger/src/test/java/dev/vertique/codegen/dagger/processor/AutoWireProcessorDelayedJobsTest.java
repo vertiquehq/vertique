@@ -30,7 +30,11 @@ class AutoWireProcessorDelayedJobsTest {
     private static final String DELAYED_JOBS_QUALIFIER = """
             package dev.vertique.job.delayed.dagger;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.Documented;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
             import jakarta.inject.Qualifier;
 
             @Qualifier

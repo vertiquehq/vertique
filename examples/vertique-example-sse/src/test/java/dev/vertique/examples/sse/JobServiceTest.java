@@ -3,7 +3,9 @@
 
 package dev.vertique.examples.sse;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.examples.sse.job.JobConfig;
 import dev.vertique.examples.sse.job.JobProgressEvent;

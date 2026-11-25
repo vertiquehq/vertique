@@ -157,7 +157,10 @@ class AnnotationCollectorTest {
             // (AnnotationResolver) walks recursively; the codegen scanner must too.
             JavaFileObject inner = SourceFiles.inline("com.example.MyAlias", """
                     package com.example;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     import dev.vertique.core.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     @Target({ElementType.ANNOTATION_TYPE, ElementType.FIELD, ElementType.RECORD_COMPONENT})
@@ -167,7 +170,10 @@ class AnnotationCollectorTest {
                     """);
             JavaFileObject outer = SourceFiles.inline("com.example.MyDoubleAlias", """
                     package com.example;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target({ElementType.FIELD, ElementType.RECORD_COMPONENT})
                     @Retention(RetentionPolicy.RUNTIME)
                     @MyAlias
@@ -192,7 +198,10 @@ class AnnotationCollectorTest {
         void composedAnnotationWithCanonicalize_recognizedOnField() {
             JavaFileObject composedAnnotation = SourceFiles.inline("com.example.Trimmed", """
                     package com.example;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     import dev.vertique.core.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     @Target({ElementType.FIELD, ElementType.RECORD_COMPONENT})

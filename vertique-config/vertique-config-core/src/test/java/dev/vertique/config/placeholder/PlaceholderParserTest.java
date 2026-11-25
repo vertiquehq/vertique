@@ -4,7 +4,10 @@
 package dev.vertique.config.placeholder;
 
 import static dev.vertique.config.placeholder.PlaceholderParser.parse;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.config.placeholder.PlaceholderParser.Literal;
 import dev.vertique.config.placeholder.PlaceholderParser.Malformed;
