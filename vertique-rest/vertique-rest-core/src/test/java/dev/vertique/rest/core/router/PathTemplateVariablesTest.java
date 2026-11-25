@@ -113,4 +113,26 @@ class PathTemplateVariablesTest {
         assertTrue(malformed.contains("Orders.get()") && malformed.contains("'a_b'"), malformed);
         assertEquals(List.of(), PathTemplateVariables.problems("/o/{id:\\d+}/{subKey}"));
     }
+
+    @Test
+    @DisplayName("a constraint that compiles alone but not inside its group is reported against its variable")
+    void constraintsThatFailOnlyInsideTheGroup() {
+        assertEquals(List.of("id"), PathTemplateVariables.malformedConstraintNames("/m/{id:\\Qab}"));
+        assertEquals(List.of("id"), PathTemplateVariables.malformedConstraintNames("/m/{id:(?x) \\d+ # c}"));
+        assertEquals(List.of("id"), PathTemplateVariables.malformedConstraintNames("/m/{id:(?<id>a)}"));
+        // The same constraints are fine alone, which is why a check on the constraint by itself is not enough.
+        assertEquals(List.of(), PathTemplateVariables.malformedConstraintNames("/m/{id:(?<other>a)}"));
+    }
+
+    @Test
+    @DisplayName("a template whose variables each pass but whose route pattern does not compile is reported as a whole")
+    void unregistrableTemplate() {
+        List<PathTemplateVariables.Problem> problems = PathTemplateVariables.problems("/m/{a:(?<b>x)}/{b}");
+        assertEquals(
+                List.of(new PathTemplateVariables.Problem(PathTemplateVariables.Kind.UNREGISTRABLE, "")), problems);
+        String message = PathTemplateVariables.message("Orders.get()", "/m/{a:(?<b>x)}/{b}", problems.get(0));
+        assertTrue(message.contains("Orders.get()") && message.contains("/m/{a:(?<b>x)}/{b}"), message);
+        assertTrue(message.contains("cannot be compiled into a route pattern"), message);
+        assertEquals(List.of(), PathTemplateVariables.problems("/m/{a:(?<c>x)}/{b}"));
+    }
 }

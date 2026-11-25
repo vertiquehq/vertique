@@ -249,6 +249,77 @@ class ResourceMemberContextValidatorTest {
     }
 
     @Test
+    @DisplayName("a constraint with an unclosed quote is a compile error naming the variable")
+    void constraintUnclosedQuote_rejected() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Res", """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/m")
+                public class Res {
+                    @GET
+                    @Path("/{id:\\\\Qab}")
+                    public String get(@PathParam("id") String id) { return ""; }
+                }
+                """));
+        result.assertFailed();
+        result.assertErrorMessage("Res.get()");
+        result.assertErrorMessage("not a valid regular expression");
+        result.assertErrorMessage("'id'");
+    }
+
+    @Test
+    @DisplayName("a constraint whose group reuses the variable name is a compile error naming the variable")
+    void nestedGroupReusingTheVariableName_rejected() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Res", """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/m")
+                public class Res {
+                    @GET
+                    @Path("/{id:(?<id>a)}")
+                    public String get(@PathParam("id") String id) { return ""; }
+                }
+                """));
+        result.assertFailed();
+        result.assertErrorMessage("Res.get()");
+        result.assertErrorMessage("not a valid regular expression");
+        result.assertErrorMessage("'id'");
+    }
+
+    @Test
+    @DisplayName("a template whose route pattern does not compile is a compile error naming the method and template")
+    void routePatternThatDoesNotCompile_rejected() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Res", """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/m")
+                public class Res {
+                    @GET
+                    @Path("/{a:(?<b>x)}/{b}")
+                    public String get(@PathParam("a") String a, @PathParam("b") String b) { return ""; }
+                }
+                """));
+        result.assertFailed();
+        result.assertErrorMessage("Res.get()");
+        result.assertErrorMessage("cannot be compiled into a route pattern");
+    }
+
+    @Test
     @DisplayName("two interfaces with different class-level paths are a compile error")
     void conflictingInterfacePaths_rejected() {
         var result = ProcessorTestHarness.run(

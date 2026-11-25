@@ -25,6 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Validates route registration constraints at startup.
@@ -99,7 +101,7 @@ class RouteValidator {
                     RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE,
                     PathTemplateVariables.message(owner, meta.path(), problem)));
         }
-        if (violations.isEmpty() && !compilesAsRoute(meta.path())) {
+        if (violations.isEmpty() && !variantsCompile(meta.path())) {
             violations.add(new RouteRegistrationViolation(
                     meta.operationId(),
                     RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE,
@@ -108,18 +110,23 @@ class RouteValidator {
         return violations;
     }
 
-    /** Whether the template's route pattern compiles, the last check after the per-variable ones. */
-    private static boolean compilesAsRoute(String template) {
-        JaxRsPathTemplate translated = JaxRsPathTemplate.translate(template);
-        if (!translated.isRegex()) {
-            return true;
+    /**
+     * Whether every alternative route of the template compiles. The full template's pattern is already
+     * checked by {@link PathTemplateVariables#problems}; each strictly more specific alternative of a
+     * constraint with a top-level alternation registers as its own route.
+     */
+    private static boolean variantsCompile(String template) {
+        for (String variant : RoutePathSpecificity.variants(template)) {
+            if (!variant.equals(template)) {
+                try {
+                    Pattern.compile(JaxRsPathTemplate.translateVariant(template, variant)
+                            .vertxValue());
+                } catch (PatternSyntaxException e) {
+                    return false;
+                }
+            }
         }
-        try {
-            java.util.regex.Pattern.compile(translated.vertxValue());
-            return true;
-        } catch (java.util.regex.PatternSyntaxException e) {
-            return false;
-        }
+        return true;
     }
 
     /**

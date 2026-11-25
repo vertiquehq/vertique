@@ -107,13 +107,61 @@ public final class PathTemplateVariables {
         List<String> names = new ArrayList<>();
         while (matcher.find()) {
             String constraint = matcher.group(2);
-            if (constraint != null && !compiles(constraint.trim()) && !names.contains(matcher.group(1))) {
-                names.add(matcher.group(1));
+            String name = matcher.group(1);
+            if (constraint != null && !compilesInGroup(name, constraint.trim()) && !names.contains(name)) {
+                names.add(name);
             }
         }
         return List.copyOf(names);
     }
 
+    /**
+     * Compiles a constraint the way the route is built: inside the named group of its own variable.
+     * That catches what compiling it alone misses, such as {@code \Q} with no {@code \E}, an inline
+     * {@code (?x)} comment that swallows the closing parenthesis, and a nested group that reuses the
+     * variable's name. A name a group cannot carry is reported separately, so a neutral group name
+     * stands in for it here.
+     */
+    private static boolean compilesInGroup(String name, String constraint) {
+        String group = REGEX_GROUP_NAME.matcher(name).matches() ? name : "g";
+        try {
+            Pattern.compile("(?<" + group + ">" + constraint + ")");
+            return true;
+        } catch (PatternSyntaxException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Builds the anchored regular expression a regex-constrained template is registered with. A
+     * constrained variable {@code {name:regex}} becomes the named group {@code (?<name>regex)}; an
+     * unconstrained variable {@code {name}} in the same template becomes {@code (?<name>[^/]+)}.
+     * Literal text between variables is regex-quoted, and the result is anchored with {@code ^…$}.
+     * The route registrar and the problem check build the pattern here, so both see one pattern.
+     *
+     * @param template  the JAX-RS path template; must not be {@code null}
+     * @param capturing {@code false} to emit every variable as a non-capturing group
+     * @return the anchored regex, with named capture groups when {@code capturing}
+     */
+    public static String anchoredRegex(String template, boolean capturing) {
+        var matcher = VARIABLE.matcher(template);
+        StringBuilder out = new StringBuilder("^");
+        int last = 0;
+        while (matcher.find()) {
+            out.append(Pattern.quote(template.substring(last, matcher.start())));
+            String name = matcher.group(1);
+            String constraint = matcher.group(2);
+            // A variant keeps its alternative text exactly (a trailing space is part of it).
+            String body = constraint != null ? (capturing ? constraint.trim() : constraint) : "[^/]+";
+            out.append(capturing ? "(?<" + name + ">" : "(?:").append(body).append(')');
+            last = matcher.end();
+        }
+        out.append(Pattern.quote(template.substring(last)));
+        out.append('$');
+        return out.toString();
+    }
+
+    /** Whether the regular expression compiles. */
     private static boolean compiles(String regex) {
         try {
             Pattern.compile(regex);
@@ -123,9 +171,20 @@ public final class PathTemplateVariables {
         }
     }
 
+    private static boolean hasConstraint(String template) {
+        var matcher = VARIABLE.matcher(template);
+        while (matcher.find()) {
+            if (matcher.group(2) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Returns every problem that stops a template from being registered as a route, in a fixed
-     * order: names a regex group cannot carry, repeated names, then malformed constraints.
+     * order: names a regex group cannot carry, repeated names, then malformed constraints. When none of
+     * those applies, the assembled route pattern is compiled as the last check.
      *
      * @param template the JAX-RS path template, for example {@code /u/{user_id:[0-9]+}}; must not be
      *                 {@code null}
@@ -136,6 +195,11 @@ public final class PathTemplateVariables {
         invalidRegexVariableNames(template).forEach(name -> problems.add(new Problem(Kind.INVALID_NAME, name)));
         duplicateVariableNames(template).forEach(name -> problems.add(new Problem(Kind.DUPLICATE_NAME, name)));
         malformedConstraintNames(template).forEach(name -> problems.add(new Problem(Kind.MALFORMED_CONSTRAINT, name)));
+        if (problems.isEmpty() && hasConstraint(template) && !compiles(anchoredRegex(template, true))) {
+            // Last resort: every variable passed alone, but the assembled route pattern does not compile
+            // (for example a group in one constraint reuses another variable's name).
+            problems.add(new Problem(Kind.UNREGISTRABLE, ""));
+        }
         return List.copyOf(problems);
     }
 
@@ -146,20 +210,23 @@ public final class PathTemplateVariables {
         /** The name is declared more than once in the template. */
         DUPLICATE_NAME,
         /** The variable's {@code :regex} constraint is not a valid regular expression. */
-        MALFORMED_CONSTRAINT
+        MALFORMED_CONSTRAINT,
+        /** Each variable is fine alone, but the assembled route pattern does not compile. */
+        UNREGISTRABLE
     }
 
     /**
      * One problem with one variable of a template.
      *
      * @param kind     what is wrong
-     * @param variable the variable's name
+     * @param variable the variable's name; empty for {@link Kind#UNREGISTRABLE}, which concerns the
+     *                 whole template
      */
     public record Problem(Kind kind, String variable) {}
 
     /**
-     * Returns the diagnostic for a template problem. It names the resource method, the template and
-     * the variable, and echoes nothing else.
+     * Returns the diagnostic for a template problem. It names the resource method, the template
+     * and, except for {@link Kind#UNREGISTRABLE}, the variable. It never carries a raw pattern error.
      *
      * @param owner    the resource method that declares the template, for example {@code Orders.get()}
      * @param template the combined path template
@@ -180,6 +247,7 @@ public final class PathTemplateVariables {
                         "Resource method %s: path template '%s' declares the variable '%s' more than once;"
                                 + " each variable needs its own name. Rename one of them.",
                         owner, template, name);
+            case UNREGISTRABLE -> unregistrableMessage(owner, template);
             case MALFORMED_CONSTRAINT ->
                 String.format(
                         "Resource method %s: path template '%s' declares the variable '%s' with a regex"
@@ -189,8 +257,8 @@ public final class PathTemplateVariables {
     }
 
     /**
-     * Returns the diagnostic for a template that passes {@link #problems} yet still cannot be
-     * compiled into a route pattern.
+     * Returns the diagnostic for a template whose variables each pass yet whose assembled route
+     * pattern does not compile.
      *
      * @param owner    the resource method that declares the template
      * @param template the combined path template
