@@ -3,7 +3,6 @@
 
 package dev.vertique.mcp.server;
 
-import static java.util.Map.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -57,34 +56,34 @@ class McpExternalPinLockTest {
             "tools-call-with-progress",
             "server-stateless",
             "dns-rebinding-protection");
-    private static final Map<String, String> DEFERRED = Map.ofEntries(
-            entry("caching", "MCP-004"),
-            entry("completion-complete", "MCP-004"),
-            entry("server-sse-multiple-streams", "MCP-005"),
-            entry("resources-list", "MCP-004"),
-            entry("resources-read-text", "MCP-004"),
-            entry("resources-read-binary", "MCP-004"),
-            entry("resources-templates-read", "MCP-004"),
-            entry("sep-2164-resource-not-found", "MCP-004"),
-            entry("prompts-list", "MCP-004"),
-            entry("prompts-get-simple", "MCP-004"),
-            entry("prompts-get-with-args", "MCP-004"),
-            entry("prompts-get-embedded-resource", "MCP-004"),
-            entry("prompts-get-with-image", "MCP-004"),
-            entry("input-required-result-basic-elicitation", "MCP-005"),
-            entry("input-required-result-basic-sampling", "MCP-005"),
-            entry("input-required-result-basic-list-roots", "MCP-005"),
-            entry("input-required-result-request-state", "MCP-003"),
-            entry("input-required-result-multiple-input-requests", "MCP-005"),
-            entry("input-required-result-multi-round", "MCP-005"),
-            entry("input-required-result-missing-input-response", "MCP-005"),
-            entry("input-required-result-non-tool-request", "MCP-005"),
-            entry("input-required-result-result-type", "MCP-005"),
-            entry("input-required-result-unsupported-methods", "MCP-005"),
-            entry("input-required-result-tampered-state", "MCP-003"),
-            entry("input-required-result-capability-check", "MCP-005"),
-            entry("input-required-result-ignore-extra-params", "MCP-005"),
-            entry("input-required-result-validate-input", "MCP-005"));
+    private static final Set<String> DEFERRED = Set.of(
+            "caching",
+            "completion-complete",
+            "server-sse-multiple-streams",
+            "resources-list",
+            "resources-read-text",
+            "resources-read-binary",
+            "resources-templates-read",
+            "sep-2164-resource-not-found",
+            "prompts-list",
+            "prompts-get-simple",
+            "prompts-get-with-args",
+            "prompts-get-embedded-resource",
+            "prompts-get-with-image",
+            "input-required-result-basic-elicitation",
+            "input-required-result-basic-sampling",
+            "input-required-result-basic-list-roots",
+            "input-required-result-request-state",
+            "input-required-result-multiple-input-requests",
+            "input-required-result-multi-round",
+            "input-required-result-missing-input-response",
+            "input-required-result-non-tool-request",
+            "input-required-result-result-type",
+            "input-required-result-unsupported-methods",
+            "input-required-result-tampered-state",
+            "input-required-result-capability-check",
+            "input-required-result-ignore-extra-params",
+            "input-required-result-validate-input");
     private static final Set<String> NOT_SCORED = Set.of(
             "tasks-lifecycle",
             "tasks-capability-negotiation",
@@ -121,14 +120,14 @@ class McpExternalPinLockTest {
             "go-sdk",
             "go run . --url <url> --scenario <scenario>");
 
-    private static Stream<String> t026ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(ENTRY_ROW, VERSION_ROW, INTEGRITY_ROW, INVOCATION_ROW, DIGEST_ROW, PARTITION_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t026ContractRows")
-    @DisplayName("T026 external pin-lock contract matrix")
-    void shouldEnforceT026ContractMatrix(String row) {
+    @MethodSource("contractRows")
+    @DisplayName("external pin-lock contract matrix")
+    void shouldEnforcePinLockContractMatrix(String row) {
         switch (row) {
             case ENTRY_ROW -> assertRequiredEntries();
             case VERSION_ROW -> assertExactVersions();
@@ -136,7 +135,7 @@ class McpExternalPinLockTest {
             case INVOCATION_ROW -> assertInvocationForm();
             case DIGEST_ROW -> assertManifestDigest();
             case PARTITION_ROW -> assertScenarioPartition();
-            default -> fail("unknown T026 contract row: " + row);
+            default -> fail("unknown pin-lock contract row: " + row);
         }
     }
 
@@ -196,17 +195,17 @@ class McpExternalPinLockTest {
         assertThat(List.of(supportedValues.size(), deferredValues.size(), notScoredValues.size()))
                 .containsExactly(10, 27, 13);
         Set<String> recordedSupported = stringSet(supportedValues);
-        Map<String, String> recordedDeferred = deferredMap(deferredValues);
+        Set<String> recordedDeferred = stringSet(deferredValues);
         Set<String> recordedNotScored = stringSet(notScoredValues);
 
         assertThat(recordedSupported).containsExactlyInAnyOrderElementsOf(SUPPORTED);
-        assertThat(recordedDeferred).containsExactlyInAnyOrderEntriesOf(DEFERRED);
+        assertThat(recordedDeferred).containsExactlyInAnyOrderElementsOf(DEFERRED);
         assertThat(recordedNotScored).containsExactlyInAnyOrderElementsOf(NOT_SCORED);
-        assertThat(recordedSupported).doesNotContainAnyElementsOf(recordedDeferred.keySet());
+        assertThat(recordedSupported).doesNotContainAnyElementsOf(recordedDeferred);
 
         ManifestIds manifestIds = parseManifest(MANIFEST);
         Set<String> scored = new HashSet<>(recordedSupported);
-        scored.addAll(recordedDeferred.keySet());
+        scored.addAll(recordedDeferred);
         assertThat(scored).hasSize(37).containsExactlyInAnyOrderElementsOf(manifestIds.serverScored());
         assertThat(recordedNotScored).hasSize(13).containsExactlyInAnyOrderElementsOf(manifestIds.serverNotScored());
     }
@@ -238,14 +237,6 @@ class McpExternalPinLockTest {
 
     private static Set<String> stringSet(JsonArray values) {
         return new LinkedHashSet<>(values.stream().map(String.class::cast).toList());
-    }
-
-    private static Map<String, String> deferredMap(JsonArray values) {
-        Map<String, String> deferred = new LinkedHashMap<>();
-        values.stream()
-                .map(JsonObject.class::cast)
-                .forEach(value -> deferred.put(value.getString("id"), value.getString("owningSpecification")));
-        return deferred;
     }
 
     private static ManifestIds parseManifest(byte[] bytes) {
