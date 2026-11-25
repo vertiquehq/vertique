@@ -56,8 +56,9 @@ family, not arbitrary persistence stores — but carries no Pg-specific APIs.
 ### Package-Private Internals, Framework Boundary
 
 The whole engine module is an INTERNAL framework seam. The framework's wiring and the workflow adapter
-modules consume it; it carries no application-facing stability promise and sits outside the maturity
-promise. Application code uses the `vertique-workflow-core` surfaces (`WorkflowOperations`,
+modules consume it. The Stable status above covers the behavior and wiring the module provides; its public types
+are framework seams that carry no application-facing stability promise, and changes to them need no
+deprecation cycle. Application code uses the `vertique-workflow-core` surfaces (`WorkflowOperations`,
 `TransactionalWorkflowOperations<SqlClient>`, the registry) and the `vertique-workflow-definition`
 service, and does not call the engine directly.
 
@@ -67,8 +68,9 @@ through `WorkflowEngineModule` using `@Binds`. Code outside the package (adapter
 tests) never references the concrete class — it uses `WorkflowEngineHandle`, `WorkflowEngineFactory`,
 or the three public ops/callback interfaces. `WorkflowEngineHandle`, `WorkflowEngineFactory`,
 `WorkflowEngineParts` and the SPIs under `dev.vertique.workflow.engine.spi` are public so that adapter
-modules can reach them; they are internal as part of the module, and `WorkflowEngineHandle` and
-`WorkflowEngineFactory` carry an INTERNAL marking in their Javadoc.
+modules can reach them; they are internal as part of the module. `WorkflowEngineHandle`,
+`WorkflowEngineFactory` and `WorkflowEngineParts` carry an INTERNAL marking in their Javadoc, and the
+`dev.vertique.workflow.engine.spi` package carries it for every type in it.
 
 ### Record-Time Payload Checks
 
