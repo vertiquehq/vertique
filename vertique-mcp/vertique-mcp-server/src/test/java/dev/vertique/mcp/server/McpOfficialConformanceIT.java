@@ -143,19 +143,13 @@ public class McpOfficialConformanceIT {
         List<String> supported = stringList(pinLock.getJsonArray("supportedScenarios"));
         JsonArray deferredValues = pinLock.getJsonArray("deferredScenarios");
         List<String> notScored = stringList(pinLock.getJsonArray("notScoredUpstream"));
-        assertThat(deferredValues).hasSize(27).allSatisfy(value -> {
-            JsonObject deferred = (JsonObject) value;
-            assertThat(deferred.getString("id")).isNotBlank();
-            assertThat(deferred.getString("owningSpecification")).matches("MCP-[0-9]{3}");
-        });
+        assertThat(deferredValues).hasSize(27).allSatisfy(value -> assertThat((String) value)
+                .isNotBlank());
         assertThat(notScored).hasSize(13);
 
         ManifestIds manifestIds = parseManifest(manifest);
         Set<String> scored = new LinkedHashSet<>(supported);
-        deferredValues.stream()
-                .map(JsonObject.class::cast)
-                .map(value -> value.getString("id"))
-                .forEach(scored::add);
+        deferredValues.stream().map(String.class::cast).forEach(scored::add);
         assertThat(scored).hasSize(37).containsExactlyInAnyOrderElementsOf(manifestIds.serverScored());
         assertThat(supported).containsExactlyElementsOf(EXPECTED_SUPPORTED);
         assertThat(notScored).containsExactlyInAnyOrderElementsOf(manifestIds.serverNotScored());
@@ -304,10 +298,7 @@ public class McpOfficialConformanceIT {
 
     private static Set<String> deferredIds(JsonArray values) {
         Set<String> ids = new LinkedHashSet<>();
-        values.stream()
-                .map(JsonObject.class::cast)
-                .map(value -> value.getString("id"))
-                .forEach(ids::add);
+        values.stream().map(String.class::cast).forEach(ids::add);
         return ids;
     }
 
