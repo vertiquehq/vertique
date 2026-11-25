@@ -54,13 +54,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T004 Streamable-HTTP protocol matrix through the real plain Vert.x MCP mount.
+ * Exercises the Streamable-HTTP protocol matrix through the real plain Vert.x MCP mount.
  *
  * <p>Each row drives exactly one HTTP request — varying method, {@code Origin}, {@code Accept},
  * body size, and unsupported session headers — against a port-0 mount with no registered tools, no
- * authentication scheme, and a single allowed origin. The decisive row proves the missing
- * origin-admission behavior: a present but disallowed {@code Origin} must be rejected with HTTP 403,
- * where the current unhardened mount performs no origin check and answers 200.
+ * authentication scheme, and a single allowed origin. The decisive row proves the origin-admission
+ * behavior: a present but disallowed {@code Origin} must be rejected with HTTP 403.
  *
  * <p>The client is a {@link WebClient} wrapping a raw {@link HttpClient}: {@code WebClient}
  * aggregates the body before its future resolves, while the wrapped raw client keeps the awaitable
@@ -116,7 +115,7 @@ public class McpStreamableHttpContractIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t004ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 VALID_POST_NO_ORIGIN_ROW,
                 VALID_POST_ALLOWED_ORIGIN_ROW,
@@ -174,8 +173,8 @@ public class McpStreamableHttpContractIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t004ContractRows")
-    @DisplayName("T004 protocol matrix: method, origin, media/Accept, body, and session admission")
+    @MethodSource("contractRows")
+    @DisplayName("protocol matrix: method, origin, media/Accept, body, and session admission")
     void shouldRejectGetDeleteMediaAcceptAndInvalidOrigin(String row) throws Exception {
         fixture = McpContractFixture.start(vertx);
         server = fixture.server();
@@ -207,8 +206,7 @@ public class McpStreamableHttpContractIT {
             }
             case DISALLOWED_ORIGIN_ROW -> {
                 // Given: a discovery POST whose Origin is not in the allowed set.
-                // DECISIVE: the contract requires a present, disallowed Origin to be HTTP 403; the
-                // current mount performs no origin check and answers 200, so this row is red.
+                // DECISIVE: the contract requires a present, disallowed Origin to be HTTP 403.
                 HttpRequest<Buffer> request = post().putHeader("Origin", DISALLOWED_ORIGIN);
                 HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
 
@@ -258,8 +256,8 @@ public class McpStreamableHttpContractIT {
             }
             case INVALID_CONTENT_TYPE_ROW -> {
                 // Given: a discovery POST whose Content-Type is not application/json.
-                // The present-only media admission (W5) rejects it with HTTP 415 before the coordinator
-                // is created; pre-fix production performs no content-type check and answers 200.
+                // The present-only media admission rejects it with HTTP 415 before the coordinator
+                // is created.
                 HttpRequest<Buffer> request = post().putHeader("content-type", "text/plain");
                 HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
 
@@ -271,8 +269,8 @@ public class McpStreamableHttpContractIT {
             }
             case INVALID_ACCEPT_ROW -> {
                 // Given: a discovery POST whose Accept admits none of the allowed media ranges.
-                // The present-only media admission (W5) rejects it with HTTP 406 before the coordinator
-                // is created; pre-fix production performs no Accept check and answers 200.
+                // The present-only media admission rejects it with HTTP 406 before the coordinator
+                // is created.
                 HttpRequest<Buffer> request = post().putHeader("Accept", "text/plain");
                 HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
 
@@ -284,8 +282,7 @@ public class McpStreamableHttpContractIT {
             }
             case ZERO_QUALITY_ACCEPT_ROW -> {
                 // Given: a discovery POST whose only Accept range explicitly rejects application/json
-                // with q=0. Per RFC 7231 a q=0 range is not acceptable, so the request is HTTP 406;
-                // pre-fix production strips the q parameter and admits it with 200.
+                // with q=0. Per RFC 7231 a q=0 range is not acceptable, so the request is HTTP 406.
                 HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;q=0");
                 HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
 
@@ -485,7 +482,7 @@ public class McpStreamableHttpContractIT {
                 assertThat(response.statusCode()).isBetween(200, 499);
                 assertNoToolInvoked();
             }
-            default -> fail("unknown T004 contract row: " + row);
+            default -> fail("unknown contract row: " + row);
         }
     }
 
@@ -518,7 +515,7 @@ public class McpStreamableHttpContractIT {
     }
 
     /**
-     * Proves the W4 ordering: an admission rejection settles before the completion coordinator is
+     * Proves the ordering: an admission rejection settles before the completion coordinator is
      * created, so no lifecycle observation is ever opened — consistent with the body-limit path. The
      * observer's {@code open} is called synchronously inside the coordinator constructor, so by the
      * time the client has the response any observation that was going to open already has.

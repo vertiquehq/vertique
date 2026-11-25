@@ -45,7 +45,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 /**
- * T016 TP-001 — the frozen request-interceptor SPI and pre-dispatch stage contract matrix.
+ * The frozen request-interceptor SPI and pre-dispatch stage contract matrix.
  *
  * <p>Every row drives {@link McpRequestDispatcher#dispatch} directly against a mocked {@link
  * RoutingContext} carrying a valid {@code server/discover} request — mirroring {@code
@@ -54,7 +54,7 @@ import org.mockito.ArgumentCaptor;
  * {@code 200}, since a valid discovery request cannot otherwise fail). A row that constructs the
  * dispatcher itself — the duplicate-order-key row — instead observes whether construction throws.
  */
-@DisplayName("MCP request interceptor SPI and pre-dispatch stage — T016 contract matrix")
+@DisplayName("MCP request interceptor SPI and pre-dispatch stage — contract matrix")
 class McpRequestInterceptorPipelineTest {
 
     private static final String ZERO_INTERCEPTORS_ROW = "shouldDispatchWithZeroInterceptors";
@@ -63,7 +63,7 @@ class McpRequestInterceptorPipelineTest {
     private static final String FAIL_CLOSED_ROW = "shouldFailClosedOnThrowNullFutureAndFailedFuture";
     private static final String DUPLICATE_ORDER_KEY_ROW = "shouldFailStartupOnADuplicateOrderKeyNamingBothClasses";
 
-    private static Stream<String> t016ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 ZERO_INTERCEPTORS_ROW,
                 FROZEN_ORDER_ROW,
@@ -73,25 +73,24 @@ class McpRequestInterceptorPipelineTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t016ContractRows")
-    @DisplayName("enforces the T016 contract matrix")
-    void shouldEnforceT016ContractMatrix(String row) {
+    @MethodSource("contractRows")
+    @DisplayName("enforces the contract matrix")
+    void shouldEnforceRequestInterceptorContractMatrix(String row) {
         switch (row) {
             case ZERO_INTERCEPTORS_ROW -> shouldDispatchWithZeroInterceptors();
             case FROZEN_ORDER_ROW -> shouldRunInterceptorsInTheFrozenOrder();
             case REJECT_STOPS_DISPATCH_ROW -> shouldRejectWithoutInvokingDispatch();
             case FAIL_CLOSED_ROW -> shouldFailClosedOnThrowNullFutureAndFailedFuture();
             case DUPLICATE_ORDER_KEY_ROW -> shouldFailStartupOnADuplicateOrderKeyNamingBothClasses();
-            default -> fail("unknown T016 contract matrix row: " + row);
+            default -> fail("unknown contract matrix row: " + row);
         }
     }
 
     /**
      * {@link McpRequestContext} exposes no request-body, header, or credential accessor: its only
-     * record components are {@code method}, {@code securityContext}, and {@code correlation} — R51
-     * (trace-reference consolidation) removed the former {@code bodyTraceContext} component with no
-     * replacement; no interceptor ever consumed it, and the body trace reference now travels solely
-     * on the payload-free terminal lifecycle observation. Established from the type's actual declared
+     * record components are {@code method}, {@code securityContext}, and {@code correlation}. There is no
+     * {@code bodyTraceContext} component; the body trace reference travels solely on the payload-free
+     * terminal lifecycle observation. Established from the type's actual declared
      * shape via reflection, not from an interceptor fixture merely declining to look — a fixture
      * could always "politely" not read a payload accessor that exists; only the type's shape proves
      * none exists.
@@ -104,7 +103,7 @@ class McpRequestInterceptorPipelineTest {
             componentNames.add(component.getName());
         }
         assertThat(componentNames)
-                .as("the frozen record shape carries only method/securityContext/correlation (R51)")
+                .as("the frozen record shape carries only method/securityContext/correlation")
                 .containsExactly("method", "securityContext", "correlation");
     }
 
@@ -253,7 +252,7 @@ class McpRequestInterceptorPipelineTest {
                 .hasMessageContaining(maintenance.getClass().getName());
     }
 
-    /** Framework wiring for the T016 matrix: dispatcher construction and driving, nothing decisive. */
+    /** Framework wiring for the contract matrix: dispatcher construction and driving, nothing decisive. */
     private static final class McpRequestInterceptorPipelineTestFixture {
 
         private McpRequestInterceptorPipelineTestFixture() {}
@@ -316,7 +315,7 @@ class McpRequestInterceptorPipelineTest {
             return new DispatchOutcome(status, errorCode, status == 200 ? 1 : 0);
         }
 
-        /** The negotiation headers (R05, issue #429) self-consistent with {@link #discoverRequestBody()}. */
+        /** The negotiation headers self-consistent with {@link #discoverRequestBody()}. */
         private static io.vertx.core.MultiMap negotiationHeaders() {
             io.vertx.core.MultiMap headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
             headers.set("MCP-Protocol-Version", "2026-07-28");
@@ -484,7 +483,7 @@ class McpRequestInterceptorPipelineTest {
         }
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

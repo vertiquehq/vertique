@@ -28,9 +28,9 @@ import org.junit.jupiter.api.Timeout;
 /**
  * Proves the mandatory input-processing pipeline genuinely
  * runs for a real, generated <strong>parameterized</strong> {@code @McpTool} invoker,
- * closing the exact gap the phase-exit security review named: T015's real-processor proof
- * ({@code McpInputPipelineIT}) exercises a hand-written {@code PipelineToolInvoker} stand-in for
- * {@code prepare()}, and T012's real-generated-invoker proof ({@code McpGeneratedHelloToolIT}) uses a
+ * closing a gap the other proofs leave: {@code McpInputPipelineIT}'s real-processor proof
+ * exercises a hand-written {@code PipelineToolInvoker} stand-in for
+ * {@code prepare()}, and the real-generated-invoker proof ({@code McpGeneratedHelloToolIT}) uses a
  * zero-argument tool whose {@code Input} carrier has no component to process, materialize, or
  * validate. Neither proof could have caught the emitter shipping a vacuous {@code prepare()} that
  * never called {@code InputObjectProcessor}, {@code McpToolRuntime}, or {@code McpBeanValidation} at
@@ -50,7 +50,7 @@ class McpGeneratedParameterizedToolIT {
     private static final String BEAN_VALIDATION_MESSAGE = "Invalid tool arguments: constraint validation failed";
 
     /**
-     * The placeholder input schema the pre-remediation emitter always published, regardless of the
+     * The placeholder input schema an emitter would publish if it ignored the
      * tool's real declared parameters — the exact literal (a) below must distinguish from.
      */
     private static final String INPUT_SCHEMA_PLACEHOLDER = "{\"type\":\"object\"}";
@@ -100,14 +100,13 @@ class McpGeneratedParameterizedToolIT {
         client = WebClient.wrap(rawClient);
 
         // --- Then (a): the real runtime binding's descriptor carries the hardened input schema —
-        // DECISIVE: the pre-remediation emitter always published the placeholder object schema below
-        // regardless of the tool's real parameters, which would neither equal a different string nor
-        // ever carry "additionalProperties":false (nothing hardens a literal that is never generated
-        // from the carrier type at all). ---
+        // DECISIVE: a placeholder object schema published regardless of the tool's real
+        // parameters would equal the literal below and never carry "additionalProperties":false
+        // (nothing hardens a literal that is never generated from the carrier type at all). ---
         String inputSchema = fixture.invoker().descriptor().inputSchema();
         assertThat(inputSchema)
                 .as("DECISIVE: the published schema must be the real hardened schema, never the frozen"
-                        + " placeholder every tool used to publish regardless of its declared parameters")
+                        + " placeholder published regardless of the declared parameters")
                 .isNotEqualTo(INPUT_SCHEMA_PLACEHOLDER)
                 .contains("\"additionalProperties\":false");
 
@@ -150,10 +149,10 @@ class McpGeneratedParameterizedToolIT {
                 await(post(McpGeneratedParameterizedToolITFixture.TOOL_NAME).sendBuffer(callBody("   ")));
 
         // --- Then (c): the rejection settles as the bounded text-only isError=true tool-error outcome
-        // — DECISIVE: not HTTP 500/INTERNAL. Before this remediation, McpBeanValidation was never
-        // called, so this exact argument would have reached GreetingTools.compose(...) instead of
-        // being rejected, or a wrong-typed/mis-cast argument elsewhere in the pipeline would have
-        // settled as an uncaught-exception internal error; the bounded text asserted below is also the
+        // — DECISIVE: not HTTP 500/INTERNAL. If McpBeanValidation were never
+        // called, this exact argument would reach GreetingTools.compose(...) instead of
+        // being rejected, or a wrong-typed/mis-cast argument elsewhere in the pipeline would
+        // settle as an uncaught-exception internal error; the bounded text asserted below is also the
         // fixed literal, never a Bean Validation ConstraintViolation#getMessage() (which Hibernate
         // Validator interpolates through EL and which must never reach the wire). ---
         SoftAssertions softly = new SoftAssertions();

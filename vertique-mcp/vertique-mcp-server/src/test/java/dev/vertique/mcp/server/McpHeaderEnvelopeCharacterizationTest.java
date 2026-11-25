@@ -56,7 +56,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
-/** T030's fixed characterization of the frozen header and JSON-RPC envelope classifier. */
+/** A fixed characterization of the frozen header and JSON-RPC envelope classifier. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpHeaderEnvelopeCharacterizationTest {
 
@@ -66,7 +66,7 @@ class McpHeaderEnvelopeCharacterizationTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("seeds")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    @DisplayName("T030: every fixed header and envelope seed retains its pinned classification")
+    @DisplayName("every fixed header and envelope seed retains its pinned classification")
     void shouldClassifyEverySeedAsPinned(Seed seed) {
         var fixture = new McpHeaderEnvelopeCharacterizationTestFixture();
 
@@ -106,7 +106,7 @@ class McpHeaderEnvelopeCharacterizationTest {
         McpToolDescriptor descriptor = new McpToolDescriptor(
                 "seed.tool",
                 null,
-                "T030 invocation canary",
+                "invocation canary",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,
@@ -147,7 +147,7 @@ class McpHeaderEnvelopeCharacterizationTest {
             JsonObject json = new JsonObject(line);
             MultiMap headers = MultiMap.caseInsensitiveMultiMap();
             JsonObject encodedHeaders = json.getJsonObject("headers");
-            // Repair task R33 defect 1: a header value encoded as a JSON array (rather than the usual
+            // A header value encoded as a JSON array (rather than the usual
             // plain string) represents a single header name sent with more than one value on the wire —
             // MultiMap#add appends each one as its own entry instead of MultiMap#set overwriting the
             // header, so headerMatches's own MultiMap#getAll(String) sees the same duplication a real

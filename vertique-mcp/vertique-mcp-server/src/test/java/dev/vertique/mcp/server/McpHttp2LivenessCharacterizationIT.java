@@ -109,7 +109,7 @@ class McpHttp2LivenessCharacterizationIT {
     private static final String PROTOCOL_VERSION = "2026-07-28";
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
-    private static final String TOOL_NAME = "r50.http2.liveness.hung";
+    private static final String TOOL_NAME = "http2.liveness.hung";
     private static final String DISCOVER_METHOD = "server/discover";
 
     /** The armed liveness bound under test: deliberately short so the window can stay bounded. */

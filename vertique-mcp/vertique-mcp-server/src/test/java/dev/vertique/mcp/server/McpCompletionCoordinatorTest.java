@@ -41,12 +41,12 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T004 exactly-once settlement contract of {@link McpCompletionCoordinator}.
+ * Exercises the exactly-once settlement contract of {@link McpCompletionCoordinator}.
  *
  * <p>The coordinator must publish exactly one terminal event before exactly one completion event on
  * every settlement path — the two-phase successful write, disconnect, reset, and a late signal that
  * loses the race — and must suppress every signal that arrives after the first settlement wins. MCP
- * arms no whole-request timer of its own (T007): transport liveness is shared {@code HttpConfig}
+ * arms no whole-request timer of its own: transport liveness is shared {@code HttpConfig}
  * idle/read/write behavior, so an idle or slow connection reaches the disconnect/reset settlement
  * paths through the ordinary close path rather than a distinct timeout entry. The successful-write
  * path is split around the byte write: {@link
@@ -90,8 +90,8 @@ class McpCompletionCoordinatorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("settlementRows")
-    @DisplayName("T004 settlement matrix: exactly-once terminal-before-completion on every race")
-    void shouldEnforceT004ContractMatrix(String row) throws Exception {
+    @DisplayName("settlement matrix: exactly-once terminal-before-completion on every race")
+    void shouldEnforceSettlementContractMatrix(String row) throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
 
@@ -161,13 +161,13 @@ class McpCompletionCoordinatorTest {
                         .isNotNull()
                         .isSameAs(context);
             }
-            default -> fail("unknown T004 settlement row: " + row);
+            default -> fail("unknown settlement row: " + row);
         }
     }
 
     /**
-     * C2: proves that for each abort settlement path — disconnect, reset — a settlement that
-     * wins first suppresses a later write. This is the missing reverse-order proof: without the
+     * Proves that for each abort settlement path — disconnect, reset — a settlement that
+     * wins first suppresses a later write. This is the reverse-order proof: without the
      * shared latch guard in {@link McpCompletionCoordinator#beginWrite}, a slow handler's late write
      * would return {@code true} and reach a client the settlement already abandoned. Each row asserts
      * {@code beginWrite} returns {@code false} and that no second terminal or completion is emitted.
@@ -176,7 +176,7 @@ class McpCompletionCoordinatorTest {
      */
     @ParameterizedTest(name = "settlement wins then write is suppressed: {0}")
     @MethodSource("abortSettlements")
-    @DisplayName("C2: a settlement that wins first suppresses a later write on every abort path")
+    @DisplayName("a settlement that wins first suppresses a later write on every abort path")
     void shouldSuppressLateWriteAfterEachSettlementWins(AbortSettlement settlement) throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -338,16 +338,15 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * W1: proves the successful-write path publishes the terminal at {@code beginWrite} — before the
+     * Proves the successful-write path publishes the terminal at {@code beginWrite} — before the
      * byte write — and the completion only at {@code finishWrite} — after it. The snapshot is taken
      * inside one context task: immediately after {@code beginWrite} returns, exactly one terminal and
      * zero completions are observable; only after {@code finishWrite} does the completion appear. If
-     * the terminal were emitted post-write (the W1 defect) the after-begin terminal count would be
-     * zero.
+     * the terminal were emitted post-write the after-begin terminal count would be zero.
      *
      * @throws Exception if the context task does not complete within its bound
      */
-    @DisplayName("W1: terminal is published at beginWrite (pre-write), completion at finishWrite (post-write)")
+    @DisplayName("terminal is published at beginWrite (pre-write), completion at finishWrite (post-write)")
     @Test
     void shouldPublishTerminalAtBeginWriteBeforeCompletionAtFinishWrite() throws Exception {
         Context context = vertx.getOrCreateContext();
@@ -384,15 +383,14 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * W3: proves the completion records the response's actual commit state passed to {@code
+     * Proves the completion records the response's actual commit state passed to {@code
      * finishWrite}, not a success flag. A write whose {@code end()} future failed after the head was
      * already committed is driven as {@code finishWrite(WRITE_FAILED, true, ...)}; the completed event
-     * must carry {@code responseCommitted=true}. Before the fix the dispatcher recorded the success
-     * boolean ({@code false} on a failed write), so this asserted-{@code true} would have been false.
+     * must carry {@code responseCommitted=true}, not the success boolean ({@code false} on a failed write).
      *
      * @throws Exception if the context-marshalled write calls do not complete within their bound
      */
-    @DisplayName("W3: a failed write with committed head records responseCommitted=true")
+    @DisplayName("a failed write with committed head records responseCommitted=true")
     @Test
     void shouldRecordActualCommitStateOnWriteFailure() throws Exception {
         Context context = vertx.getOrCreateContext();
@@ -417,12 +415,12 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * P03 item 2: proves a stalled write — one whose {@code end()} future never resolves, e.g. a
+     * Proves a stalled write — one whose {@code end()} future never resolves, e.g. a
      * client with a stopped TCP receive window — is still settled exactly once when the connection
      * closes, and that a genuinely resolved {@code end()} arriving afterward publishes nothing more.
-     * Before the fix, {@code completeOnContext} found {@code settled} already {@code true} (set by
-     * {@code beginWrite}) and returned immediately, dropping the disconnect signal and stranding the
-     * observation forever.
+     * {@code completeOnContext} must not treat {@code settled} already being {@code true} (set by
+     * {@code beginWrite}) as a reason to return immediately, which would drop the disconnect signal and
+     * strand the observation forever.
      *
      * @throws Exception if the context-marshalled write calls do not complete within their bound
      */
@@ -463,19 +461,18 @@ class McpCompletionCoordinatorTest {
         observer.assertExactlyOneTerminalThenOneCompletion();
     }
 
-    // --- R06 (issue #435): McpCompletionScope bracketing ---
+    // --- McpCompletionScope bracketing ---
 
     /**
-     * R06: proves the coordinator opens every retained session's {@link McpCompletionScope} before
+     * Proves the coordinator opens every retained session's {@link McpCompletionScope} before
      * <em>any</em> observation's or listener's {@code onCompleted} runs, and closes every opened scope
      * — in exact reverse open order — only after <em>all</em> of them have returned. Derived from the
      * shared event log's own recorded indices, not a hardcoded observer order, so it holds regardless
-     * of {@link Set} iteration order. If the bracketing were removed (reverting to the pre-R06
-     * dispatch loop), no {@code :open}/{@code :close} entries would ever be logged and the index
-     * derivation below would fail outright.
+     * of {@link Set} iteration order. If the bracketing were removed, no {@code :open}/{@code :close}
+     * entries would ever be logged and the index derivation below would fail outright.
      */
     @Test
-    @DisplayName("R06: completion scopes open before any onCompleted and close, in reverse order, after all of them")
+    @DisplayName("completion scopes open before any onCompleted and close in reverse order after all of them")
     void shouldOpenCompletionScopesBeforeDispatchAndCloseInReverseOrderAfter() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -530,13 +527,13 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * R06: a session whose {@code openCompletionScope()} throws must not prevent any other session's
+     * A session whose {@code openCompletionScope()} throws must not prevent any other session's
      * scope from opening, any observation's {@code onCompleted} from running, or that other session's
      * own scope from closing. A {@link LinkedHashSet} fixes the iteration order so the failing session
      * runs first — the harder ordering for the isolation guarantee to hold under.
      */
     @Test
-    @DisplayName("R06: a scope-open failure is isolated and does not suppress other sessions' completion or scope")
+    @DisplayName("a scope-open failure is isolated and does not suppress other sessions' completion or scope")
     void shouldIsolateAScopeOpenFailureFromOtherSessions() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -563,12 +560,12 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * R06: a session whose scope's {@code close()} throws must not prevent another session's scope
+     * A session whose scope's {@code close()} throws must not prevent another session's scope
      * from closing. Both sessions are given a failing close so ordering cannot mask a skipped close —
      * if the loop aborted after the first failure, only one {@code :close} entry would ever appear.
      */
     @Test
-    @DisplayName("R06: a scope-close failure is isolated and does not suppress another scope's close")
+    @DisplayName("a scope-close failure is isolated and does not suppress another scope's close")
     void shouldIsolateAScopeCloseFailureFromOtherScopes() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -591,21 +588,20 @@ class McpCompletionCoordinatorTest {
                 .containsExactlyInAnyOrder("A:close", "B:close");
     }
 
-    // --- R07 item 6 (security review): an Error must not abandon an already-opened scope ---
+    // --- an Error must not abandon an already-opened scope ---
 
     /**
-     * R07 item 6: before this fix, {@code openCompletionScopes()} caught only {@link RuntimeException}
-     * and was called <em>before</em> the try/finally even began, so an {@link Error} escaping one
-     * session's {@code openCompletionScope()} propagated out of the whole call — abandoning the
-     * already-opened earlier session's scope with no finally ever reached to close it. This is the
+     * An {@link Error} escaping one session's {@code openCompletionScope()} must not propagate out of
+     * the whole call and abandon the already-opened earlier session's scope with no finally ever
+     * reached to close it. This is the
      * decisive proof an ordinary {@code RuntimeException} row (see {@link
      * #shouldIsolateAScopeOpenFailureFromOtherSessions()} above) cannot give: {@code RuntimeException}
-     * was already caught per-session before this fix, so that row would pass identically whether or
-     * not this fix exists. Only an {@link Error} distinguishes the two: the healthy session opens
-     * <em>first</em>, so its scope is the one an unfixed implementation would lose.
+     * is caught per-session regardless, so that row passes whether or not {@link Error} is handled.
+     * Only an {@link Error} distinguishes the two: the healthy session opens <em>first</em>, so its
+     * scope is the one a naive implementation would lose.
      */
     @Test
-    @DisplayName("R07 item 6: an Error from one session's scope open does not abandon an earlier-opened scope")
+    @DisplayName("an Error from one session's scope open does not abandon an earlier-opened scope")
     void shouldNotAbandonAnEarlierOpenedScopeWhenALaterSessionsOpenThrowsAnError() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -631,13 +627,12 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * R07 item 6: mirrors {@link #shouldIsolateAScopeCloseFailureFromOtherScopes()} but with an {@link
-     * Error} instead of a {@link RuntimeException} — the pre-fix {@code closeCompletionScopes} caught
-     * only {@code Exception}, so an {@code Error} closing one scope would have skipped every scope
-     * still queued to close after it.
+     * Mirrors {@link #shouldIsolateAScopeCloseFailureFromOtherScopes()} but with an {@link
+     * Error} instead of a {@link RuntimeException} — an {@code Error} closing one scope must not skip
+     * every scope still queued to close after it.
      */
     @Test
-    @DisplayName("R07 item 6: an Error from one scope's close does not prevent another scope's close")
+    @DisplayName("an Error from one scope's close does not prevent another scope's close")
     void shouldIsolateAScopeCloseErrorFromOtherScopes() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -660,25 +655,24 @@ class McpCompletionCoordinatorTest {
                 .containsExactlyInAnyOrder("A:close", "B:close");
     }
 
-    // --- R14 item 3: the callback-isolation sweep reaches this class's own callback sites ---
+    // --- callback isolation reaches this class's own callback sites ---
 
     /**
-     * R14 item 3 — a {@link StackOverflowError} from an observer's {@code open} must not abort the
+     * A {@link StackOverflowError} from an observer's {@code open} must not abort the
      * coordinator's construction.
      *
-     * <p>R13 item 1 widened seven application-callback sites in {@code McpRequestDispatcher} from
-     * {@code RuntimeException} to the project's narrow {@code RuntimeException | StackOverflowError}
-     * policy, but stopped at that file's boundary: {@code openObservers} here is the same class of
-     * application-supplied callback and still caught {@code RuntimeException} alone. The coordinator is
-     * constructed inside {@code McpRequestDispatcher#begin}, so an escaping {@code Error} takes the
+     * <p>The application-callback sites in {@code McpRequestDispatcher} are isolated against the
+     * project's narrow {@code RuntimeException | StackOverflowError} policy, and {@code openObservers}
+     * here is the same class of application-supplied callback, so it must follow the same policy. The
+     * coordinator is constructed inside {@code McpRequestDispatcher#begin}, so an escaping {@code Error} takes the
      * whole request down before any settlement hook, terminal event, or later observer exists.
      *
      * <p>Decisive by construction: the failing observer is opened <em>first</em>, so the healthy
      * observer's session only exists at all if the loop survived. A {@code RuntimeException} row could
-     * not prove this — that was already caught before the fix.
+     * not prove this — it is caught regardless.
      */
     @Test
-    @DisplayName("R14 item 3: a StackOverflowError from one observer's open leaves the coordinator usable")
+    @DisplayName("a StackOverflowError from one observer's open leaves the coordinator usable")
     void shouldIsolateAStackOverflowErrorFromAnObserversOpen() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -707,7 +701,7 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * R14 item 3 — a {@link StackOverflowError} from a session's {@code onTerminal} must not swallow the
+     * A {@link StackOverflowError} from a session's {@code onTerminal} must not swallow the
      * completion that has to follow it.
      *
      * <p>{@code invoke} is the single funnel for every observer and listener callback this class makes.
@@ -721,7 +715,7 @@ class McpCompletionCoordinatorTest {
      * onCompleted}.
      */
     @Test
-    @DisplayName("R14 item 3: a StackOverflowError from onTerminal still lets the completion be published")
+    @DisplayName("a StackOverflowError from onTerminal still lets the completion be published")
     void shouldIsolateAStackOverflowErrorFromATerminalCallback() throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -743,16 +737,16 @@ class McpCompletionCoordinatorTest {
                 .containsExactly("terminal-attempted", "completed");
     }
 
-    /** A lifecycle observer whose {@code open} throws a {@link StackOverflowError} (R14 item 3). */
+    /** A lifecycle observer whose {@code open} throws a {@link StackOverflowError}. */
     private record StackOverflowOnOpenObserver(List<String> log) implements McpRequestLifecycleObserver {
         @Override
         public McpRequestObservation open(Instant startedAt) {
             log.add("open-attempted");
-            throw new StackOverflowError("r14 item 3: deliberate native-recursion proof");
+            throw new StackOverflowError("deliberate native-recursion proof");
         }
     }
 
-    /** A session whose {@code onTerminal} throws a {@link StackOverflowError} (R14 item 3). */
+    /** A session whose {@code onTerminal} throws a {@link StackOverflowError}. */
     private record StackOverflowOnTerminalObserver(List<String> log)
             implements McpRequestLifecycleObserver, McpRequestObservation {
         @Override
@@ -763,7 +757,7 @@ class McpCompletionCoordinatorTest {
         @Override
         public void onTerminal(McpRequestTerminalObservation observation) {
             log.add("terminal-attempted");
-            throw new StackOverflowError("r14 item 3: deliberate native-recursion proof");
+            throw new StackOverflowError("deliberate native-recursion proof");
         }
 
         @Override
@@ -968,12 +962,12 @@ class McpCompletionCoordinatorTest {
             return new ScopeOrderObserver(log, name, false, false, false);
         }
 
-        /** A session whose {@code openCompletionScope()} throws an {@link Error} (R07 item 6). */
+        /** A session whose {@code openCompletionScope()} throws an {@link Error}. */
         static ScopeOrderObserver failingOpenWithError(List<String> log, String name) {
             return new ScopeOrderObserver(log, name, true, false, true);
         }
 
-        /** A session whose scope's {@code close()} throws an {@link Error} (R07 item 6). */
+        /** A session whose scope's {@code close()} throws an {@link Error}. */
         static ScopeOrderObserver failingCloseWithError(List<String> log, String name) {
             return new ScopeOrderObserver(log, name, false, true, true);
         }

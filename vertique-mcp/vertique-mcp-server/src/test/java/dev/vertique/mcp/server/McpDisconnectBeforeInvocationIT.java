@@ -62,14 +62,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * RED proof for repair task R32 defect 2: the dispatcher invokes a resolved tool even when the
- * client already disconnected while a post-validation {@link McpToolInterceptor} gate was still
- * pending.
+ * Proof that the dispatcher does not invoke a resolved tool when the client already disconnected
+ * while a post-validation {@link McpToolInterceptor} gate was still pending.
  *
- * <p>{@code invokeAndRespond} composes {@code runToolInterceptors(...)}'s outcome directly into
- * {@code prepared.invoke()} with no check of the request's completion coordinator in between: once
- * the interceptor chain eventually permits — however long after the client left — the generated
- * invocation still runs. This proof gates one tool-interceptor's {@code beforeInvocation}, closes the
+ * <p>{@code invokeAndRespond} must check the request's completion coordinator between {@code
+ * runToolInterceptors(...)}'s outcome and {@code prepared.invoke()}: once the interceptor chain
+ * eventually permits — however long after the client left — the generated invocation must not run.
+ * This proof gates one tool-interceptor's {@code beforeInvocation}, closes the
  * client connection while that gate is pending (so the request settles as a disconnect with no
  * response ever committed), only then releases the gate with a permit, and asserts the tool handler
  * body never runs within a short, bounded confirmation window after the request-owning context has
@@ -122,7 +121,7 @@ class McpDisconnectBeforeInvocationIT {
     }
 
     @Test
-    @DisplayName("R32 defect 2: the tool handler must never run once the client disconnected while a "
+    @DisplayName("the tool handler must never run once the client disconnected while a "
             + "tool-interceptor gate was still pending")
     void shouldNeverInvokeTheToolWhenTheClientDisconnectsWhileAToolInterceptorGateIsPending() throws Exception {
         fixture = Fixture.start(vertx);
@@ -222,7 +221,7 @@ class McpDisconnectBeforeInvocationIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R32 defect 2 fixture tool.",
+                "Disconnect-before-invocation fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,

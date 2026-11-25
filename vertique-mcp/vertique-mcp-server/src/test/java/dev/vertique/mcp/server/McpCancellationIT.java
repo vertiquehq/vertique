@@ -64,13 +64,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T013 TP-001 — real port-0 contract matrix for cancellation and write-phase settlement.
+ * Real port-0 contract matrix for cancellation and write-phase settlement.
  *
  * <p>A real server, bound and connected on the literal {@code 127.0.0.1} (never {@code listen(0)},
- * never {@code "localhost"} — see {@code docs/standards/testing.md} § Dynamic Port Allocation),
- * publishes one cooperative long-running tool that observes {@link McpCancellationSignal#cancelled()}
- * and one uncooperative tool that ignores it entirely. Each row triggers exactly one transport event
- * from a raw {@link Socket} — a client disconnects mid-invocation, resets the stream mid-write, or
+ * never {@code "localhost"}), publishes one cooperative long-running tool that observes {@link
+ * McpCancellationSignal#cancelled()} and one uncooperative tool that ignores it entirely. Each row triggers exactly one
+ * transport event from a raw {@link Socket} — a client disconnects mid-invocation, resets the stream mid-write, or
  * closes normally after the terminal message — and drains the terminal/completion events a registered
  * {@link McpRequestLifecycleObserver} records.
  *
@@ -111,7 +110,7 @@ class McpCancellationIT {
     private Fixture fixture;
     private HttpServer server;
 
-    private static Stream<String> t013ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(DISCONNECT_ROW, RESET_ROW, WRITE_FAILURE_ROW, LATE_HANDLER_RESULT_ROW);
     }
 
@@ -133,10 +132,10 @@ class McpCancellationIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t013ContractRows")
-    @DisplayName("T013 cancellation matrix: exactly-once terminal-before-completion, observed cancellation, "
+    @MethodSource("contractRows")
+    @DisplayName("cancellation matrix: exactly-once terminal-before-completion, observed cancellation, "
             + "and suppressed late results across disconnect, reset, write failure, and late handler results")
-    void shouldEnforceT013ContractMatrix(String row) throws Exception {
+    void shouldEnforceCancellationContractMatrix(String row) throws Exception {
         fixture = Fixture.start(vertx);
         server = fixture.server();
 
@@ -161,7 +160,7 @@ class McpCancellationIT {
                 // how orderly the client's own close was. RESET_ROW below reaches the identical
                 // classification through a hard RST; this row's distinguishing claims are the cooperative
                 // tool's cancellation observation and the suppressed late result, not the specific
-                // transport-outcome enum (docs/standards/testing.md "match outcomes, not exact types").
+                // transport-outcome enum (match outcomes, not exact types).
                 assertThat(fixture.observer().awaitSettlement(ASYNC_TIMEOUT_SECONDS))
                         .isTrue();
                 fixture.observer().assertExactlyOneTerminalThenOneCompletion();
@@ -244,8 +243,8 @@ class McpCancellationIT {
                 // Then: exactly one terminal precedes exactly one completion; the outcome is whichever
                 // non-WRITTEN classification the real race produced (a failed write settling directly, or
                 // a reset recovering a stalled write — both are legitimate per-platform outcomes of the
-                // identical underlying event, per docs/standards/testing.md "match outcomes, not exact
-                // types"), and the recorded responseCommitted matches the real (committed) state.
+                // identical underlying event — match outcomes, not exact types),
+                // and the recorded responseCommitted matches the real (committed) state.
                 assertThat(fixture.observer().awaitSettlement(ASYNC_TIMEOUT_SECONDS))
                         .isTrue();
                 fixture.observer().assertExactlyOneTerminalThenOneCompletion();
@@ -288,7 +287,7 @@ class McpCancellationIT {
                 Thread.sleep(DOUBLE_SETTLE_GRACE_MS);
                 fixture.observer().assertExactlyOneTerminalThenOneCompletion();
             }
-            default -> fail("unknown T013 cancellation matrix row: " + row);
+            default -> fail("unknown cancellation matrix row: " + row);
         }
     }
 
@@ -468,7 +467,7 @@ class McpCancellationIT {
             return new McpToolDescriptor(
                     name,
                     null,
-                    "T013 fixture tool " + name + ".",
+                    "Cancellation fixture tool " + name + ".",
                     ANNOTATIONS,
                     CLOSED_OBJECT_SCHEMA,
                     null,

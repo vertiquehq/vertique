@@ -23,12 +23,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T012 TP-002 — proves the {@code tools/call} vertical against genuine annotation-processor output,
+ * Proves the {@code tools/call} vertical against genuine annotation-processor output,
  * not a hand-authored double. {@code McpToolCallIT}'s tools are all directly constructed {@link
  * dev.vertique.mcp.tool.McpToolInvoker} doubles; this test's single tool is produced by the real
  * {@link dev.vertique.codegen.mcp.McpToolProcessor} from a real {@code @McpTool} application source,
- * compiled and loaded through {@link McpGeneratedHelloToolITFixture} — the gap T008's carrier IT
- * could not close, because {@code vertique-mcp-server} must never depend on the codegen module at
+ * compiled and loaded through {@link McpGeneratedHelloToolITFixture} — the gap a hand-authored
+ * carrier test could not close, because {@code vertique-mcp-server} must never depend on the codegen module at
  * compile/runtime (it is a test-scope-only dependency here).
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

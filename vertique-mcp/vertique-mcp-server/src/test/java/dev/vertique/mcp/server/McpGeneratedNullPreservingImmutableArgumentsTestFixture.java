@@ -24,18 +24,17 @@ import java.util.Set;
 import javax.tools.JavaFileObject;
 
 /**
- * Framework wiring for {@link McpGeneratedNullPreservingImmutableArgumentsTest} (review-finding #4,
- * round-14 remediation): compiles one real, parameterized {@code com.example.nullable.NullableTools}
- * application source — a required record-typed parameter and an {@code Optional<T>} parameter,
- * neither carrying any {@code @Canonicalize}/{@code @Sanitize} annotation — with the real {@link
- * McpToolProcessor}, and loads the resulting generated {@code NullableTools_register_McpToolInvoker}
- * through its real four-argument {@code @Inject} constructor, exactly like {@link
+ * Framework wiring for {@link McpGeneratedNullPreservingImmutableArgumentsTest}: compiles one real,
+ * parameterized {@code com.example.nullable.NullableTools} application source — a required
+ * record-typed parameter and an {@code Optional<T>} parameter, neither carrying any
+ * {@code @Canonicalize}/{@code @Sanitize} annotation — with the real {@link McpToolProcessor}, and
+ * loads the resulting generated {@code NullableTools_register_McpToolInvoker} through its real four-argument {@code @Inject} constructor, exactly like {@link
  * McpGeneratedParameterizedToolITFixture} but without the HTTP layer: this proof only needs {@link
  * McpToolInvoker#prepare}, never the dispatcher or a live request.
  *
  * <p>Bound to an {@code Optional}-materialization-capable {@code strict} profile,
  * not the zero-config {@code vertx} profile: this tool declares an {@code Optional<T>} parameter, so
- * composition now runs the generated {@code OptionalProbe} canary before construction completes, and
+ * composition runs the generated {@code OptionalProbe} canary before construction completes, and
  * {@code vertx}'s mapper (Vert.x's {@code DatabindCodec}) has no {@code Jdk8Module} registered. This
  * fixture's own claim is about null-preserving deep-copy behavior, not profile selection, so it opts
  * into a profile the canary accepts rather than one it correctly rejects.
@@ -98,7 +97,7 @@ final class McpGeneratedNullPreservingImmutableArgumentsTestFixture {
         Class<?> invokerClass = result.loadGeneratedClass(INVOKER_FQN);
         Object toolsInstance = toolsClass.getDeclaredConstructor().newInstance();
 
-        // Neither declared parameter carries a @Canonicalize/@Sanitize annotation, so INP-001 never
+        // Neither declared parameter carries a @Canonicalize/@Sanitize annotation, so input normalization never
         // resolves either chain for this tool — both resolvers throw if that assumption regresses.
         InputObjectProcessor processor = InputObjectProcessor.createDefault(
                 canonicalizerType -> {

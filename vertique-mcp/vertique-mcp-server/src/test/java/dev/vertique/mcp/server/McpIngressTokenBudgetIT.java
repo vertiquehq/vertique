@@ -56,7 +56,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R18 proof: configured ingress token exhaustion is a protocol rejection before every dispatch-stage
+ * Proof that configured ingress token exhaustion is a protocol rejection before every dispatch-stage
  * callback. The fixture configures 1,024 tokens and sends the canonical corpus's valid 1,025-token
  * {@code tools/call} document through the real HTTP mount.
  */
@@ -103,7 +103,7 @@ public class McpIngressTokenBudgetIT {
     }
 
     @Test
-    @DisplayName("R18: rejects configured ingress token exhaustion before dispatch")
+    @DisplayName("rejects configured ingress token exhaustion before dispatch")
     void shouldRejectTokenExhaustionBeforeDispatch() throws Exception {
         startServer();
         McpJsonTokenCorpus.Row corpusRow = McpJsonTokenCorpus.ingressIntegrationRows().stream()

@@ -952,7 +952,7 @@ class McpCompletionClaimIT {
      * Other code can copy one request's coordinator into another request's {@code data()}: the
      * coordinator key is one predictable string, and application ROOT middleware runs before the MCP
      * mount. MCP uses a coordinator only when it belongs to the request at hand, by {@code
-     * HttpServerRequest} identity (review findings CX-F-006 and SEC-L16). So the target request's {@code
+     * HttpServerRequest} identity. So the target request's {@code
      * begin} builds its own coordinator, and neither request's lifecycle events reach the other, whether
      * the source request is still in flight or already settled.
      */
@@ -1078,7 +1078,7 @@ class McpCompletionClaimIT {
 
     /**
      * A request that authenticates only on its re-entered pass settles a disconnect or a reset with that
-     * pass's principal (FR-003; review finding CX-F-007). The reused settlement hook builds its terminal
+     * pass's principal. The reused settlement hook builds its terminal
      * when it runs and reads the security runtime then. Identity resolution on the second pass binds the
      * security context and registers its scope with the request's lifecycle handle; a reroute reuses that
      * one handle, whose cleanup, registered first, runs after the hook. The holder-backed runtime's scope
@@ -1149,8 +1149,8 @@ class McpCompletionClaimIT {
 
     /**
      * A request rejected at admission never reaches {@code begin}, so the terminal writer is the only code
-     * that reads its coordinator slot. The writer uses a coordinator only when it belongs to the request
-     * (review findings CX-F-006 and SEC-L16), so a coordinator copied from an in-flight request neither
+     * that reads its coordinator slot. The writer uses a coordinator only when it belongs to the request,
+     * so a coordinator copied from an in-flight request neither
      * claims the rejection nor settles the other request's observation with the rejection's facts.
      */
     @Test
@@ -2489,8 +2489,7 @@ class McpCompletionClaimIT {
     /**
      * Application ROOT middleware that copies one request's MCP completion coordinator into another
      * request's {@code data()}, ahead of the MCP mount and so before {@code begin}. The coordinator key is
-     * one predictable string for every dispatcher, so any application code can do this (review findings
-     * CX-F-006 and SEC-L16).
+     * one predictable string for every dispatcher, so any application code can do this.
      *
      * <p>For a request marked {@code X-Copy-Role: source}, it records the request's main-router routing
      * context. A sub-router context reads and writes the same {@code data()}, so the test reads the

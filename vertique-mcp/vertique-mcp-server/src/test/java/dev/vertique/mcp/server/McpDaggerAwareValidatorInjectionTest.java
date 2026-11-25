@@ -75,9 +75,9 @@ import org.junit.jupiter.api.Timeout;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Repair task R38 (review finding W7) — proof that Dagger-injected {@link ConstraintValidator}s
- * (an {@code @Inject}-only constructor, resolved through a Dagger-aware {@link
- * ConstraintValidatorFactory}) do not yet run at the MCP tool-input boundary.
+ * Proof that Dagger-injected {@link ConstraintValidator}s (an {@code @Inject}-only constructor,
+ * resolved through a Dagger-aware {@link ConstraintValidatorFactory}) run at the MCP tool-input
+ * boundary.
  *
  * <p>{@code McpBeanValidation} (stage 4 of the fixed request-time input pipeline)
  * bootstraps its one shared {@link Validator} through the static {@link
@@ -85,9 +85,10 @@ import org.mockito.ArgumentCaptor;
  * reflection only (no-arg constructor). A {@link ConstraintValidator} whose only constructor is
  * {@code @Inject} — the shape {@code vertique-validation}'s {@code DaggerConstraintValidatorFactory}
  * exists to resolve, via its tier-1 Dagger-managed-instance / tier-2 contributed-factory / tier-3
- * reflection chain — therefore cannot be constructed there today, and any tool-input bean carrying
- * such a constraint fails closed with an internal-error fallback instead of the bounded
- * {@code INPUT_PROCESSING} rejection every other Bean Validation failure produces.
+ * reflection chain — cannot be constructed by that static default, so without a bound Dagger-aware
+ * {@link Validator} any tool-input bean carrying such a constraint would fail closed with an
+ * internal-error fallback instead of the bounded {@code INPUT_PROCESSING} rejection every other Bean
+ * Validation failure produces.
  *
  * <p>{@code vertique-mcp-server} has no compile dependency on {@code vertique-validation} (see its
  * {@code pom.xml}), so this class does not import {@code DaggerConstraintValidatorFactory} directly.
@@ -98,24 +99,23 @@ import org.mockito.ArgumentCaptor;
  * <p>Two proofs:
  * <ol>
  *   <li>{@link #shouldConstructAndEvaluateInjectOnlyConstraintThroughDaggerAwareValidatorWiring()}
- *       (GREEN today) — sanity precondition: a real Dagger {@code @Component} genuinely constructs
+ *       — sanity precondition: a real Dagger {@code @Component} genuinely constructs
  *       this exact {@code @Inject}-only {@link ConstraintValidator} and wires it into a working
  *       framework-style {@link Validator}.</li>
- *   <li>{@link #shouldRejectInjectOnlyConstraintViolationAtTheMcpInputBoundary()} (R38/W7, GREEN) —
- *       decisive: the same constraint, evaluated through {@link InjectOnlyToolInvoker#prepare}
- *       exactly as today's real generated invoker shape does (mirroring {@code PipelineToolInvoker}
- *       in {@code McpInputPipelineIT}, T015), settles as the bounded rejection carrying the
- *       constraint's own violation message because R38/W7 threads a bound Dagger-aware {@link
- *       Validator} into generated invokers through their constructor-injected {@code
- *       Optional<Validator>}. Before R38/W7, {@code McpBeanValidation}'s static Validator threw
- *       trying to construct the validator reflectively, settling a 500 internal-error JSON-RPC
- *       fallback instead.</li>
+ *   <li>{@link #shouldRejectInjectOnlyConstraintViolationAtTheMcpInputBoundary()} — decisive: the
+ *       same constraint, evaluated through {@link InjectOnlyToolInvoker#prepare} exactly as a real
+ *       generated invoker does (mirroring {@code PipelineToolInvoker} in {@code McpInputPipelineIT}),
+ *       settles as the bounded rejection carrying the constraint's own violation message because a
+ *       bound Dagger-aware {@link Validator} is threaded into generated invokers through their
+ *       constructor-injected {@code Optional<Validator>}. {@code McpBeanValidation}'s static
+ *       Validator alone would throw trying to construct the validator reflectively, settling a 500
+ *       internal-error JSON-RPC fallback instead.</li>
  * </ol>
  *
  * <p>The complementary zero-config regression — a no-arg-constructible constraint (e.g.
  * {@code @NotBlank}, always reflection-tier resolvable) still validates and rejects invalid input
  * with no Validator bound anywhere — is already pinned end-to-end by {@code McpInputPipelineIT
- * #shouldEnforceT015ContractMatrix[shouldRejectBeanValidationFailureBeforeInvocation]} and is not
+ * #shouldEnforceInputPipelineContractMatrix[shouldRejectBeanValidationFailureBeforeInvocation]} and is not
  * duplicated here.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -128,7 +128,7 @@ class McpDaggerAwareValidatorInjectionTest {
     private static final String INPUT_SCHEMA = "{\"type\":\"object\",\"additionalProperties\":false,"
             + "\"required\":[\"value\"],\"properties\":{\"value\":{\"type\":\"string\"}}}";
 
-    // --- Proof 1a (GREEN today): the Dagger-aware wiring itself genuinely works ---
+    // --- Proof 1a: the Dagger-aware wiring itself genuinely works ---
 
     @Test
     @DisplayName(
@@ -149,8 +149,8 @@ class McpDaggerAwareValidatorInjectionTest {
                 daggerValidator.validate(new InjectOnlyValidatedArgs(FORBIDDEN_VALUE));
 
         // Then — GIVEN precondition for the decisive proof below: the Dagger-aware wiring can build a
-        // working Validator for this exact @Inject-only constraint today; only the MCP input boundary
-        // itself has no path to one (that gap is what the decisive test below pins).
+        // working Validator for this exact @Inject-only constraint; the decisive test below pins that
+        // the MCP input boundary has a path to one.
         assertThat(violations)
                 .extracting(ConstraintViolation::getMessage)
                 .as("a Dagger-constructed @Inject-only ConstraintValidator must genuinely evaluate, not "
@@ -158,14 +158,14 @@ class McpDaggerAwareValidatorInjectionTest {
                 .containsExactly(FORBIDDEN_VALUE_MESSAGE);
     }
 
-    // --- Proof 1b (RED today, GREEN once R38/W7 ships): the real MCP input boundary ---
+    // --- Proof 1b: the real MCP input boundary ---
 
     @Test
-    @DisplayName("R38/W7 DECISIVE: an @Inject-only constraint must be evaluated at the "
+    @DisplayName("DECISIVE: an @Inject-only constraint must be evaluated at the "
             + "MCP input boundary, not silently fall back to a 500 internal error")
     void shouldRejectInjectOnlyConstraintViolationAtTheMcpInputBoundary() {
         // Given: a generated-style invoker whose prepare() runs Bean Validation through the exact
-        // production seam (McpBeanValidation) a real generated invoker uses today — constructed with
+        // production seam (McpBeanValidation) a real generated invoker uses — constructed with
         // the same Dagger-aware Validator proof 1a builds, exactly as a real generated invoker's
         // constructor-injected Optional<Validator> would resolve it through McpServerModule's
         // @BindsOptionalOf Validator once an application binds a Dagger-aware Validator of its own.
@@ -179,11 +179,11 @@ class McpDaggerAwareValidatorInjectionTest {
                 dispatchToolCall(dispatcher, TOOL_NAME, new JsonObject().put("value", FORBIDDEN_VALUE));
 
         // Then — DECISIVE, bounded (no await: dispatch() settles synchronously here, exactly as
-        // McpToolInterceptorPipelineTest's identically-shaped mocked dispatch does): R38/W7's bound
+        // McpToolInterceptorPipelineTest's identically-shaped mocked dispatch does): the bound
         // Dagger-aware Validator constructs ForbiddenValueValidator successfully, so
         // McpBeanValidation.validate(materialized, validator) surfaces its violation as the bounded
         // INPUT_PROCESSING rejection (outcome.isToolResult() == true) rather than the internal-error
-        // fallback the static, non-Dagger-aware default settled as before this repair.
+        // fallback the static, non-Dagger-aware default would settle as.
         assertThat(outcome.isToolResult())
                 .as("DECISIVE: an @Inject-only constraint's violation must settle as the same bounded "
                         + "CallToolResult input-rejection every other Bean Validation failure produces, "
@@ -215,8 +215,8 @@ class McpDaggerAwareValidatorInjectionTest {
 
     /**
      * A {@link ConstraintValidator} whose only constructor is {@code @Inject}-annotated and takes a
-     * dependency — the exact shape a reflection-only {@link ConstraintValidatorFactory} (today's
-     * {@code McpBeanValidation}) cannot construct, mirroring {@code
+     * dependency — the exact shape a reflection-only {@link ConstraintValidatorFactory} (the static
+     * default {@code McpBeanValidation} uses) cannot construct, mirroring {@code
      * DaggerConstraintValidatorFactoryTest.NonInstantiableValidator} but genuinely functional.
      * Package-private (not {@code private}): Dagger's generated {@code @Inject}-constructor factory
      * must be able to construct it.
@@ -334,16 +334,16 @@ class McpDaggerAwareValidatorInjectionTest {
 
     /**
      * Stands in for one {@code @McpTool}-generated invoker's {@code prepare()}, mirroring the real
-     * generated shape exactly — see {@code PipelineToolInvoker} in {@code McpInputPipelineIT} (T015)
+     * generated shape exactly — see {@code PipelineToolInvoker} in {@code McpInputPipelineIT}
      * and {@code McpToolInvokerEmitter}: its constructor accepts an {@code
      * Optional<jakarta.validation.Validator>} (bound through {@code McpServerModule}'s {@code
      * @BindsOptionalOf Validator} seam, resolved by a Dagger-aware {@code
      * ConstraintValidatorFactory} when the application binds one), and stage 4 Bean Validation runs
      * through the shared {@link McpBeanValidation#validate(Object, java.util.Optional)} seam, which
      * routes through that optional {@link Validator} when present and falls back to the static {@code
-     * Validation.buildDefaultValidatorFactory()} default when absent (R38/W7). {@link
+     * Validation.buildDefaultValidatorFactory()} default when absent. {@link
      * InjectOnlyValidatedArgs} declares no {@code @Canonicalize}/{@code @Sanitize} policy, so stage 2
-     * (INP-001) is a genuine no-op here and is intentionally not modeled.
+     * (input normalization) is a genuine no-op here and is intentionally not modeled.
      *
      * <p>Unlike the shipped {@code McpToolInvokerEmitter}, which always throws {@code
      * McpInputRejectionException} with a fixed, non-interpolated literal (deliberately never a
@@ -368,7 +368,7 @@ class McpDaggerAwareValidatorInjectionTest {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "R38/W7 fixture tool.",
+                    "Inject-only validator fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     INPUT_SCHEMA,
                     null,
@@ -433,7 +433,7 @@ class McpDaggerAwareValidatorInjectionTest {
      * {@code CallToolResult} ({@link DispatchOutcome#isToolResult()} {@code true}), or a JSON-RPC
      * top-level {@code error} object (the internal-error fallback shape, {@code false}). Decoding
      * both shapes leniently — rather than assuming the {@code result} shape and dereferencing it — is
-     * what keeps today's RED outcome a clean assertion failure instead of a {@code
+     * what keeps a failing outcome a clean assertion failure instead of a {@code
      * NullPointerException}.
      */
     private static DispatchOutcome dispatchToolCall(

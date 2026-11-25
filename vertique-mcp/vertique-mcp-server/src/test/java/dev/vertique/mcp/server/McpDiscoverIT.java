@@ -69,25 +69,25 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T004 optional-authentication and canonical-identity contract of the MCP discovery
+ * Exercises the optional-authentication and canonical-identity contract of the MCP discovery
  * mount through the real plain Vert.x pipeline.
  *
  * <p>Each row drives one {@code server/discover} request against a port-0 mount named
- * {@code vertique-test/1.0}, isolating one boundary of §4.7 stage 3 identity establishment: absent,
+ * {@code vertique-test/1.0}, isolating one boundary of identity establishment: absent,
  * valid, and invalid credentials; canonical-anonymous binding; a credential-shaped header ignored
  * when no scheme is configured; fail-closed pre-authentication and post-authentication states; and
  * the decisive case where no scheme is configured yet an ambient routing user is present. Error rows
  * bind no substitute identity and emit exactly one terminal/completion pair.
  *
- * <p>The decisive red row is {@code shouldRemainCanonicalAnonymousDespiteAmbientRoutingUserWhenNoScheme}:
- * §4.7 stage 3 requires the mount to bind a canonical anonymous context without consulting ambient
- * Router user/evidence when no scheme is configured, but the current {@code McpIdentityEstablisher.admit}
- * rejects any pre-existing ambient user unconditionally, so the request is answered 401 instead of a
- * 200 anonymous discovery.
+ * <p>The decisive row is {@code shouldRemainCanonicalAnonymousDespiteAmbientRoutingUserWhenNoScheme}:
+ * the mount must bind a canonical anonymous context without consulting ambient Router user/evidence
+ * when no scheme is configured, so {@code McpIdentityEstablisher.admit} must not reject a
+ * pre-existing ambient user and the request is answered with a 200 anonymous discovery rather than
+ * 401.
  *
- * <p>The registry-visibility row (an unconfigured public/deny-all registry acceptance and an
- * unconfigured restricted-registry rejection) is deferred to T006, which owns the tool registry and
- * a composition-validator seam that do not exist in T004.
+ * <p>The registry-visibility rows (an unconfigured public/deny-all registry acceptance and an
+ * unconfigured restricted-registry rejection) are covered by {@code McpRouterMountRegistryVisibilityTest},
+ * not here.
  *
  * <p>The client is a {@link WebClient} wrapping a raw {@link HttpClient}: {@code WebClient}
  * aggregates the body before its future resolves, while the wrapped raw client keeps the awaitable
@@ -105,7 +105,6 @@ public class McpDiscoverIT {
     private static final String CANONICAL_ANON_ABSENT_ROW = "shouldBindCanonicalAnonymousContextWhenCredentialIsAbsent";
     private static final String IGNORE_HEADER_NO_SCHEME_ROW =
             "shouldIgnoreCredentialShapedHeaderWhenNoSchemeAndRemainAnonymous";
-    // deferred to T006: shouldAllowUnconfiguredPublicOrDenyAllRegistryAndRejectUnconfiguredRestrictedRegistry
     private static final String PREEXISTING_USER_ROW =
             "shouldFailClosedOnPreexistingUserOrEvidenceBeforeSelectedScheme";
     private static final String POST_AUTH_INCONSISTENT_ROW =
@@ -130,7 +129,7 @@ public class McpDiscoverIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t004ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 ANON_AND_AUTH_ROW,
                 STARTUP_FAILURE_ROW,
@@ -172,9 +171,9 @@ public class McpDiscoverIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t004ContractRows")
-    @DisplayName("T004 discovery matrix: optional authentication and canonical identity establishment")
-    void shouldEnforceT004ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("discovery matrix: optional authentication and canonical identity establishment")
+    void shouldEnforceDiscoveryContractMatrix(String row) throws Exception {
         switch (row) {
             case ANON_AND_AUTH_ROW -> {
                 startServer(McpDiscoverITFixture.options().scheme("bearer").handler(new BearerRouteAuthHandler()));
@@ -286,10 +285,9 @@ public class McpDiscoverIT {
                 startServer(McpDiscoverITFixture.options().injectAmbientUser(true));
 
                 // Given: an ambient routing user with no scheme configured.
-                // DECISIVE: §4.7 stage 3 requires binding a canonical anonymous context without
+                // DECISIVE: the mount must bind a canonical anonymous context without
                 // consulting the ambient Router user when no scheme is configured, so discovery must
-                // answer 200 anonymous. The current admit() rejects any ambient user unconditionally
-                // and answers 401, so this row is red.
+                // answer 200 anonymous, not reject the ambient user with 401.
                 HttpResponse<Buffer> response = await(post().sendBuffer(discoverBody()));
 
                 assertThat(response.statusCode())
@@ -305,9 +303,9 @@ public class McpDiscoverIT {
                                 new JsonObject().put("sub", "ambient").put("roles", new JsonArray().add("admin"))));
 
                 // Given: a *privileged* ambient routing user (roles=[admin]) with no scheme configured.
-                // §4.7 stage 3 requires binding a canonical anonymous context without consulting the
+                // The mount must bind a canonical anonymous context without consulting the
                 // ambient Router user, so its authorization claims must NOT bleed into the bound
-                // identity (finding C1 — CWE-863). The status/actor assertions already pass because the
+                // identity (CWE-863). The status/actor assertions already pass because the
                 // resolver derives anonymous from empty evidence; the decisive assertion is that the
                 // bound authorization is empty despite the privileged ambient principal.
                 HttpResponse<Buffer> response = await(post().sendBuffer(discoverBody()));
@@ -321,10 +319,10 @@ public class McpDiscoverIT {
                 startServer(McpDiscoverITFixture.options().injectAmbientEvidence(true));
 
                 // Given: ambient authentication evidence (a non-NONE JWT method carrying sub) appended
-                // before the mount, with no scheme configured. §4.7 stage 3 requires the mount to bind a
+                // before the mount, with no scheme configured. The mount must bind a
                 // canonical anonymous context without consulting ambient evidence: the resolver must see
                 // an empty evidence list, so the bound identity is anonymous and the primary method NONE
-                // rather than the leaked JWT method/subject (finding C1 — CWE-863).
+                // rather than the leaked JWT method/subject (CWE-863).
                 HttpResponse<Buffer> response = await(post().sendBuffer(discoverBody()));
 
                 assertThat(response.statusCode()).isEqualTo(200);
@@ -332,7 +330,7 @@ public class McpDiscoverIT {
                 assertBoundIdentity(PrincipalType.ANONYMOUS, "anonymous", AuthMethodKind.NONE);
                 assertBoundAuthorizationEmpty();
             }
-            default -> fail("unknown T004 discovery row: " + row);
+            default -> fail("unknown discovery row: " + row);
         }
     }
 

@@ -37,22 +37,22 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * R12 — bounded error serialization (merge blocker 5).
+ * Bounded error serialization.
  *
  * <p>Drives {@link McpRequestDispatcher#dispatch} directly against a mocked {@link RoutingContext},
  * mirroring {@code McpProtocolNegotiationTest}'s driving style, with a small {@code
  * mcp.output.maxBytes} (the validator-enforced 1,024-byte floor) and a request id large enough that
- * the fully enveloped, id-bearing error response would exceed it. Covers both error-writing paths R12
- * names by name: the pre-dispatch protocol-rejection path ({@link
+ * the fully enveloped, id-bearing error response would exceed it. Covers both error-writing paths:
+ * the pre-dispatch protocol-rejection path ({@link
  * McpRequestDispatcher#writePreDispatchProtocolRejection}) and the ordinary protocol-error path ({@link
  * McpRequestDispatcher#emitProtocolError}).
  *
- * <p><strong>Proves early rejection, not rejection.</strong> Following R04's own proof shape exactly
- * ({@code McpOutputPipelineIT#assertCappedStreamAbortsBeforeMaterializing}): a live HTTP-level check
- * alone (bounded response, id-less body) cannot distinguish the fix from the defect it replaces — the
- * defective code also produced a bounded final response, just after fully allocating the oversized
- * array first. {@link #assertCappedStreamAbortsBeforeMaterializing} instead feeds a document
- * byte-identical in shape to what each fixed path now builds directly to the real, unmodified {@link
+ * <p><strong>Proves early rejection, not just rejection.</strong> Following the proof shape of
+ * {@code McpOutputPipelineIT#assertCappedStreamAbortsBeforeMaterializing}: a live HTTP-level check
+ * alone (bounded response, id-less body) cannot distinguish a streaming abort from an implementation
+ * that fully allocates the oversized array first and rejects it afterwards — both produce a bounded
+ * final response. {@link #assertCappedStreamAbortsBeforeMaterializing} instead feeds a document
+ * byte-identical in shape to what each error-writing path builds directly to the real, unmodified {@link
  * McpRequestDispatcher.CappedOutputStream}, and proves its internal buffer never grows to the
  * document's true, uncapped size before it throws {@link McpRequestDispatcher.OutputCapExceededException}.
  *
@@ -60,21 +60,18 @@ import org.mockito.ArgumentCaptor;
  * id must still echo the original classified code and id, never degrading to the generic id-less
  * internal error — otherwise a mutation that always degraded would pass the over-cap rows undetected.
  *
- * <p><strong>Known limitation, stated rather than hidden — closed by R14 item 4.</strong> Reverting only
- * the call site (e.g. putting {@code codec.errorResponseFor(...)} back in {@code
- * writePreDispatchProtocolRejection}) does not turn any assertion above red: the defective and fixed code
- * degrade to the identical final bytes for any id short of triggering an {@code OutOfMemoryError}, so
- * no external, mock-observable signal distinguishes them — this is the exact "the defective code also
- * produced a bounded response" trap R12 names. R14 item 4 supplies the protection no assertion here
- * could: that overload was deleted (zero callers in main or test), so the mutation no longer
- * <em>compiles</em>, and {@code McpBoundedWritePathArchitectureTest} keeps the three surviving
- * byte-unbounded helpers off every production write path.
- * {@link #assertCappedStreamAbortsBeforeMaterializing} is decisive against a regression in the shared
- * {@link McpRequestDispatcher.CappedOutputStream} mechanism itself (verified by mutation: reordering its
- * bounds check after the write turns both over-cap rows red), which is the only non-flaky signal
- * available for this response shape — a plain id-echoing object has no per-element access hook the way
- * R04's {@code CountingOversizedResultToolInvoker} counts iterable access. The control rows above cover
- * the complementary risk (unconditional degrade) that a call-site regression would actually introduce.
+ * <p><strong>Known limitation, stated rather than hidden.</strong> A call site that bypasses the
+ * capped stream (e.g. calling {@code codec.errorResponseFor(...)} from {@code
+ * writePreDispatchProtocolRejection}) would not fail any assertion on the live outcome: bounded and
+ * unbounded serialization degrade to the identical final bytes for any id short of triggering an
+ * {@code OutOfMemoryError}, so no external, mock-observable signal distinguishes them. That protection
+ * comes from {@code McpBoundedWritePathArchitectureTest}, which keeps the byte-unbounded helpers off every
+ * production write path. {@link #assertCappedStreamAbortsBeforeMaterializing} is decisive against a
+ * regression in the shared {@link McpRequestDispatcher.CappedOutputStream} mechanism itself (for example,
+ * checking its bound after the write instead of before fails both over-cap rows), which is the only
+ * non-flaky signal available for this response shape — a plain id-echoing object has no per-element
+ * access hook the way {@code CountingOversizedResultToolInvoker} counts iterable access. The control rows
+ * above cover the complementary risk (unconditional degrade) that a call-site regression would introduce.
  */
 class McpBoundedErrorSerializationTest {
 
@@ -97,7 +94,7 @@ class McpBoundedErrorSerializationTest {
     // --- Path 1: pre-dispatch protocol rejection (writePreDispatchProtocolRejection) ---
 
     @Test
-    @DisplayName("R12: an oversized id degrades an official-params rejection to the bounded id-less shape, "
+    @DisplayName("an oversized id degrades an official-params rejection to the bounded id-less shape, "
             + "aborting serialization before the full response is materialized")
     void shouldDegradeOfficialParamsRejectionEarlyWhenIdOverflowsTheCap() throws Exception {
         JsonObject body = discoverBodyMissingMeta(OVERSIZED_ID);
@@ -124,12 +121,13 @@ class McpBoundedErrorSerializationTest {
 
         // DECISIVE ordering proof: the live outcome above cannot by itself distinguish a streaming abort
         // from an implementation that first materializes the full byte array and then rejects it on
-        // length — both produce the same bounded external response (this is exactly the R12 defect).
+        // length — both produce the same bounded external response (exactly the defect being guarded
+        // against).
         assertCappedStreamAbortsBeforeMaterializing(OUTPUT_MAX_BYTES, OVERSIZED_ID, -32602, "Invalid params");
     }
 
     @Test
-    @DisplayName("R12 control: a small id is echoed as-is by an official-params rejection, never degraded")
+    @DisplayName("control: a small id is echoed as-is by an official-params rejection, never degraded")
     void shouldNotDegradeOfficialParamsRejectionWhenIdFitsUnderTheCap() throws Exception {
         JsonObject body = discoverBodyMissingMeta("1");
         MultiMap headers = validHeaders("server/discover", null);
@@ -149,7 +147,7 @@ class McpBoundedErrorSerializationTest {
     // --- Path 2: ordinary protocol error (emitProtocolError) ---
 
     @Test
-    @DisplayName("R12: an oversized id degrades an ordinary protocol error to the bounded id-less shape, "
+    @DisplayName("an oversized id degrades an ordinary protocol error to the bounded id-less shape, "
             + "aborting serialization before the full response is materialized")
     void shouldDegradeOrdinaryProtocolErrorEarlyWhenIdOverflowsTheCap() throws Exception {
         JsonObject body = unknownMethodBody(OVERSIZED_ID);
@@ -175,7 +173,7 @@ class McpBoundedErrorSerializationTest {
     }
 
     @Test
-    @DisplayName("R12 control: a small id is echoed as-is by an ordinary protocol error, never degraded")
+    @DisplayName("control: a small id is echoed as-is by an ordinary protocol error, never degraded")
     void shouldNotDegradeOrdinaryProtocolErrorWhenIdFitsUnderTheCap() throws Exception {
         JsonObject body = unknownMethodBody("1");
         MultiMap headers = MultiMap.caseInsensitiveMultiMap();
@@ -196,7 +194,7 @@ class McpBoundedErrorSerializationTest {
 
     /**
      * Feeds a {@code {jsonrpc, id, error:{code, message}}} document — byte-identical in shape to the
-     * {@code errorNode} every error-writing path in {@link McpRequestDispatcher} now builds directly —
+     * {@code errorNode} every error-writing path in {@link McpRequestDispatcher} builds directly —
      * to the real, unmodified {@link McpRequestDispatcher.CappedOutputStream}, and proves its buffer
      * never grows to the document's true, uncapped size before it throws {@link
      * McpRequestDispatcher.OutputCapExceededException}. Mirrors {@code
@@ -325,7 +323,7 @@ class McpBoundedErrorSerializationTest {
         return headers;
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

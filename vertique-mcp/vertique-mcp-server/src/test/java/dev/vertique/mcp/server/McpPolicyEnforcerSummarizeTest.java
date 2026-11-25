@@ -19,7 +19,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * R05 (issue #431) — {@link McpPolicyEnforcer#summarize} bounds the {@link McpAuthorizationSummary}
+ * {@link McpPolicyEnforcer#summarize} bounds the {@link McpAuthorizationSummary}
  * it produces so it can never fail to construct, regardless of the {@link AuthorizationDecision}
  * handed to it.
  *

@@ -61,7 +61,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** Characterizes D008 disconnect handling without claiming that the shared authorization SPI cancels. */
+/** Characterizes disconnect handling without claiming that the shared authorization SPI cancels. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class McpToolsListDisconnectIT {
 

@@ -26,10 +26,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Review-finding proof (round-14 remediation, defect #5): {@code McpToolInvokerEmitter} emitted
- * {@code ctx.types().erasure(...)} for a generic structured-output type, so {@code
- * Future<List<Note>>} advertised the same schema {@code List.class} would (no element description),
- * and output-schema validation could never reject an element that violated it.
+ * Proof that {@code McpToolInvokerEmitter} does not emit {@code ctx.types().erasure(...)} for a
+ * generic structured-output type: erasure would make {@code Future<List<Note>>} advertise the same
+ * schema {@code List.class} would (no element description), and output-schema validation could never
+ * reject an element that violated it.
  *
  * <p>Proved through two real, generated, parameterized (never hand-authored) tools compiled by the real {@link
  * dev.vertique.codegen.mcp.McpToolProcessor}, both returning {@code Future<List<Note>>} where {@code
@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Timeout;
  * <ul>
  *   <li>the loaded invoker's own descriptor must advertise an output schema describing {@code Note}'s
  *       fields under {@code items}, not an opaque/untyped array — DECISIVE against the erased {@code
- *       List.class} shape, which JSON-005 cannot describe an element for.
+ *       List.class} shape, which cannot describe an element.
  *   <li>a call whose returned element violates that schema ({@code priority = -1} against {@code
  *       @Min(1)}) must be rejected as a bounded internal error, never delivered to the wire; a sibling
  *       call whose element satisfies the schema must succeed — the same output-validation gate,
@@ -97,8 +97,8 @@ class McpGeneratedGenericStructuredOutputIT {
                 .as("the declared List<Note> return type must describe a JSON array")
                 .isEqualTo("array");
         assertThat(outputSchema.at("/items/properties/display_name/type").asText())
-                .as("DECISIVE: the array's element type must be described — the pre-fix erasure to "
-                        + "List.class produces no /items definition at all")
+                .as("DECISIVE: the array's element type must be described — the erasure to "
+                        + "List.class would produce no /items definition at all")
                 .isEqualTo("string");
         assertThat(outputSchema.at("/items/properties/priority/minimum").asInt())
                 .as("DECISIVE: the element's own @Min(1) constraint must reach the advertised schema, "
@@ -146,11 +146,11 @@ class McpGeneratedGenericStructuredOutputIT {
                         .getString("display_name"))
                 .as("the selected profile's output name must reach the wire through the generated writer")
                 .isEqualTo("hello");
-        // R37 (review finding C4): a structured result with no handler-authored text must still carry
+        // A structured result with no handler-authored text must still carry
         // exactly one canonical-JSON text item alongside structuredContent, for
-        // backwards compatibility. DECISIVE: pre-fix, "content" serializes as an empty array here —
-        // the structured adaptation carries no text content (McpToolResult.structured(...) itself is
-        // correctly empty; the encoder never derived a canonical text item from the normalized value).
+        // backwards compatibility. DECISIVE: "content" must not serialize as an empty array here —
+        // McpToolResult.structured(...) itself is correctly empty, so the encoder must derive a
+        // canonical text item from the normalized value.
         JsonArray validContent = validResult.getJsonArray("content");
         softly.assertThat(validContent)
                 .as("DECISIVE: a structured result must carry exactly one canonical-JSON text item")

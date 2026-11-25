@@ -1,4 +1,4 @@
-module vertique.dev/mcp/t029-client
+module vertique.dev/mcp/go-client
 
 go 1.25.0
 

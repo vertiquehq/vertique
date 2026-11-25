@@ -52,27 +52,27 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * RED proof for repair task R32 defect 1: the dispatcher composes an application-supplied {@link
- * McpRequestInterceptor#beforeRequest} future without ever re-anchoring the chain's continuation
- * back onto the request-owning Vert.x context.
+ * Proof that the dispatcher re-anchors the chain's continuation onto the request-owning Vert.x
+ * context when it composes an application-supplied {@link McpRequestInterceptor#beforeRequest}
+ * future.
  *
  * <p>{@link McpRequestInterceptor#beforeRequest} and {@link
  * dev.vertique.mcp.interceptor.McpToolInterceptor#beforeInvocation} are both documented as running
  * "on the request's owning Vert.x context" for every interceptor in the ordered chain — not merely
- * the first one. Today the dispatcher's {@code runRequestInterceptors} composes each interceptor's
+ * the first one. If the dispatcher's {@code runRequestInterceptors} composed each interceptor's
  * returned future directly ({@code outcome.compose(ignored -> runRequestInterceptors(index + 1,
- * requestContext))}), so once an application supplies a future backed by a plain, context-unaware
- * {@link Promise} completed from outside Vert.x, every later interceptor's continuation runs on
+ * requestContext))}), then once an application supplies a future backed by a plain, context-unaware
+ * {@link Promise} completed from outside Vert.x, every later interceptor's continuation would run on
  * whichever raw thread happened to complete it, not on the context the request actually arrived on.
  *
  * <p>This proof registers two ordered request-interceptors: the first ({@link
  * GatedRequestInterceptor}) hands back a future released only from a plain {@code new Thread}, once
- * the dispatcher has already attached its continuation (T017/T016's own ordering guarantee: {@code
+ * the dispatcher has already attached its continuation (the interceptor ordering guarantee: {@code
  * beforeRequest} always returns, and the caller always calls {@code .compose(...)} on the very next
  * statement, before any other thread can run); the second ({@link ProbeRequestInterceptor}) records
  * {@link Vertx#currentContext()} the instant its own {@code beforeRequest} is invoked — which only
  * ever happens inside that same continuation. Comparing the probed context against the context the
- * request's own lifecycle observation opened on is therefore a direct proof of defect 1.
+ * request's own lifecycle observation opened on is therefore a direct proof of the anchoring.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpOffContextCompletionIT {
@@ -112,7 +112,7 @@ class McpOffContextCompletionIT {
     }
 
     @Test
-    @DisplayName("R32 defect 1: a later request-interceptor's continuation must run on the request's "
+    @DisplayName("a later request-interceptor's continuation must run on the request's "
             + "own Vert.x context, never on the raw thread that completed an earlier one's future")
     void shouldRunTheRequestInterceptorChainContinuationOnTheRequestOwningContext() throws Exception {
         fixture = Fixture.start(vertx);

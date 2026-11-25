@@ -63,35 +63,35 @@ import org.junit.jupiter.api.Timeout;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Repair task R33 defect 2: a {@link McpPreparedToolCall#invoke()} that returns {@code null} (rather
- * than throwing, or returning a failed future) is never guarded.
+ * A {@link McpPreparedToolCall#invoke()} that returns {@code null} (rather than throwing, or
+ * returning a failed future) must be guarded.
  *
- * <p>{@code McpRequestDispatcher#invokeAndRespond} only wraps the synchronous call {@code
+ * <p>{@code McpRequestDispatcher#invokeAndRespond} wraps the synchronous call {@code
  * prepared.invoke()} itself in a {@code catch (RuntimeException | StackOverflowError)}; the very next
- * statement, {@code anchoredOnContext(result, owningContext)}, calls {@code result.isComplete()}
- * without a null check. When {@code result} is {@code null}, that throws a {@link
- * NullPointerException} — but only once the surrounding continuation actually runs. This fixture
+ * statement, {@code anchoredOnContext(result, owningContext)}, calls {@code result.isComplete()},
+ * which throws a {@link NullPointerException} when {@code result} is {@code null} unless the null is
+ * handled — and only once the surrounding continuation actually runs. This fixture
  * forces that continuation to run genuinely asynchronously, exactly the way an application-supplied
  * {@code SecurityPolicyEnforcer}/{@code Authorizer} would in production: {@link
  * McpPolicyEnforcer#decide} is stubbed to return a pending {@link Promise}'s future, completed only
  * from a plain, non-Vert.x thread <em>after</em> {@link McpRequestDispatcher#dispatch} has already
  * returned to its caller. At that point the resulting {@code writeToolsCall}/{@code
  * invokeAndRespond} continuation runs entirely outside {@code dispatch()}'s own {@code
- * dispatchByMethod} try/catch (which only ever wrapped the synchronous portion of the call), so the
- * NPE this defect produces is caught nowhere: no response is written, and no terminal or completion
+ * dispatchByMethod} try/catch (which only ever wrapped the synchronous portion of the call), so an
+ * unhandled NPE would be caught nowhere: no response is written, and no terminal or completion
  * event is ever published. This mirrors {@code McpOffContextCompletionIT}'s established "release from
  * a plain thread after the caller has already returned" technique for proving an async gap.
  *
- * <p>RED today: the bounded await below times out because nothing ever settles. Once repaired, {@code
- * prepared.invoke()} returning {@code null} must settle the same bounded internal-error fallback
- * {@code invokeFailure}/{@code stage5Failure} already produce, publishing exactly one terminal event
- * and one completion event, well inside the bounded await.
+ * <p>If nothing settled, the bounded await below would time out. {@code prepared.invoke()} returning
+ * {@code null} must settle the same bounded internal-error fallback {@code
+ * invokeFailure}/{@code stage5Failure} produce, publishing exactly one terminal event and one
+ * completion event, well inside the bounded await.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpNullInvocationFutureIT {
 
     private static final String PROTOCOL_VERSION = "2026-07-28";
-    private static final String KNOWN_TOOL = "r33-null-invocation-fixture-tool";
+    private static final String KNOWN_TOOL = "null-invocation-fixture-tool";
     private static final long BOUNDED_AWAIT_SECONDS = 5;
     private static final int INTERNAL_ERROR_CODE = -32603;
 
@@ -114,7 +114,7 @@ class McpNullInvocationFutureIT {
     }
 
     @Test
-    @DisplayName("R33 defect 2: an invoke() returning a null future must still settle the bounded "
+    @DisplayName("an invoke() returning a null future must still settle the bounded "
             + "internal-error fallback with exactly one terminal and one completion event")
     void shouldSettleTheBoundedInternalErrorFallbackWhenInvokeReturnsANullFuture() throws Exception {
         vertx = Vertx.vertx();
@@ -145,7 +145,7 @@ class McpNullInvocationFutureIT {
                 new CorrelationContextFactory(Optional.empty()));
 
         RoutingContext context = mockRoutingContext(vertxContext);
-        // R09: begin() registers the correlation bind scope with RequestContextLifecycle's per-request
+        // begin() registers the correlation bind scope with RequestContextLifecycle's per-request
         // handle; this synthetic RoutingContext has no real ROOT-scoped middleware chain, so the test
         // installs the lifecycle handle itself, exactly as production's HttpVerticle does.
         new RequestContextLifecycle().handle(context);
@@ -159,13 +159,13 @@ class McpNullInvocationFutureIT {
         // before this thread starts.
         Thread releaser = new Thread(
                 () -> decisionPromise.tryComplete(AuthorizationDecision.permit("PERMITTED")),
-                "r33-null-invocation-release");
+                "null-invocation-release");
         releaser.start();
         releaser.join(TimeUnit.SECONDS.toMillis(BOUNDED_AWAIT_SECONDS));
 
         boolean settled = observer.awaitSettlement(BOUNDED_AWAIT_SECONDS, TimeUnit.SECONDS);
         assertThat(settled)
-                .as("RED today (R33 defect 2): prepared.invoke() returning null NPEs inside a "
+                .as("prepared.invoke() returning null NPEs inside a "
                         + "continuation dispatch()'s own try/catch never covers, so neither a response "
                         + "nor a terminal/completion event ever arrives within the bounded await")
                 .isTrue();
@@ -207,14 +207,14 @@ class McpNullInvocationFutureIT {
         return new JsonObject(text.substring(prefix.length(), text.length() - suffix.length()));
     }
 
-    // --- Fixture: the defect-triggering invoker ---
+    // --- Fixture: the invoker whose invoke() returns null ---
 
-    /** A {@link McpToolInvoker} whose prepared call's {@code invoke()} returns {@code null} (R33 defect 2). */
+    /** A {@link McpToolInvoker} whose prepared call's {@code invoke()} returns {@code null}. */
     private static final class NullInvocationToolInvoker implements McpToolInvoker {
         private static final McpToolDescriptor DESCRIPTOR = new McpToolDescriptor(
                 KNOWN_TOOL,
                 null,
-                "R33 defect 2 fixture: invoke() returns a null future.",
+                "Fixture: invoke() returns a null future.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 null,
@@ -235,7 +235,7 @@ class McpNullInvocationFutureIT {
 
                 @Override
                 public Future<McpToolResult<?>> invoke() {
-                    // R33 defect 2: a null return, never a thrown exception or a failed future.
+                    // A null return, never a thrown exception or a failed future.
                     return null;
                 }
             };
@@ -339,7 +339,7 @@ class McpNullInvocationFutureIT {
                                 .put("arguments", new JsonObject()));
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

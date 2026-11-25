@@ -19,15 +19,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-003 — pins the replacement bounded Jackson envelope codec against the final-2026 golden wire
- * fixtures, unchanged since T003.
+ * Pins the bounded Jackson envelope codec against the final-2026 golden wire fixtures.
  *
- * <p>Every valid frame must round-trip byte-identically through the T007 {@link McpEnvelopeJsonCodec}
+ * <p>Every valid frame must round-trip byte-identically through the {@link McpEnvelopeJsonCodec}
  * decode and a canonical encode, and every invalid frame must yield the exact pinned final-spec
  * JSON-RPC error code and message. A one-byte mutation of a valid frame must flip it into a bounded
- * rejection, proving the fixtures are load-bearing rather than incidental. Expected initial result:
- * GREEN — the replacement codec must preserve every wire byte the protocol pins; a mismatch here is a
- * regression in this slice, not an expected red.
+ * rejection, proving the fixtures are load-bearing rather than incidental. The codec must preserve
+ * every wire byte the protocol pins; a mismatch here is a regression.
  */
 class McpGoldenWireTest {
 
@@ -74,7 +72,7 @@ class McpGoldenWireTest {
                     .as("invalid frame echoes exactly the pinned request id: %s", invalid.name())
                     .isEqualTo(invalid.expectedId());
 
-            // P04 remediation (issue W11): McpRequestDispatcher#emitProtocolError now builds the error
+            // McpRequestDispatcher#emitProtocolError builds the error
             // response from the already-decoded Decoded via errorResponseFor, never by re-analyzing the
             // raw bytes a second time through errorResponse(byte[]). This pins errorResponseFor as a
             // byte-identical drop-in for every golden invalid case, so that production switch is provably

@@ -14,15 +14,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Review-finding proof (round-14 remediation, defect #4): {@code McpToolInvokerEmitter} emitted
- * {@code Map.copyOf(normalizedArguments)} for the generated {@code prepare()}'s returned {@code
- * PreparedCall}. Two defects, both proved here through a real generated invoker compiled by the real
+ * Proof that {@code McpToolInvokerEmitter} does not emit {@code Map.copyOf(normalizedArguments)} for
+ * the generated {@code prepare()}'s returned {@code PreparedCall}. Two defects are guarded
+ * against, both proved here through a real generated invoker compiled by the real
  * {@link dev.vertique.codegen.mcp.McpToolProcessor} (never a hand-written stand-in):
  *
  * <ul>
- *   <li>{@code Map.copyOf} throws {@link NullPointerException} on a null value, but INP-001
- *       deliberately preserves an explicit-null {@code Optional<T>} argument all the way through —
- *       so a valid explicit-null call must NPE only if the fix regresses.
+ *   <li>{@code Map.copyOf} throws {@link NullPointerException} on a null value, but input
+ *       normalization deliberately preserves an explicit-null {@code Optional<T>} argument all the way
+ *       through — so a valid explicit-null call would NPE.
  *   <li>{@code Map.copyOf} freezes only the root map; a nested {@code Map}/{@code List} value stays
  *       mutable, violating {@link McpPreparedToolCall#normalizedArguments()}'s deeply-immutable
  *       contract.
@@ -41,14 +41,14 @@ class McpGeneratedNullPreservingImmutableArgumentsTest {
         address.put("zip", "00100");
         Map<String, Object> arguments = new LinkedHashMap<>();
         arguments.put("address", address);
-        // Explicit wire null, not an absent key: INP-001 preserves this exactly, and stage 3
+        // Explicit wire null, not an absent key: input normalization preserves this exactly, and stage 3
         // materializes it to Optional.empty() for the Optional<String> nickname parameter.
         arguments.put("nickname", null);
 
-        // DECISIVE (half 1): pre-fix, building the PreparedCall via Map.copyOf(normalizedArguments)
-        // threw NullPointerException here, even though every earlier stage (schema validation,
+        // DECISIVE (half 1): building the PreparedCall via Map.copyOf(normalizedArguments) would
+        // throw NullPointerException here, even though every earlier stage (schema validation,
         // canonicalization/sanitization, materialization, Bean Validation) already succeeded — the
-        // valid call never reached the application handler at all. Post-fix this must not throw.
+        // valid call would never reach the application handler at all. This must not throw.
         McpPreparedToolCall prepared = fixture.invoker()
                 .prepare(arguments, new McpGeneratedNullPreservingImmutableArgumentsTestFixture.NeverCancelledSignal());
 

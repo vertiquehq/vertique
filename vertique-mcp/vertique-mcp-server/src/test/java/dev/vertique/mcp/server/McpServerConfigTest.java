@@ -67,7 +67,7 @@ class McpServerConfigTest {
     }
 
     /**
-     * R17 — binds the two independently configurable parser-token budgets through the production
+     * Binds the two independently configurable parser-token budgets through the production
      * configuration mapper. The flat property names are deliberate: nested {@code ingress.maxTokens}
      * and {@code output.maxTokens} describe no supported MCP configuration shape and must remain
      * ordinary lenient unknown properties rather than silently configuring either budget.
@@ -128,12 +128,11 @@ class McpServerConfigTest {
     }
 
     /**
-     * R43 — the six implementation-era spellings ({@code requestTimeoutMs}, {@code jsonMaxDepth},
+     * The six implementation-era spellings ({@code requestTimeoutMs}, {@code jsonMaxDepth},
      * {@code jsonMaxPropertiesPerObject}, {@code jsonMaxItemsPerArray}, {@code jsonMaxStringChars},
-     * and {@code toolsListDeadlineMs}) never shipped in any release and carried a one-release
-     * rejection machinery (issue #424, R02 TP-002) that protected an installed base of zero. R43
-     * removed that machinery: every one of these spellings is now an ordinary unrecognized property
-     * that falls into {@link McpServerConfig}'s class-level {@code ignoreUnknown = true}
+     * and {@code toolsListDeadlineMs}) never shipped in any release, so there is no installed base for
+     * a rejection machinery to protect: every one of these spellings is an ordinary unrecognized
+     * property that falls into {@link McpServerConfig}'s class-level {@code ignoreUnknown = true}
      * forward-compatible path exactly like any other unknown key.
      *
      * <p>Every row below is driven through {@link McpServerConfigUnknownKeyTestFixture#configParser()},
@@ -144,7 +143,7 @@ class McpServerConfigTest {
      * loader does with a key it does not recognize, not merely what a test-local mapper would do.
      */
     @Nested
-    @DisplayName("unknown and formerly retired configuration keys (R43)")
+    @DisplayName("unknown and formerly retired configuration keys")
     class UnknownAndFormerlyRetiredKeys {
 
         @ParameterizedTest(name = "{0}")
@@ -346,7 +345,7 @@ class McpServerConfigTest {
     }
 
     /**
-     * Pins the P04 startup liveness gate (issue W1): an enabled mount refuses to start unless at
+     * Pins the startup liveness gate: an enabled mount refuses to start unless at
      * least one {@link HttpConfig} idle/read/write timeout is armed, since MCP relies entirely on
      * that shared bound to ever reclaim a hanging interceptor, tool handler, or non-reading client.
      */
@@ -379,22 +378,20 @@ class McpServerConfigTest {
         }
 
         /**
-         * Repair task R33 defect 4: {@code writeIdleTimeoutSeconds} alone never bounds a client that
+         * {@code writeIdleTimeoutSeconds} alone never bounds a client that
          * opens a connection and then neither reads nor writes again — it fires only while a write is
-         * actually in flight — so it must not, by itself, satisfy the liveness gate. RED today: the
-         * validator's current {@code anyLivenessTimeoutArmed} check ORs in {@code
-         * writeIdleTimeoutSeconds() > 0} unconditionally, so this configuration is wrongly accepted.
+         * actually in flight — so it must not, by itself, satisfy the liveness gate: the validator's
+         * {@code anyLivenessTimeoutArmed} check must not count {@code writeIdleTimeoutSeconds() > 0}.
          */
         @Test
-        @DisplayName("rejects an enabled mount when only HttpConfig.writeIdleTimeoutSeconds is armed (R33 defect 4)")
+        @DisplayName("rejects an enabled mount when only HttpConfig.writeIdleTimeoutSeconds is armed")
         void shouldRejectEnabledMountWithOnlyWriteIdleTimeoutArmed() {
             assertThatThrownBy(() -> validator.validate(
                             enabled(),
                             Set.of(),
                             emptyRegistry,
                             HttpConfig.builder().writeIdleTimeoutSeconds(30).build()))
-                    .as("RED today (R33 defect 4): a write-idle timeout alone must not satisfy the MCP "
-                            + "liveness gate")
+                    .as("a write-idle timeout alone must not satisfy the MCP " + "liveness gate")
                     .isInstanceOf(ConfigurationException.class)
                     .hasMessageContaining("http.idleTimeoutSeconds")
                     .hasMessageContaining("http.readIdleTimeoutSeconds")
@@ -415,8 +412,8 @@ class McpServerConfigTest {
     }
 
     /**
-     * The two liveness timeouts that qualify a mount on their own (R33 defect 4 removed {@code
-     * writeIdleTimeoutSeconds} from this set — see {@code
+     * The two liveness timeouts that qualify a mount on their own ({@code
+     * writeIdleTimeoutSeconds} is not in this set — see {@code
      * shouldRejectEnabledMountWithOnlyWriteIdleTimeoutArmed}).
      */
     private static Stream<Arguments> armedLivenessTimeoutRows() {
@@ -436,7 +433,7 @@ class McpServerConfigTest {
      * fragment, no duplicate separators, no {@code .}/{@code ..} segments, and no whitespace or
      * control characters.
      *
-     * <p><strong>Ruling on the bare {@code /*} mount:</strong> it is accepted. The contract's rule
+     * <p><strong>The bare {@code /*} mount:</strong> it is accepted. The contract's rule
      * enumerates exactly the eight constraints above and none of them requires a named segment; the
      * default column supplies {@code /mcp/*} as a <em>default</em>, not as a shape constraint. A
      * bare {@code /*} is absolute, normalized, literal, and terminated by the sole wildcard, so it
@@ -466,7 +463,7 @@ class McpServerConfigTest {
         }
     }
 
-    // --- Row tables: numeric bounds (W4) ---
+    // --- Row tables: numeric bounds ---
 
     private static Stream<Arguments> acceptedNumericRows() {
         return numericProperties()
@@ -495,11 +492,10 @@ class McpServerConfigTest {
     /**
      * The contract's bounded numeric properties, with the exact ranges the validator enforces.
      *
-     * <p>Repair task R33 defect 3: the three key literals below are the <em>corrected</em> emitted
-     * key names ({@code mcp.outputMaxBytes}, {@code mcp.toolsPageSize}, {@code mcp.toolsTtlMs}) — RED
-     * today, since {@link McpServerConfigValidator} still emits the stale dotted forms ({@code
-     * mcp.output.maxBytes}, {@code mcp.tools.pageSize}, {@code mcp.tools.ttlMs}), which do not
-     * substring-match these corrected literals in {@code shouldRejectValuePastBound}'s {@code
+     * <p>The three key literals below are the emitted key names ({@code mcp.outputMaxBytes}, {@code
+     * mcp.toolsPageSize}, {@code mcp.toolsTtlMs}), not the dotted forms ({@code
+     * mcp.output.maxBytes}, {@code mcp.tools.pageSize}, {@code mcp.tools.ttlMs}), which would not
+     * substring-match these literals in {@code shouldRejectValuePastBound}'s {@code
      * hasMessageContaining(key)} assertion.
      */
     private static Stream<NumericProperty> numericProperties() {
@@ -519,7 +515,7 @@ class McpServerConfigTest {
                         McpServerConfig.McpServerConfigBuilder::requestDeadlineMs));
     }
 
-    // --- Row tables: identity and instructions (W4) ---
+    // --- Row tables: identity and instructions ---
 
     private static Stream<Arguments> acceptedIdentityRows() {
         return Stream.of(
@@ -571,7 +567,7 @@ class McpServerConfigTest {
                         "mcp.authenticationScheme"));
     }
 
-    // --- Row tables: optional authentication (W4) ---
+    // --- Row tables: optional authentication ---
 
     private static Stream<Arguments> acceptedAuthenticationRows() {
         return Stream.of(
@@ -617,7 +613,7 @@ class McpServerConfigTest {
                         Set.of(authHandler("bearer", true))));
     }
 
-    // --- Row tables: mount path (W6) ---
+    // --- Row tables: mount path ---
 
     private static Stream<Arguments> acceptedMountPathRows() {
         return Stream.of(
@@ -650,7 +646,7 @@ class McpServerConfigTest {
                 Arguments.of("a null mount", null));
     }
 
-    /** The six implementation-era spellings R43 stopped rejecting; see {@link UnknownAndFormerlyRetiredKeys}. */
+    /** The six implementation-era spellings that are not rejected; see {@link UnknownAndFormerlyRetiredKeys}. */
     private static Stream<String> formerlyRetiredKeys() {
         return Stream.of(
                 "requestTimeoutMs",
@@ -711,8 +707,8 @@ class McpServerConfigTest {
     }
 
     /**
-     * R43 framework wiring. Builds a raw JSON {@code mcp} section carrying unrecognized property
-     * names — including the six formerly retired spellings (issue #424, R02 TP-002) — alongside a
+     * Framework wiring. Builds a raw JSON {@code mcp} section carrying unrecognized property
+     * names — including the six formerly retired spellings — alongside a
      * valid enabled configuration and the retained bounded properties, and drives every parse
      * through the real {@code dev.vertique.config.parser.DefaultConfigParser} over the real lenient
      * {@code dev.vertique.config.parser.DefaultConfigMapper} — the production configuration mapper —
@@ -727,8 +723,7 @@ class McpServerConfigTest {
 
         /**
          * Creates a lenient {@link ConfigParser} instance for test-side config parsing — the same
-         * production class every other Dagger boundary provider in this framework injects (see
-         * {@code docs/standards/config.md}).
+         * production class every other Dagger boundary provider in this framework injects.
          *
          * @return a {@link DefaultConfigParser} backed by a lenient {@link DefaultConfigMapper}
          */

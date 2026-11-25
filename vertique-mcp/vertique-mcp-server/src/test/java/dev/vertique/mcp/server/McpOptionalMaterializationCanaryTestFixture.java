@@ -21,7 +21,7 @@ import java.util.Set;
 import javax.tools.JavaFileObject;
 
 /**
- * Framework wiring for R03 TP-002 (finding #428): compiles one real, single-parameter
+ * Framework wiring for the optional-materialization canary: compiles one real, single-parameter
  * {@code com.example.optionalprobe.ProbeTools} application source — an {@code Optional<String>} tool
  * parameter, so {@link dev.vertique.codegen.mcp.McpToolInvokerEmitter} emits the generated same-package
  * {@code OptionalProbe} canary and the constructor call to {@code McpToolRuntime
@@ -121,10 +121,10 @@ final class McpOptionalMaterializationCanaryTestFixture {
     /**
      * The real, zero-config default a composed application gets when it configures no JSON profile at
      * all: {@link McpToolRuntimeFactoryTestSupport#factory()}, resolved through {@code
-     * McpJsonProfileResolver}'s real tail. R13 item 2 (issue #440) changed that tail from the reserved
-     * {@code vertx} profile (Vert.x's {@code DatabindCodec}, which registers no {@code Jdk8Module} and
-     * so cannot materialize {@code Optional<T>} correctly) to the built-in {@code vertique} profile,
-     * which does — so this factory is now materialization-capable, unlike before the fix.
+     * McpJsonProfileResolver}'s real tail. That tail is the built-in {@code vertique} profile, which
+     * registers {@code Jdk8Module} — unlike the reserved {@code vertx} profile (Vert.x's {@code
+     * DatabindCodec}), which registers none and so cannot materialize {@code Optional<T>} correctly —
+     * so this factory is materialization-capable.
      *
      * @return a factory bound to the zero-config default profile
      */
@@ -136,8 +136,7 @@ final class McpOptionalMaterializationCanaryTestFixture {
      * An explicitly selected profile whose mapper registers no {@code Jdk8Module} and therefore cannot
      * materialize {@code Optional<T>} correctly, deliberately reached through an MCP-boundary default
      * rather than the zero-config tail — proving the canary still fails startup for a genuinely
-     * incapable profile regardless of which profile the zero-config tail itself resolves to (issue
-     * #440 changed only the tail, not the canary's own contract).
+     * incapable profile regardless of which profile the zero-config tail itself resolves to.
      *
      * @return a factory bound to an explicitly selected, {@code Optional}-incapable profile
      */

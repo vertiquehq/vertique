@@ -26,7 +26,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Issue #406 — the no-scheme admit path must clear an ambient {@link SecurityRuntime} holder
+ * The no-scheme admit path must clear an ambient {@link SecurityRuntime} holder
  * binding so {@code McpRequestDispatcher#establishedSecurity} cannot snapshot a foreign ROOT-
  * middleware identity before MCP identity resolution runs.
  */

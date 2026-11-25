@@ -43,8 +43,8 @@ import java.util.concurrent.TimeUnit;
 import javax.tools.JavaFileObject;
 
 /**
- * Framework wiring for {@link McpGeneratedGenericStructuredOutputIT} (review-finding #5, round-14
- * remediation): compiles one real {@code com.example.notes.NoteTools} application source — two
+ * Framework wiring for {@link McpGeneratedGenericStructuredOutputIT}: compiles one real {@code
+ * com.example.notes.NoteTools} application source — two
  * parameterized tools returning {@code Future<List<Note>>}, where {@code Note} carries a Jakarta
  * Bean Validation {@code @Min} constraint directly on a record component — with the real {@link
  * McpToolProcessor}, loads both resulting generated invokers, and mounts them behind one real

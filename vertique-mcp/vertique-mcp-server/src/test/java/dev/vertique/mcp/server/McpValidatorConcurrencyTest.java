@@ -17,20 +17,20 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T009 TP-003 — one compiled validator set per Vert.x {@link Context}.
+ * One compiled validator set per Vert.x {@link Context}.
  *
  * <p>Given two independently created Vert.x contexts (two independent {@link Vertx} instances, each
  * providing its own context), each composes a fresh {@link McpSchemaRegistry} on its own context
  * from the same two-tool descriptor registry ({@code weather.lookup}, {@code clock.now}). Compiling
  * happens exactly once per context, and both contexts validate the same argument document.
  *
- * <p><strong>Deviation from the task's stated test location:</strong> this class lives in
+ * <p><strong>Location:</strong> this class lives in
  * {@code dev.vertique.mcp.server}, not {@code dev.vertique.mcp.server.runtime}, because
  * {@link McpSchemaRegistry} is package-private per the frozen artifact inventory and is not
  * consumer-facing public API (see {@code McpServerInventoryGuardTest}'s progressive public-surface
  * guard) — package-private access requires the exact same package as the type under test.
  */
-@DisplayName("MCP validator concurrency — T009 TP-003")
+@DisplayName("MCP validator concurrency")
 class McpValidatorConcurrencyTest {
 
     private final Vertx vertxA = Vertx.vertx();

@@ -70,9 +70,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R48 (C1) — red-first, real-transport proof that the {@code tools/call} async-stage chain guards
- * every seam against post-settlement work, not merely the single {@code isCancelled()} check
- * currently placed just ahead of {@code prepared.invoke()} inside {@code invokeAndRespond}.
+ * Real-transport proof that the {@code tools/call} async-stage chain guards every seam against
+ * post-settlement work, not merely the single {@code isCancelled()} check placed just ahead of
+ * {@code prepared.invoke()} inside {@code invokeAndRespond}.
  *
  * <p>Gates the authorization decision for a RESTRICTED tool (the established technique {@code
  * McpToolsListDisconnectIT} already uses on the {@code tools/list} path, reused here on {@code
@@ -81,12 +81,11 @@ import org.junit.jupiter.api.Timeout;
  * settlement deterministically (terminal then completion observed), and only then releases the held
  * decision with a permit — exactly like a slow remote PDP answering after the caller already left.
  *
- * <p>Before this repair, {@code invokeAndRespond} composes SSE selection, the full stage-1..4 input
- * pipeline (schema validation, {@code prepare()}), the binding of the prepared call's arguments for
- * the request view, and the ordered tool-interceptor chain — all of it — strictly before its own
- * first {@code cancellation.isCancelled()} check, so every one of those side effects runs for a
- * request the settlement path already published terminal and completion for. This proof asserts
- * zero of them ever happen — the request view reports no prepared call — and, the seam-order pin,
+ * <p>{@code invokeAndRespond} composes SSE selection, the full stage-1..4 input pipeline (schema
+ * validation, {@code prepare()}), the binding of the prepared call's arguments for the request
+ * view, and the ordered tool-interceptor chain. None of those side effects may run for a request
+ * the settlement path already published terminal and completion for. This proof asserts zero of
+ * them ever happen — the request view reports no prepared call — and, the seam-order pin,
  * that the completion listener's callback remains the last callback the request ever receives,
  * after the lifecycle observer's {@code onCompleted}, exactly as {@code
  * McpToolsListDisconnectIT}/{@code McpDisconnectBeforeInvocationIT} already pin for their own seams.
@@ -136,7 +135,7 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
     }
 
     @Test
-    @DisplayName("R48 C1: a tools/call whose authorization decision settles after the client already "
+    @DisplayName("a tools/call whose authorization decision settles after the client already "
             + "disconnected must produce zero downstream work, and the completion listener must stay "
             + "the final callback")
     void shouldProduceNoDownstreamWorkAndKeepTheListenerLastWhenAuthorizationSettlesAfterDisconnect() throws Exception {
@@ -292,7 +291,7 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R48 C1 fixture tool.",
+                "Disconnect-across-authorization fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,

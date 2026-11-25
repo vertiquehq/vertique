@@ -61,11 +61,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * P04 remediation proof for issues W2 (terminal-event classification) and W4 (the interceptor-
- * rejection writer's output cap), driven through a real port-0 HTTP round trip so the completion
- * coordinator — and therefore lifecycle observation — is genuinely exercised (mock-driven {@code
- * dispatch()} calls bypass {@code begin()} and never construct a coordinator, so they cannot observe
- * a terminal event at all).
+ * Proof of terminal-event classification and of the interceptor-rejection writer's output cap,
+ * driven through a real port-0 HTTP round trip so the completion coordinator — and therefore
+ * lifecycle observation — is genuinely exercised (mock-driven {@code dispatch()} calls bypass {@code
+ * begin()} and never construct a coordinator, so they cannot observe a terminal event at all).
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpInterceptorRejectionContractIT {
@@ -120,7 +119,7 @@ class McpInterceptorRejectionContractIT {
         }
     }
 
-    // --- Row 1 (W2): a tool-interceptor rejection settles as REJECTED/INTERCEPTOR/NONE ---
+    // --- Row 1: a tool-interceptor rejection settles as REJECTED/INTERCEPTOR/NONE ---
 
     private void shouldClassifyAToolInterceptorRejectionAsRejectedInterceptorNone() throws Exception {
         fixture = Fixture.start(vertx, SMALL_OUTPUT_MAX_BYTES, Set.of(), Set.of(new RejectingToolInterceptor()));
@@ -155,7 +154,7 @@ class McpInterceptorRejectionContractIT {
                 .isEqualTo(McpResultType.NONE);
     }
 
-    // --- Row 2 (W4): a request-interceptor rejection whose echoed id would exceed the cap degrades ---
+    // --- Row 2: a request-interceptor rejection whose echoed id would exceed the cap degrades ---
 
     private void shouldBoundAnOverCapRequestInterceptorRejection() throws Exception {
         fixture = Fixture.start(vertx, SMALL_OUTPUT_MAX_BYTES, Set.of(new RejectingRequestInterceptor()), Set.of());
@@ -168,7 +167,7 @@ class McpInterceptorRejectionContractIT {
         HttpResponse<Buffer> response = await(callToolWithId(hugeId));
 
         assertThat(response.body().length())
-                .as("DECISIVE (W4): the interceptor-rejection response must respect mcp.output.maxBytes even "
+                .as("DECISIVE: the interceptor-rejection response must respect mcp.output.maxBytes even "
                         + "when the client-controlled echoed id alone would exceed it")
                 .isLessThanOrEqualTo(SMALL_OUTPUT_MAX_BYTES);
         assertThat(response.bodyAsString())
@@ -320,7 +319,7 @@ class McpInterceptorRejectionContractIT {
             McpToolDescriptor descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "P04 interceptor-rejection fixture tool.",
+                    "Interceptor-rejection fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,

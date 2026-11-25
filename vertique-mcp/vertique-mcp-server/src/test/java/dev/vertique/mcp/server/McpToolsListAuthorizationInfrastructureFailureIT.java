@@ -60,7 +60,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** Proves D008's fail-whole behavior when the shared authorization infrastructure cannot decide. */
+/** Proves the fail-whole behavior when the shared authorization infrastructure cannot decide. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class McpToolsListAuthorizationInfrastructureFailureIT {
 

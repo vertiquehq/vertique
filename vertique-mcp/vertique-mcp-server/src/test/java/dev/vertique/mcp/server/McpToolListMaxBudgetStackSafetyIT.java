@@ -50,14 +50,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Review-finding proof (round-14 remediation, defect #6): {@code McpRequestDispatcher#scan} used to
- * invoke itself recursively inside {@code Future.compose} for every examined candidate. {@link
+ * Stack-safety proof: {@code McpRequestDispatcher#scan} must not invoke itself recursively inside
+ * {@code Future.compose} for every examined candidate. {@link
  * McpServerConfigValidator} bounds {@code mcp.tools.pageSize} at 500, and the fixed examination
- * budget is {@code 4 * pageSize} (issue #416) — so 2,000 is the true maximum number of candidates one
+ * budget is {@code 4 * pageSize} — so 2,000 is the true maximum number of candidates one
  * {@code tools/list} scan can ever examine, and every one of {@link McpAccessMode#DENY_ALL} and
  * {@link McpAccessMode#PERMIT_ALL} resolves through {@code SecurityPolicyEnforcer#decide} with an
  * already-completed {@code Future.succeededFuture(...)} — the exact "decisions that complete
- * immediately" shape that turned the old per-candidate recursion into genuine native call-stack
+ * immediately" shape that would turn a per-candidate recursion into genuine native call-stack
  * recursion up to 2,000 frames deep, with no trampolining guarantee from Vert.x.
  *
  * <p>This fixture configures {@code mcp.tools.pageSize = 500} (the maximum) and registers 2,001
@@ -119,9 +119,9 @@ class McpToolListMaxBudgetStackSafetyIT {
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
 
-        // DECISIVE: pre-fix, this call recursed natively up to 2,000 stack frames deep inside the
-        // synchronous per-candidate branch (every DENY_ALL decision resolves through an
-        // already-completed future); a StackOverflowError there is caught by dispatch()'s outer
+        // DECISIVE: a per-candidate recursion would nest natively up to 2,000 stack frames deep inside
+        // the synchronous per-candidate branch (every DENY_ALL decision resolves through an
+        // already-completed future); a StackOverflowError there would be caught by dispatch()'s outer
         // guard and reported as a 500 internal error, never the correct paginated 200 asserted below.
         HttpResponse<Buffer> response = await(client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")

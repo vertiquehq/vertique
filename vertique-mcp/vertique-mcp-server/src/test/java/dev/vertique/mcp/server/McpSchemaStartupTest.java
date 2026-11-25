@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T010 TP-001 — the frozen registry and startup-validation contract matrix.
+ * The frozen registry and startup-validation contract matrix.
  *
  * <p>Every row composes a server exactly once through {@link McpSchemaStartupTestFixture#compose},
  * which runs the owned production sequence — {@link McpToolRegistry#build}, then
@@ -27,13 +27,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  * both steps succeed. That lets every row observe the actual mounted-route count rather than merely
  * catching an exception, so a row cannot pass by mounting first and failing after.
  *
- * <p><strong>Deviation from the task's stated test location:</strong> this class lives in {@code
- * dev.vertique.mcp.server}, not {@code dev.vertique.mcp.server.runtime}, because {@link
- * McpToolRegistry} and {@link McpServerConfigValidator} are package-private per the frozen artifact
- * inventory and are not consumer-facing public API — package-private access requires the exact same
- * package as the types under test, exactly as {@code McpValidatorConcurrencyTest} recorded for T009.
+ * <p>This class lives in {@code dev.vertique.mcp.server}, not {@code
+ * dev.vertique.mcp.server.runtime}, because {@link McpToolRegistry} and {@link
+ * McpServerConfigValidator} are package-private and are not consumer-facing public API —
+ * package-private access requires the exact same package as the types under test, as {@code
+ * McpValidatorConcurrencyTest} does.
  */
-@DisplayName("MCP tool registry and startup validation — T010 contract matrix")
+@DisplayName("MCP tool registry and startup validation — contract matrix")
 class McpSchemaStartupTest {
 
     private static final String DUPLICATE_NAMES_ROW = "shouldFailBeforeMountForDuplicateToolNames";
@@ -52,7 +52,7 @@ class McpSchemaStartupTest {
         closed.get(5, TimeUnit.SECONDS);
     }
 
-    private static Stream<String> t010ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 DUPLICATE_NAMES_ROW,
                 UNREPRESENTABLE_MAPPING_ROW,
@@ -61,16 +61,16 @@ class McpSchemaStartupTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t010ContractRows")
-    @DisplayName("enforces the T010 contract matrix")
-    void shouldEnforceT010ContractMatrix(String row) {
+    @MethodSource("contractRows")
+    @DisplayName("enforces the contract matrix")
+    void shouldEnforceSchemaStartupContractMatrix(String row) {
         switch (row) {
             case DUPLICATE_NAMES_ROW -> shouldFailBeforeMountForDuplicateToolNames();
             case UNREPRESENTABLE_MAPPING_ROW -> shouldFailBeforeMountForUnrepresentableMappingContract();
             case REGISTRY_VISIBILITY_ROW ->
                 shouldAllowUnconfiguredPublicOrDenyAllRegistryAndRejectUnconfiguredRestrictedRegistry();
             case IMMUTABLE_ORDERED_REGISTRY_ROW -> shouldBuildAnImmutableGlobalNameOrderedRegistry();
-            default -> fail("unknown T010 contract matrix row: " + row);
+            default -> fail("unknown contract matrix row: " + row);
         }
     }
 

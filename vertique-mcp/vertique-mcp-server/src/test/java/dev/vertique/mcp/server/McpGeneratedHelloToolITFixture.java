@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 import javax.tools.JavaFileObject;
 
 /**
- * Framework wiring for {@link McpGeneratedHelloToolIT} (T012 TP-002).
+ * Framework wiring for {@link McpGeneratedHelloToolIT}.
  *
  * <p>Compiles one real {@code com.example.hello.HelloTools} application source with the real {@link
  * McpToolProcessor} through {@link ProcessorTestHarness}, loads the resulting generated {@code

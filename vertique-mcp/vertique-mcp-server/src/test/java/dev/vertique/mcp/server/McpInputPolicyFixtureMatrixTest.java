@@ -20,9 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T015 TP-002 — a fixture matrix over nested records, collections ({@code List<String>}), and maps
+ * A fixture matrix over nested records, collections ({@code List<String>}), and maps
  * ({@code Map<String, String>}) at traversal depths one through four, exercising the same
- * production mechanism {@code McpInputPipelineIT} (TP-001) exercises: {@link
+ * production mechanism {@code McpInputPipelineIT} exercises: {@link
  * InputObjectProcessor#processInput} at {@link InputLocation#PAYLOAD}, the same call
  * {@code PipelineToolInvoker.prepare()} makes on stage 2 of the fixed request-time pipeline for a
  * real generated invoker.
@@ -104,7 +104,7 @@ class McpInputPolicyFixtureMatrixTest {
                 "nested",
                 level2);
 
-        // When: the same call PipelineToolInvoker.prepare() makes on stage 2 of the T015 fixed
+        // When: the same call PipelineToolInvoker.prepare() makes on stage 2 of the fixed
         // pipeline — processInput at InputLocation.PAYLOAD — runs over the whole graph.
         processor.processInput(
                 level1,

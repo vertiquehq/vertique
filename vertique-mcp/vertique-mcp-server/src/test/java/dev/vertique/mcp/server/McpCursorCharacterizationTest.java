@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** T031's fixed characterization of bounded, unsigned cursor decoding. */
+/** A fixed characterization of bounded, unsigned cursor decoding. */
 class McpCursorCharacterizationTest {
 
     private static final String SEED_RESOURCE = "/mcp/characterization/cursor-seeds.jsonl";
@@ -29,7 +29,7 @@ class McpCursorCharacterizationTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("seeds")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    @DisplayName("T031: every fixed cursor seed retains its pinned bounded classification")
+    @DisplayName("every fixed cursor seed retains its pinned bounded classification")
     void shouldClassifyEveryCursorSeedWithinBounds(Seed seed) {
         var fixture = new McpCursorCharacterizationTestFixture();
 

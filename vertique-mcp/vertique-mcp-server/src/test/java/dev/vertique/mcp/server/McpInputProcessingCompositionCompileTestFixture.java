@@ -11,7 +11,7 @@ import java.util.List;
 import javax.tools.JavaFileObject;
 
 /**
- * Framework wiring for {@link McpInputProcessingCompositionCompileTest} (T014 TP-001).
+ * Framework wiring for {@link McpInputProcessingCompositionCompileTest}.
  *
  * <p>Compiles one synthetic {@code dev.vertique.mcp.server} component that includes the real
  * production {@link McpServerModule} with the real Dagger {@link ComponentProcessor} — the same

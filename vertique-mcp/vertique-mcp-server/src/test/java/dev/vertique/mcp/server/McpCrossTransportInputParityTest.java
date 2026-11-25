@@ -12,7 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R03 TP-001 — {@code shouldMatchRestParityOnTheSharedCorpus}, MCP half.
+ * {@code shouldMatchRestParityOnTheSharedCorpus}, MCP half.
  *
  * <p>Runs {@link dev.vertique.input.processing.testkit.CrossTransportInputCorpus#rawInput()} through
  * the real generated MCP stage-2 boundary — {@code prepare()} on a real, compiled generated invoker
@@ -38,17 +38,17 @@ class McpCrossTransportInputParityTest {
         McpCrossTransportInputParityTestFixture fixture = McpCrossTransportInputParityTestFixture.start();
         Map<String, Object> arguments = Map.of("root", CrossTransportInputCorpus.rawInput());
 
-        // When: the real generated stage-2 pipeline (INP-001 canonicalization/sanitization at
+        // When: the real generated stage-2 pipeline (input canonicalization/sanitization at
         // InputLocation.PAYLOAD, then materialization, then Bean Validation) runs via prepare().
         McpPreparedToolCall prepared = fixture.invoker()
                 .prepare(arguments, new McpCrossTransportInputParityTestFixture.NeverCancelledSignal());
 
-        // Then (DECISIVE): the exact post-INP argument tree the real generated invoker produced for the
+        // Then (DECISIVE): the exact post-normalization argument tree the real generated invoker produced for the
         // "root" parameter equals the corpus's shared expected result — not a value this test
         // restates itself, so a regression in either the corpus's transform or the real generated
         // pipeline shows up as a mismatch here, never a vacuous self-agreement.
         assertThat(prepared.normalizedArguments())
-                .as("DECISIVE: the real generated invoker's post-INP argument tree matches the shared corpus")
+                .as("DECISIVE: the real generated invoker's post-normalization argument tree matches the shared corpus")
                 .containsEntry("root", CrossTransportInputCorpus.expectedProcessedInput());
 
         // And: the corpus's transform is non-trivial — every leaf actually changed — so this assertion

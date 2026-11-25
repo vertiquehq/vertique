@@ -66,7 +66,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** T032's fixed characterization of exactly-once settlement across real transport races. */
+/** Fixed characterization of exactly-once settlement across real transport races. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class McpSettlementRaceCharacterizationIT {
 
@@ -81,7 +81,7 @@ public class McpSettlementRaceCharacterizationIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("seeds")
-    @DisplayName("T032: every seeded transport schedule settles terminal then completion exactly once")
+    @DisplayName("every seeded transport schedule settles terminal then completion exactly once")
     void shouldSettleOnceForEverySeededSchedule(Seed seed) throws Exception {
         // Given: one literal schedule and a fresh port-0 server whose tool result is test-controlled.
         try (var fixture = McpSettlementRaceCharacterizationITFixture.start()) {

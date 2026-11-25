@@ -46,7 +46,7 @@ import org.mockito.ArgumentCaptor;
 
 /**
  * Pins the mandatory {@code ttlMs}/{@code cacheScope=private} cache hints — and their canonical byte
- * order — for both {@code server/discover} and {@code tools/list} (§4.7), driving {@link
+ * order — for both {@code server/discover} and {@code tools/list}, driving {@link
  * McpRequestDispatcher#dispatch} directly against a mocked {@link RoutingContext} rather than a real
  * HTTP connection, and comparing raw response bytes rather than a parsed round trip.
  */
@@ -166,7 +166,7 @@ class McpCacheHintsGoldenTest {
         }
 
         /**
-         * Builds the required negotiation headers (R05, issue #429) self-consistent with
+         * Builds the required negotiation headers self-consistent with
          * {@code requestBody}'s own method and {@code _meta.protocolVersion} — this fixture drives
          * cache-hint bytes, not negotiation, so its headers always agree with the body.
          */

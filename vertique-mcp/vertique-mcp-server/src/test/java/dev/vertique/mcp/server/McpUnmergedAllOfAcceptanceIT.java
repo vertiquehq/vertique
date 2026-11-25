@@ -27,11 +27,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * gap-3c89fb8e: an MCP tool-input false-reject defect. When victools cannot consolidate an {@code
+ * An MCP tool-input false-reject defect. When victools cannot consolidate an {@code
  * allOf} whose parts both declare the same property with different schemas — a polymorphic subtype
- * whose discriminator {@code kind} is also a declared property (HJ03's {@code J03AnySub} /
- * {@code J03PlainSub}), or a {@code @JsonUnwrapped} child whose definition provider leaves an
- * {@code allOf} part with the child's own properties (UW2's {@code UW2UnwrappedAlias}) — an
+ * whose discriminator {@code kind} is also a declared property ({@code AnySetterSub} / {@code
+ * PlainSub}), or a {@code @JsonUnwrapped} child whose definition provider leaves an
+ * {@code allOf} part with the child's own properties ({@code UnwrappedAliasShape}) — an
  * unconsolidated {@code allOf} left in the input document lets {@code
  * McpSchemaHardener.closeRecursively} close each part separately with {@code additionalProperties:
  * false}. Every key outside one part then becomes an "additional property" of the other, so a body the
@@ -39,9 +39,8 @@ import org.junit.jupiter.api.Timeout;
  * (in {@code vertique-json-schema}) folds every such {@code allOf} into one flat {@code properties}
  * set before this boundary's schema is published, removing the shape the closure guard targets.
  *
- * <p>Measured rows: for both {@code HJ03} and {@code UW2}, the binder ACCEPTed, REST
- * ACCEPTed, and MCP REJECTed (the pre-fix measurement). The shapes are
- * copied verbatim from the probe harness that took that measurement.
+ * <p>For both the polymorphic-subtype and the unwrapped-alias shape, the binder and the REST gate accept
+ * the body, so the MCP tool-input boundary must accept it too.
  *
  * <p>Each acceptance row proves the fold widens acceptance to match the binder/REST gate; each control
  * row proves a rejection the fold must never widen away — a wrong-typed value, an over-long alias, a
@@ -83,14 +82,14 @@ class McpUnmergedAllOfAcceptanceIT {
     }
 
     @Test
-    @DisplayName("HJ03: the any-branch's valid body is accepted (the folded branch carries 'name'/'x'"
+    @DisplayName("Polymorphic subtype: the any-branch's valid body is accepted (the folded branch carries 'name'/'x'"
             + " in its own flat properties set, so they are never rejected as additional properties of"
-            + " J03PlainSub's sibling branch)")
-    void hj03AnyBranchValidBodyIsAccepted() throws Exception {
+            + " PlainSub's sibling branch)")
+    void polymorphicAnyBranchValidBodyIsAccepted() throws Exception {
         startServer();
 
         assertAccepted(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject()
                         .put("label", "l")
                         .put(
@@ -99,37 +98,37 @@ class McpUnmergedAllOfAcceptanceIT {
                                         .put("kind", "any")
                                         .put("name", "a")
                                         .put("x", "1")),
-                "HJ03: binder ACCEPT, REST ACCEPT,"
+                "Polymorphic subtype: binder ACCEPT, REST ACCEPT,"
                         + " but the MCP hardener closes each unmerged allOf part separately, so 'name' and 'x'"
-                        + " — properties of J03AnySub's part only — are rejected as additional properties of"
-                        + " J03PlainSub's part");
+                        + " — properties of AnySetterSub's part only — are rejected as additional properties of"
+                        + " PlainSub's part");
     }
 
     @Test
-    @DisplayName("HJ03: the plain-branch's valid body is accepted ('other' is folded into"
-            + " J03PlainSub's own flat properties set, not rejected as an additional property of"
-            + " J03AnySub's sibling branch; control row)")
-    void hj03PlainBranchValidBodyIsAccepted() throws Exception {
+    @DisplayName("Polymorphic subtype: the plain-branch's valid body is accepted ('other' is folded into"
+            + " PlainSub's own flat properties set, not rejected as an additional property of"
+            + " AnySetterSub's sibling branch; control row)")
+    void polymorphicPlainBranchValidBodyIsAccepted() throws Exception {
         startServer();
 
         assertAccepted(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject()
                         .put("label", "l")
                         .put("value", new JsonObject().put("kind", "plain").put("other", "x")),
-                "HJ03 plain branch: 'other' is a property of J03PlainSub's part only; under the same"
+                "Polymorphic plain branch: 'other' is a property of PlainSub's part only; under the same"
                         + " unmerged-allOf closure that rejects the any branch, it must be rejected as an"
-                        + " additional property of J03AnySub's part");
+                        + " additional property of AnySetterSub's part");
     }
 
     @Test
-    @DisplayName("HJ03: a wrong-typed extra on the any branch stays INPUT_VALIDATION (control: rejected"
+    @DisplayName("Polymorphic subtype: a wrong-typed extra on the any branch stays INPUT_VALIDATION (control: rejected"
             + " independent of the allOf-fold behavior)")
-    void hj03WrongTypedExtraStaysRejected() throws Exception {
+    void polymorphicWrongTypedExtraStaysRejected() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject()
                         .put("label", "l")
                         .put(
@@ -138,36 +137,36 @@ class McpUnmergedAllOfAcceptanceIT {
                                         .put("kind", "any")
                                         .put("name", "a")
                                         .put("x", 1)),
-                "CONTROL: 'x' is J03AnySub's String-valued any-setter extra; the number 1 must be"
+                "CONTROL: 'x' is AnySetterSub's String-valued any-setter extra; the number 1 must be"
                         + " rejected against its String type (a 'type' keyword failure), independent of the"
                         + " allOf-fold fix — a fix that widens acceptance must not also widen this rejection"
                         + " away");
     }
 
     @Test
-    @DisplayName("UW2: the unwrapped alias's valid body is accepted ('nm' — the unwrapped child's"
+    @DisplayName("Unwrapped alias: a valid body is accepted ('nm' — the unwrapped child's"
             + " alias — is folded into the parent's own flat properties set, not rejected as an"
             + " additional property of the child's own allOf part)")
-    void uw2ValidBodyIsAccepted() throws Exception {
+    void unwrappedValidBodyIsAccepted() throws Exception {
         startServer();
 
         assertAccepted(
-                McpUnmergedAllOfAcceptanceITFixture.UW2_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.UNWRAPPED_TOOL,
                 new JsonObject().put("label", "l").put("nm", "ab"),
-                "UW2: binder ACCEPT, REST ACCEPT,"
+                "Unwrapped alias: binder ACCEPT, REST ACCEPT,"
                         + " but the MCP hardener closes each unmerged allOf part separately, so 'nm' — the"
                         + " unwrapped child's alias, published on the child's own allOf part — is rejected as"
                         + " an additional property of the parent's part");
     }
 
     @Test
-    @DisplayName("UW2: an over-long alias value stays INPUT_VALIDATION (control: rejected independent"
+    @DisplayName("Unwrapped alias: an over-long alias value stays INPUT_VALIDATION (control: rejected independent"
             + " of the allOf-fold behavior)")
-    void uw2OverLongAliasStaysRejected() throws Exception {
+    void unwrappedOverLongAliasStaysRejected() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpUnmergedAllOfAcceptanceITFixture.UW2_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.UNWRAPPED_TOOL,
                 new JsonObject().put("label", "l").put("nm", "TOOLONG"),
                 "CONTROL: 'nm' carries the unwrapped child's own @Size(max = 3); a 7-character value must"
                         + " be rejected against its maxLength: 3 (a 'maxLength' keyword failure), independent"
@@ -179,14 +178,14 @@ class McpUnmergedAllOfAcceptanceIT {
     // closure still forbids ---
 
     @Test
-    @DisplayName("HJ03: kind=\"plain\" with the any branch's own keys is rejected (the discriminator's"
+    @DisplayName("Polymorphic subtype: kind=\"plain\" with the any branch's own keys is rejected (the discriminator's"
             + " const still gates the branch; the any branch's keys are not accepted under"
             + " kind: \"plain\")")
-    void hj03PlainKindWithAnyBranchKeysIsRejected() throws Exception {
+    void polymorphicPlainKindWithAnyBranchKeysIsRejected() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject()
                         .put("label", "l")
                         .put(
@@ -195,20 +194,20 @@ class McpUnmergedAllOfAcceptanceIT {
                                         .put("kind", "plain")
                                         .put("name", "a")
                                         .put("x", "1")),
-                "CONTROL: kind=\"plain\" selects J03PlainSub's branch alone (const gates it); 'name' and"
-                        + " 'x' are J03AnySub's own keys and must be rejected as additional properties of"
+                "CONTROL: kind=\"plain\" selects PlainSub's branch alone (const gates it); 'name' and"
+                        + " 'x' are AnySetterSub's own keys and must be rejected as additional properties of"
                         + " the closed plain branch — folding must never let one branch's keys leak into a"
                         + " sibling branch's acceptance");
     }
 
     @Test
-    @DisplayName("HJ03: an unrecognized key on the plain branch is rejected (the plain subtype's own"
+    @DisplayName("Polymorphic subtype: an unrecognized key on the plain branch is rejected (the plain subtype's own"
             + " closure is unaffected by folding)")
-    void hj03PlainBranchUnknownKeyIsRejected() throws Exception {
+    void polymorphicPlainBranchUnknownKeyIsRejected() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject()
                         .put("label", "l")
                         .put(
@@ -217,17 +216,17 @@ class McpUnmergedAllOfAcceptanceIT {
                                         .put("kind", "plain")
                                         .put("other", "x")
                                         .put("zzz", "1")),
-                "CONTROL: J03PlainSub has no any-setter, so its folded branch is closed"
+                "CONTROL: PlainSub has no any-setter, so its folded branch is closed"
                         + " (additionalProperties: false); an unrecognized key 'zzz' must still be rejected");
     }
 
     @Test
-    @DisplayName("UW2: a body naming the unwrapped child's own reserved key is rejected (propertyNames)")
-    void uw2InnerKeyIsRejected() throws Exception {
+    @DisplayName("Unwrapped alias: a body naming the unwrapped child's own reserved key is rejected (propertyNames)")
+    void unwrappedInnerKeyIsRejected() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpUnmergedAllOfAcceptanceITFixture.UW2_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.UNWRAPPED_TOOL,
                 new JsonObject().put("label", "l").put("inner", new JsonObject().put("name", "ab")),
                 "CONTROL: propertyNames excludes 'inner' — the unwrapped child's own container key must"
                         + " never be an addressable key at the flattened parent level, independent of the"
@@ -235,26 +234,26 @@ class McpUnmergedAllOfAcceptanceIT {
     }
 
     @Test
-    @DisplayName("HJ03: a wrong-typed value is rejected (type)")
-    void hj03WrongTypedValueIsRejected() throws Exception {
+    @DisplayName("Polymorphic subtype: a wrong-typed value is rejected (type)")
+    void polymorphicWrongTypedValueIsRejected() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject().put("label", "l").put("value", 42),
                 "CONTROL: 'value' must be an object under every anyOf branch; a number must be rejected"
                         + " by 'type', independent of the allOf-fold behavior");
     }
 
     @Test
-    @DisplayName("HJ03: the any-branch's accepted body materializes through the folded schema without"
+    @DisplayName("Polymorphic subtype: the any-branch's accepted body materializes through the folded schema without"
             + " corrupting the discriminator")
-    void hj03AnyBranchAcceptedBodyMaterializesCleanly() throws Exception {
+    void polymorphicAnyBranchAcceptedBodyMaterializesCleanly() throws Exception {
         startServer();
-        CountingToolInvoker<?> tool = fixture.tool(McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL);
+        CountingToolInvoker<?> tool = fixture.tool(McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL);
 
         HttpResponse<Buffer> response = await(callTool(
-                McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL,
+                McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL,
                 new JsonObject()
                         .put("label", "l")
                         .put(
@@ -275,13 +274,13 @@ class McpUnmergedAllOfAcceptanceIT {
     }
 
     @Test
-    @DisplayName("HJ03: the published value schema folds each subtype branch into one flat properties"
+    @DisplayName("Polymorphic subtype: the published value schema folds each subtype branch into one flat properties"
             + " set, with 'kind' present once per branch and no unmerged allOf left inside it")
-    void hj03PublishedValueSchemaIsFlatPerBranch() throws Exception {
+    void polymorphicPublishedValueSchemaIsFlatPerBranch() throws Exception {
         startServer();
 
         JsonNode schema = new ObjectMapper()
-                .readTree(fixture.tool(McpUnmergedAllOfAcceptanceITFixture.HJ03_TOOL)
+                .readTree(fixture.tool(McpUnmergedAllOfAcceptanceITFixture.POLYMORPHIC_TOOL)
                         .inputSchema());
         JsonNode branches = schema.at("/properties/payload/properties/value/anyOf");
 

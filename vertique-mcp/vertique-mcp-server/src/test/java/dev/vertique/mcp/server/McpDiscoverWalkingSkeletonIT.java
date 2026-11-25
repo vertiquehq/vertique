@@ -70,7 +70,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T001 discovery contract matrix through the real plain Vert.x MCP mount.
+ * Exercises the discovery contract matrix through the real plain Vert.x MCP mount.
  *
  * <p>Each row drives one final-2026 {@code server/discover} request against a port-0 mount that has
  * no registered tools, an optional bearer capability, and a recording lifecycle observer. The rows
@@ -118,7 +118,7 @@ public class McpDiscoverWalkingSkeletonIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t001ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 ABSENT_CREDENTIALS_ROW,
                 VALID_CREDENTIALS_ROW,
@@ -156,9 +156,9 @@ public class McpDiscoverWalkingSkeletonIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t001ContractRows")
-    @DisplayName("T001 discovery matrix: absent, valid, and tampered credentials")
-    void shouldEnforceT001ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("discovery matrix: absent, valid, and tampered credentials")
+    void shouldEnforceDiscoveryContractMatrix(String row) throws Exception {
         fixture = McpWalkingSkeletonFixture.start(vertx);
         server = fixture.server();
         rawClient = vertx.createHttpClient();
@@ -275,10 +275,10 @@ public class McpDiscoverWalkingSkeletonIT {
             }
             case PARAMLESS_DISCOVER_ROW -> {
                 // Given: a server/discover frame that omits the schema-required params (protocol
-                // version + client capabilities). Discovery now flows through the one strict-codec
+                // version + client capabilities). Discovery flows through the one strict-codec
                 // envelope authority, so a paramless frame is an -32600 Invalid Request at HTTP 400 —
-                // it is no longer admitted as a discovery result. Against pre-fix HEAD this returned
-                // 200, so this row is the inverse proof guarding the enforcement.
+                // it is not admitted as a discovery result. This row is the inverse proof guarding
+                // the enforcement.
                 JsonObject paramlessDiscover =
                         new JsonObject().put("jsonrpc", "2.0").put("id", 1).put("method", "server/discover");
                 HttpResponse<Buffer> response = await(request.sendBuffer(paramlessDiscover.toBuffer()));
@@ -294,7 +294,7 @@ public class McpDiscoverWalkingSkeletonIT {
                 assertThat(completed.terminal().httpStatus()).isEqualTo(400);
                 assertThat(completed.terminal().errorType()).isEqualTo(McpErrorType.PROTOCOL);
             }
-            default -> fail("unknown T001 contract row: " + row);
+            default -> fail("unknown contract row: " + row);
         }
     }
 
@@ -316,10 +316,10 @@ public class McpDiscoverWalkingSkeletonIT {
                                 .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
     }
 
-    /** Asserts the mount leaks no {@code x-mcp-*} response header, which Phase 1 never emits. */
+    /** Asserts the mount leaks no {@code x-mcp-*} response header, which the mount never emits. */
     private static void assertNoMcpHeaders(HttpResponse<Buffer> response) {
         assertThat(response.headers().names())
-                .as("Phase 1 emits no x-mcp-* response header")
+                .as("the mount emits no x-mcp-* response header")
                 .noneMatch(name -> name.toLowerCase(Locale.ROOT).startsWith("x-mcp-"));
     }
 

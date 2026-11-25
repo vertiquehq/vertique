@@ -103,8 +103,8 @@ class McpCallbackStackOverflowIsolationIT {
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
     private static final String SSE_PREFIX = "event: message\ndata: ";
-    private static final String TOOL_NAME = "r13.callback.soe.tool";
-    private static final String SOE_MESSAGE = "r13: deliberate native-recursion proof";
+    private static final String TOOL_NAME = "callback.soe.tool";
+    private static final String SOE_MESSAGE = "deliberate native-recursion proof";
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -157,12 +157,11 @@ class McpCallbackStackOverflowIsolationIT {
 
         HttpResponse<Buffer> response = await(callTool(1));
 
-        // DECISIVE: before the fix (confirmed by mutation), a StackOverflowError escaping
-        // interceptor.beforeRequest's RuntimeException-only catch propagated synchronously out of
-        // dispatch() itself, past this class's own bounded settlement path entirely, to Vert.x's
-        // generic router-level failure handler — an unbounded, unaudited 500 carrying no
-        // McpRequestTerminalEvent at all, not the bounded, terminal-event-emitting 403 this class
-        // produces for every other interceptor rejection.
+        // DECISIVE: a StackOverflowError escaping interceptor.beforeRequest must not propagate
+        // synchronously out of dispatch() itself, past this class's own bounded settlement path, to
+        // Vert.x's generic router-level failure handler — that would produce an unbounded, unaudited 500
+        // carrying no McpRequestTerminalEvent at all, instead of the bounded, terminal-event-emitting 403
+        // this class produces for every other interceptor rejection.
         assertThat(response.statusCode())
                 .as("DECISIVE: a StackOverflowError from beforeRequest must settle through this class's own "
                         + "bounded interceptor-rejected response, never escape to a generic unaudited 500")
@@ -312,7 +311,7 @@ class McpCallbackStackOverflowIsolationIT {
         return new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R13 callback StackOverflowError isolation fixture tool.",
+                "Callback StackOverflowError isolation fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 null,

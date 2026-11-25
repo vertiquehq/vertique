@@ -29,18 +29,18 @@ class McpProtocolSchemaValidatorTest {
     private static final ObjectMapper CONVERTER = JsonMapper.builder().build();
     private static final JsonSchemaOptions SENSITIVITY_SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
-            .setBaseUri("https://vertique.test/r15-sensitivity/")
+            .setBaseUri("https://vertique.test/sensitivity/")
             .setOutputFormat(OutputFormat.Basic);
 
     /**
-     * R15 TP-003. The first assertion drives the production validator, which loads and compiles the
+     * The first assertion drives the production validator, which loads and compiles the
      * packaged official schema. The second assertion is a sensitivity control: it mutates that same
      * packaged document in memory to accept a scalar and proves the corresponding compiled validator
      * would accept the request. Therefore, weakening the packaged constraint makes the first assertion
      * red; this is not a second hand-authored schema that can drift independently.
      */
     @Test
-    @DisplayName("R15: the pinned tools/call schema rejects scalar arguments and detects a weakening mutation")
+    @DisplayName("the pinned tools/call schema rejects scalar arguments and detects a weakening mutation")
     void shouldCompileThePinnedOfficialMethodSchemasWithoutMutation() {
         JsonNode scalarArguments = nonObjectArguments();
 

@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T014 TP-001 — every {@code McpServerModule} composition requires a direct, non-{@code Optional}
+ * Every {@code McpServerModule} composition requires a direct, non-{@code Optional}
  * {@code InputObjectProcessor} binding; a composition that omits one fails Dagger compilation with
  * exactly one missing-binding diagnostic naming it.
  */

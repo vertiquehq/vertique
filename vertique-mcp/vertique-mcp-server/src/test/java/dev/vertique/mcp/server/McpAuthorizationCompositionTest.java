@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Proves that one production Dagger graph shares exactly one {@link SecurityPolicyEnforcer}
- * singleton between the REST {@link AuthorizationContributor} and {@link McpPolicyEnforcer} (T005 TP-003).
+ * singleton between the REST {@link AuthorizationContributor} and {@link McpPolicyEnforcer}.
  *
  * <p>Given a real Dagger graph combining {@code AuthModule} + {@code SecurityModule} (the REST
  * security modules), {@code McpServerModule} (the MCP server module), and an app-provided

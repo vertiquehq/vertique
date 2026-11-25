@@ -26,11 +26,11 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Independent anti-drift proof for the shared, byte-pinned R18 JSONL artifact. */
+/** Independent anti-drift proof for the shared, byte-pinned JSONL artifact. */
 class McpJsonTokenCorpusTest {
 
     private static final int DEFAULT_TOKENS = 65_536;
-    private static final String CORPUS_SHA_256 = "2e7e884c2b1794b3e3db2b56b40db0f50eef23569cf4a6bd24b01ff0c7672bde";
+    private static final String CORPUS_SHA_256 = "e7a95d6a4035e4278420d76ae6c51f4c7360381c8b03c9b0918e4b6e8cb73d13";
     private static final Set<String> REQUIRED_RELEASED_SHAPE_IDS = Set.of(
             "audit-overlay-authorization-denial-result",
             "audit-overlay-tool-error-request",
@@ -118,7 +118,7 @@ class McpJsonTokenCorpusTest {
             Map.entry("audit-overlay-authorization-denial-result", 1L));
 
     @Test
-    @DisplayName("T036: the finalized corpus digest contains every released shape exactly once")
+    @DisplayName("the finalized corpus digest contains every released shape exactly once")
     void shouldMatchFinalRecordedDigestAndContainEveryReleasedShape() {
         var rows = McpJsonTokenCorpus.rows();
         assertAll(
@@ -165,7 +165,7 @@ class McpJsonTokenCorpusTest {
                                 assertThat(row.consumers()).contains(McpJsonTokenCorpus.INGRESS_INTEGRATION_CONSUMER);
                             });
                     assertThat(McpJsonTokenCorpus.outputNormalizationRows())
-                            .as("R19 output boundaries select the same shared loader/artifact")
+                            .as("output boundaries select the same shared loader/artifact")
                             .hasSize(7)
                             .allSatisfy(row -> assertThat(row.consumers())
                                     .contains(McpJsonTokenCorpus.OUTPUT_NORMALIZATION_CONSUMER));
@@ -183,7 +183,7 @@ class McpJsonTokenCorpusTest {
     }
 
     @Test
-    @DisplayName("R19: every shared JSON shape fitting the configured defaults reaches both production consumers")
+    @DisplayName("every shared JSON shape fitting the configured defaults reaches both production consumers")
     void shouldFitEveryCorpusShapeWithinBothConfiguredDefaults() {
         McpEnvelopeJsonCodec ingress = new McpEnvelopeJsonCodec(
                 HttpConfig.builder().maxBodySize(2_097_152).build(), DEFAULT_TOKENS);
@@ -201,7 +201,7 @@ class McpJsonTokenCorpusTest {
     }
 
     @Test
-    @DisplayName("R19: output normalization preserves pinned finite numbers and rejects non-finite Java values")
+    @DisplayName("output normalization preserves pinned finite numbers and rejects non-finite Java values")
     void shouldPreserveNumericFidelityAcrossOutputNormalization() {
         McpJsonTokenCorpus.Row numericRow = McpJsonTokenCorpus.outputNormalizationRows().stream()
                 .filter(row -> row.id().equals("output-numeric-fidelity"))

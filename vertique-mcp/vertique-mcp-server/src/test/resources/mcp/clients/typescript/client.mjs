@@ -52,7 +52,7 @@ const authProvider = tokens[scenario]
   ? { token: async () => tokens[scenario] }
   : undefined;
 const client = new Client(
-  { name: "vertique-t028-client", version: "1.0.0" },
+  { name: "vertique-typescript-client", version: "1.0.0" },
   { versionNegotiation: { mode: { pin: "2026-07-28" } } },
 );
 const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
@@ -97,4 +97,4 @@ try {
   await client.close();
 }
 
-console.log(`T028_RESULT=${JSON.stringify(report)}`);
+console.log(`TYPESCRIPT_CLIENT_RESULT=${JSON.stringify(report)}`);

@@ -57,12 +57,12 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 /**
- * T017 TP-001 — the frozen tool-interceptor SPI and post-validation, pre-invocation stage contract
+ * The frozen tool-interceptor SPI and post-validation, pre-invocation stage contract
  * matrix.
  *
  * <p>Every row drives {@link McpRequestDispatcher#dispatch} directly against a mocked {@link
  * RoutingContext} carrying a valid zero-argument {@code tools/call} request for one fixture tool —
- * mirroring {@link McpRequestInterceptorPipelineTest}'s T016 driving style — and observes the exact
+ * mirroring {@link McpRequestInterceptorPipelineTest}'s driving style — and observes the exact
  * SSE-framed {@code CallToolResult}, the generated invocation counter, and a single shared ordered
  * list every fixture participant appends to. That one list is the decisive ordering proof: it
  * records {@code "validation"} from the fixture invoker's {@code prepare()} (standing in for the
@@ -72,7 +72,7 @@ import org.mockito.ArgumentCaptor;
  * independent assertions that "validation happened" and "the guard ran" could not detect the guard
  * running out of place.
  */
-@DisplayName("MCP tool interceptor SPI and post-validation stage — T017 contract matrix")
+@DisplayName("MCP tool interceptor SPI and post-validation stage — contract matrix")
 class McpToolInterceptorPipelineTest {
 
     private static final String ZERO_INTERCEPTORS_ROW = "shouldInvokeWithZeroToolInterceptors";
@@ -81,7 +81,7 @@ class McpToolInterceptorPipelineTest {
     private static final String FAIL_CLOSED_ROW = "shouldFailClosedOnThrowNullFutureAndFailedFuture";
     private static final String NO_RAW_ARGUMENTS_ROW = "shouldExposeNoRawArgumentsToTheGuard";
 
-    private static Stream<String> t017ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 ZERO_INTERCEPTORS_ROW,
                 AFTER_VALIDATION_ROW,
@@ -91,16 +91,16 @@ class McpToolInterceptorPipelineTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t017ContractRows")
-    @DisplayName("enforces the T017 contract matrix")
-    void shouldEnforceT017ContractMatrix(String row) {
+    @MethodSource("contractRows")
+    @DisplayName("enforces the contract matrix")
+    void shouldEnforceContractMatrix(String row) {
         switch (row) {
             case ZERO_INTERCEPTORS_ROW -> shouldInvokeWithZeroToolInterceptors();
             case AFTER_VALIDATION_ROW -> shouldRunToolInterceptorsAfterValidation();
             case REJECT_STOPS_INVOCATION_ROW -> shouldRejectWithoutInvokingTheGeneratedInvoker();
             case FAIL_CLOSED_ROW -> shouldFailClosedOnThrowNullFutureAndFailedFuture();
             case NO_RAW_ARGUMENTS_ROW -> shouldExposeNoRawArgumentsToTheGuard();
-            default -> fail("unknown T017 contract matrix row: " + row);
+            default -> fail("unknown contract matrix row: " + row);
         }
     }
 
@@ -292,7 +292,7 @@ class McpToolInterceptorPipelineTest {
                 .containsExactly("request", "tool");
     }
 
-    /** Framework wiring for the T017 matrix: dispatcher construction and driving, nothing decisive. */
+    /** Framework wiring for the matrix: dispatcher construction and driving, nothing decisive. */
     private static final class McpToolInterceptorPipelineTestFixture {
 
         private McpToolInterceptorPipelineTestFixture() {}
@@ -302,7 +302,7 @@ class McpToolInterceptorPipelineTest {
          * registered fixture tool, exactly like production Dagger composition does through {@code
          * McpServerModule}'s {@code @Multibinds Set<McpToolInterceptor>}. The mocked {@link
          * McpPolicyEnforcer} unconditionally permits, isolating this matrix from the authorization
-         * stage T017 sits after.
+         * stage the tool-interceptor stage sits after.
          */
         static McpRequestDispatcher buildDispatcher(Set<McpToolInterceptor> toolInterceptors, McpToolInvoker invoker) {
             SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
@@ -393,7 +393,7 @@ class McpToolInterceptorPipelineTest {
                     .getBytes();
         }
 
-        /** The negotiation headers (R05, issue #429) self-consistent with {@link #toolCallRequestBody}. */
+        /** The negotiation headers self-consistent with {@link #toolCallRequestBody}. */
         private static io.vertx.core.MultiMap negotiationHeaders(String toolName) {
             io.vertx.core.MultiMap headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
             headers.set("MCP-Protocol-Version", PROTOCOL_VERSION);
@@ -414,11 +414,12 @@ class McpToolInterceptorPipelineTest {
         }
 
         /**
-         * Stands in for one {@code @McpTool}-generated invoker (T012/T015's frozen shape). {@code
+         * Stands in for one {@code @McpTool}-generated invoker (the frozen generated shape). {@code
          * prepare()} records {@code "validation"} — standing in for the stage 2-4 pipeline, including
          * Bean Validation, that a real generated invoker already ran before returning — and {@code
          * invoke()} records {@code "invoke"} and increments the shared counter, standing in for the
-         * generated invocation T017's stage must never reach ahead of a permitting guard chain.
+         * generated invocation the tool-interceptor stage must never reach ahead of a permitting
+         * guard chain.
          */
         static final class GuardedFixtureInvoker implements McpToolInvoker {
             static final String TOOL_NAME = "guarded.fixture.tool";
@@ -431,7 +432,7 @@ class McpToolInterceptorPipelineTest {
                 this.descriptor = new McpToolDescriptor(
                         TOOL_NAME,
                         null,
-                        "T017 TP-001 fixture tool.",
+                        "Tool-interceptor fixture tool.",
                         new McpToolAnnotations(true, false, true, false),
                         "{\"type\":\"object\",\"additionalProperties\":false}",
                         null,
@@ -596,7 +597,7 @@ class McpToolInterceptorPipelineTest {
         }
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

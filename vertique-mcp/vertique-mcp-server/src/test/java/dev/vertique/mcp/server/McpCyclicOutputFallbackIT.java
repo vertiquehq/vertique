@@ -49,13 +49,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * P04 remediation proof for issue W6 — a cyclic structured result must degrade to the bounded
- * internal-error fallback, not silently strand the request. Before the fix, stage 7
- * ran unguarded inside {@code invokeAndRespond}'s {@code result.onComplete} handler: an exception
- * escaping {@code normalizeStructuredContent}'s {@code convertValue} call (or a native-recursion
- * {@code StackOverflowError}) after SSE was already selected — before {@code beginWrite} was ever
- * called — left no response, no terminal, and no completion, and (per the W1 finding) no deadline to
- * ever reclaim it.
+ * Proof that a cyclic structured result degrades to the bounded internal-error fallback and does not
+ * silently strand the request. Stage 7 runs inside {@code invokeAndRespond}'s {@code
+ * result.onComplete} handler, so an exception escaping {@code normalizeStructuredContent}'s {@code
+ * convertValue} call (or a native-recursion {@code StackOverflowError}) after SSE was already selected
+ * — before {@code beginWrite} was ever called — must not leave no response, no terminal, no completion,
+ * and no deadline to ever reclaim it.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpCyclicOutputFallbackIT {
@@ -101,9 +100,9 @@ class McpCyclicOutputFallbackIT {
         HttpResponse<Buffer> response = await(callTool(1));
 
         // DECISIVE: the request must settle — a real HTTP response within the test's bounded await,
-        // not a hang. Before the fix, the exception normalizeStructuredContent throws for a
-        // self-referential value escapes result.onComplete before beginWrite is ever called, and this
-        // await would time out instead.
+        // not a hang. The exception normalizeStructuredContent throws for a
+        // self-referential value must not escape result.onComplete before beginWrite is ever called,
+        // which would make this await time out instead.
         assertThat(response.statusCode())
                 .as("DECISIVE: a cyclic structured result must degrade to a bounded response, never hang")
                 .isEqualTo(500);
@@ -226,7 +225,7 @@ class McpCyclicOutputFallbackIT {
             McpToolDescriptor descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "W6 cyclic-output fixture tool.",
+                    "Cyclic-output fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,
