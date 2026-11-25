@@ -433,6 +433,12 @@ public class JaxRsRouteRegistrar {
 
         ResourceScanner scanner = new ResourceScanner(new SecurityPolicyBuilder());
         RequiresActionResolver requiresActionResolver = new RequiresActionResolver();
+        // The document level: an application's declaring interface's @OpenAPIDefinition(security),
+        // read and shape-checked once; every operation without its own requirement inherits it.
+        SecuritySchemeAnnotationScanner.DocumentSecurity document = declaringType != null
+                ? SecuritySchemeAnnotationScanner.documentSecurity(
+                        declaringType, mount != null ? mount.applicationName() : declaringType.getName())
+                : SecuritySchemeAnnotationScanner.DocumentSecurity.NONE;
 
         // Phase 1 — scan every resource, accumulating all discovered methods (and any security-policy
         // scan violations) before any route is registered. Scanning is decoupled from registration so
@@ -489,7 +495,8 @@ public class JaxRsRouteRegistrar {
             // The descriptor reports the application name of the mount being registered, or null when
             // the caller passes no mount. The invoker built below receives this same instance.
             String applicationName = mount != null ? mount.applicationName() : null;
-            JaxRsOperationDescriptor descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta, applicationName);
+            JaxRsOperationDescriptor descriptor =
+                    ResourceMethodMetaToDescriptorAdapter.adapt(meta, applicationName, document);
 
             // Fail-fast startup validation. Every declared parameter whose runtime
             // extraction uses string conversion must be resolvable by the FULL conversion chain (native

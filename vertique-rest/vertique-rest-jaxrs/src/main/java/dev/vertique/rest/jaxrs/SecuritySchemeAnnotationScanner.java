@@ -6,10 +6,13 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.routing.SecurityRequirement;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -52,15 +55,20 @@ import java.util.List;
  * requires exactly one). The scanner throws {@link RestConfigurationException} naming the operationId
  * rather than silently dropping the requirement, which would let a secured operation mount public.
  *
+ * <p><strong>Document level.</strong> An application's {@code @RestApplication} declaring interface
+ * is its document: {@code @OpenAPIDefinition(security = ...)} on it applies to every operation the
+ * application mounts that declares no requirement at the method or class level ({@link
+ * #documentSecurity}). An {@code @OpenAPIDefinition} with a non-empty {@code security} reached through
+ * a resource class's own hierarchy is refused, because the runtime would not honour it there.
+ *
  * <p><strong>Absent vs empty {@code security = {}}:</strong> {@link Operation#security()} defaults to
  * an empty array, so reflection cannot distinguish a developer who wrote {@code security = {}} from
- * one who omitted {@code security} entirely — both surface as a zero-length array. This scanner
- * therefore treats an {@code @Operation} that contributes no named requirement at the method level as
- * "no method-level requirement from {@code @Operation}" and continues to consider standalone
- * method-level {@code @SecurityRequirement}s before falling back to the class level. In practice this
- * matches the spec the build-time plugin generates: the OpenAPI {@code security: []} "no auth" marker
- * is not expressible through this annotation-only path, and an operation that means "secured" carries
- * a named scheme via one of the forms above.
+ * one who omitted {@code security} entirely — both surface as a zero-length array, and contribute no
+ * requirement. The OpenAPI {@code security: []} "public" marker is instead the empty container
+ * {@code @SecurityRequirements({})}: declared on the resource class or on the resource class's own
+ * method, it exempts the operation from the document level (it never clears a class-level
+ * requirement). Found only on a superclass, an interface or an inherited method, it is refused, so a
+ * shared supertype cannot open every resource that inherits it.
  */
 final class SecuritySchemeAnnotationScanner {
 
@@ -93,6 +101,152 @@ final class SecuritySchemeAnnotationScanner {
             return List.copyOf(methodLevel);
         }
         return List.copyOf(collect(classAnnotations, operationId));
+    }
+
+    /**
+     * Returns the effective security requirement sets of a resource operation, applying, in order:
+     * the method level, the class level, the public marker {@code @SecurityRequirements({})}, and
+     * the document level of the application that mounts it.
+     *
+     * <ol>
+     *   <li>Method-level requirements, when any: those (as {@link #effectiveRequirements(List, List)}).</li>
+     *   <li>Otherwise class-level requirements, when any: those.</li>
+     *   <li>Otherwise, when the empty container {@code @SecurityRequirements({})} is declared on the
+     *       resource class or on the resource class's own method: no set (public with respect to the
+     *       document level).</li>
+     *   <li>Otherwise the document's sets ({@link DocumentSecurity#NONE} contributes none).</li>
+     * </ol>
+     *
+     * @param meta the resource operation
+     * @param document the document level of the mount that registers the operation
+     * @return the immutable, possibly empty list of effective security requirement sets
+     * @throws RestConfigurationException if a {@code @SecurityRequirement} is malformed, the resource's
+     *     class hierarchy carries {@code @OpenAPIDefinition} with a non-empty {@code security}, or the
+     *     public marker is only inherited
+     */
+    static List<SecurityRequirementSet> effectiveRequirements(ResourceMethodMeta meta, DocumentSecurity document) {
+        List<Annotation> methodAnnotations = meta.methodAnnotations();
+        List<Annotation> classAnnotations = meta.classAnnotations();
+        Class<?> resourceClass = meta.resourceInstance().getClass();
+        rejectResourceDocumentSecurity(classAnnotations, resourceClass);
+        String operationId = resolveOperationId(methodAnnotations, classAnnotations);
+        List<SecurityRequirementSet> methodLevel = collect(methodAnnotations, operationId);
+        if (!methodLevel.isEmpty()) {
+            return List.copyOf(methodLevel);
+        }
+        List<SecurityRequirementSet> classLevel = collect(classAnnotations, operationId);
+        if (!classLevel.isEmpty()) {
+            return List.copyOf(classLevel);
+        }
+        if (hasPublicMarker(methodAnnotations) || hasPublicMarker(classAnnotations)) {
+            if (!declaresPublicMarker(resourceClass, meta.method())) {
+                throw new RestConfigurationException(String.format(
+                        "Operation '%s' inherits @SecurityRequirements({}) from a superclass, an interface or an "
+                                + "inherited method of %s. The marker makes an operation public, so it is honoured "
+                                + "only when declared on the resource class itself or on the resource class's own "
+                                + "method; declare it there.",
+                        operationId, resourceClass.getName()));
+            }
+            return List.of();
+        }
+        return document.sets();
+    }
+
+    /**
+     * Reads the document-level security of an application from its declaring interface's {@code
+     * @OpenAPIDefinition(security = ...)}, checking once for the shapes no operation could accept.
+     *
+     * @param declaringType the application's {@code @RestApplication} declaring interface
+     * @param applicationName the application's name, for diagnostics
+     * @return the document level; {@link DocumentSecurity#NONE} when the interface declares none
+     * @throws RestConfigurationException if a requirement is malformed, is a multi-scheme (AND) group,
+     *     or carries scopes while the document lists more than one alternative
+     */
+    static DocumentSecurity documentSecurity(Class<?> declaringType, String applicationName) {
+        OpenAPIDefinition definition = declaringType.getAnnotation(OpenAPIDefinition.class);
+        if (definition == null || definition.security().length == 0) {
+            return DocumentSecurity.NONE;
+        }
+        String subject = String.format(
+                "Application '%s' (%s) @OpenAPIDefinition(security)", applicationName, declaringType.getName());
+        List<SecurityRequirementSet> sets = new ArrayList<>();
+        for (io.swagger.v3.oas.annotations.security.SecurityRequirement req : definition.security()) {
+            sets.add(toSet(req, subject));
+        }
+        if (sets.stream().anyMatch(set -> !set.isSingleScheme())) {
+            throw new RestConfigurationException(subject
+                    + " declares a multi-scheme requirement (combine() AND-group), which is not yet supported."
+                    + " Declare a single scheme per requirement.");
+        }
+        if (sets.size() > 1 && sets.stream().anyMatch(SecurityRequirementSet::hasScopes)) {
+            throw new RestConfigurationException(subject
+                    + " declares scopes on one of several alternatives, which is not yet supported. Use a single"
+                    + " scheme with scopes, or drop the scopes.");
+        }
+        return new DocumentSecurity(List.copyOf(sets));
+    }
+
+    /**
+     * The document-level security requirement sets of an application: the OR alternatives its
+     * declaring interface's {@code @OpenAPIDefinition(security = ...)} declares.
+     *
+     * @param sets the document's requirement sets, in declaration order; empty when it declares none
+     */
+    record DocumentSecurity(List<SecurityRequirementSet> sets) {
+
+        /** No document level: a hand-built or legacy mount, or an application that declares none. */
+        static final DocumentSecurity NONE = new DocumentSecurity(List.of());
+
+        DocumentSecurity {
+            sets = List.copyOf(sets);
+        }
+    }
+
+    /**
+     * Refuses an {@code @OpenAPIDefinition} with a non-empty {@code security} in a resource class's
+     * resolved class annotations (the class, its superclasses and interfaces): the runtime reads
+     * document-level security only from an application's declaring interface.
+     */
+    private static void rejectResourceDocumentSecurity(List<Annotation> classAnnotations, Class<?> resourceClass) {
+        for (Annotation annotation : classAnnotations) {
+            if (annotation instanceof OpenAPIDefinition definition && definition.security().length > 0) {
+                throw new RestConfigurationException(String.format(
+                        "Resource %s carries @OpenAPIDefinition(security) on itself or a supertype, which secures "
+                                + "nothing at runtime. Declare it on the application's @RestApplication interface, or "
+                                + "declare a class-level @SecurityRequirement on the resource.",
+                        resourceClass.getName()));
+            }
+        }
+    }
+
+    /** Whether the list holds the public marker: an empty {@code @SecurityRequirements} container. */
+    private static boolean hasPublicMarker(List<Annotation> annotations) {
+        for (Annotation annotation : annotations) {
+            if (isPublicMarker(annotation)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isPublicMarker(@Nullable Annotation annotation) {
+        return annotation instanceof SecurityRequirements container && container.value().length == 0;
+    }
+
+    /**
+     * Whether the public marker is declared on the resource class itself or on the method the
+     * resource class itself declares with the operation's signature.
+     */
+    private static boolean declaresPublicMarker(Class<?> resourceClass, Method method) {
+        if (isPublicMarker(resourceClass.getDeclaredAnnotation(SecurityRequirements.class))) {
+            return true;
+        }
+        try {
+            Method own = resourceClass.getDeclaredMethod(method.getName(), method.getParameterTypes());
+            return isPublicMarker(own.getDeclaredAnnotation(SecurityRequirements.class));
+        } catch (NoSuchMethodException inherited) {
+            return false;
+        }
     }
 
     /**

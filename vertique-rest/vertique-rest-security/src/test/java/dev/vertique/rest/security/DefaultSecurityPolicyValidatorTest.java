@@ -150,6 +150,10 @@ class DefaultSecurityPolicyValidatorTest {
         assertEquals(
                 SecurityPolicyViolation.ViolationType.CONFLICTING_SEMANTICS,
                 violations.get(0).type());
+        assertTrue(
+                violations.get(0).message().contains("@SecurityRequirements({})"),
+                "the conflict must name the marker that keeps a document-secured operation anonymous: "
+                        + violations.get(0).message());
     }
 
     @Test

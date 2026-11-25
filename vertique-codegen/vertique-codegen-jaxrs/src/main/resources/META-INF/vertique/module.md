@@ -205,13 +205,17 @@ The declaring interface may carry only:
 
 - `@RestApplication`;
 - `@ApiDocs` (`dev.vertique.rest.openapi.docs.ApiDocs`), itself checked as described under "`@ApiDocs` Checks" below;
-- `@io.swagger.v3.oas.annotations.OpenAPIDefinition` in which every element other than `info` equals its declared default;
+- `@io.swagger.v3.oas.annotations.OpenAPIDefinition` in which every element other than `info` and `security` equals its declared default (`security` is the application's document-level security, which the runtime enforces on every operation without its own requirement; see the rest-jaxrs reference);
 - the `SOURCE`-retained `@ConditionalOnProperty` (single or repeated) and `@NoAutoWire`;
 - annotation types in the packages `java.lang` and `java.lang.annotation`, such as `@Deprecated`.
 
 Of its `RUNTIME`-retained annotations, a superinterface may carry only those whose types are in `java.lang` and `java.lang.annotation`. Any other `RUNTIME`-retained annotation on the declaration or on a superinterface fails the build (see "Diagnostics" below) — security, `@Path`, `@ApplicationPath`, scope, and qualifier annotations included — because a declaration carries no resource semantics: security and other resource annotations belong on resources, not on the interface that lists them. `@RestApplication`, `@ApiDocs`, `@OpenAPIDefinition`, `@ConditionalOnProperty` (or its `ConditionalOnProperties` container), and `@NoAutoWire` are honored only on the declaring interface; found on a superinterface, each fails the build instead. `@ConditionalOnProperty` and `@NoAutoWire` are `SOURCE`-retained, so on a superinterface they are seen only when it is compiled in the same build. Every other `CLASS`- or `SOURCE`-retained annotation is unchecked.
 
 Each error names the declaration, the annotation, and the type carrying it, each by binary name. A declaration that fails the allow list is not registered.
+
+### Document-Level Security Placement
+
+`@OpenAPIDefinition` with a non-empty `security` on any type other than a `@RestApplication` declaring interface fails the build: a stand-alone configuration class or a resource class, for example. The runtime enforces document-level security only from the declaring interface, so anywhere else the annotation would make the build-time OpenAPI file say operations are secured while the runtime serves them without credentials. The runtime cannot see a stand-alone configuration class, so this compile-time check is the only one that catches it; a resource class carrying the annotation also fails startup. An `@OpenAPIDefinition` that sets only `info` (or leaves `security` empty) is unaffected.
 
 ### `@ApiDocs` Checks
 
@@ -243,10 +247,11 @@ A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.verti
 | Inaccessible listed resource (error) | `{Declaration} lists a resource class its generated registration cannot name: {the inaccessible-type message above, naming the resource}` |
 | Duplicate declaration name (error) | `{Declaration} declares the application name "{name}", which {OtherDeclaration} also declares; application names must be unique within a compilation unit.` |
 | Declaration `discover` not alone (error) | `{Declaration} sets discover = true, but this compilation unit declares another application ({OtherDeclarations}); discovery is only for a compilation unit's sole application declaration.` |
-| Disallowed annotation on the declaration (error) | `{Declaration} carries @{annotation}, which a @RestApplication declaration may not carry: a declaration has no resource semantics and may carry only @RestApplication, @ApiDocs, @OpenAPIDefinition with only info set, @ConditionalOnProperty, @NoAutoWire, and java.lang and java.lang.annotation annotations` |
+| Disallowed annotation on the declaration (error) | `{Declaration} carries @{annotation}, which a @RestApplication declaration may not carry: a declaration has no resource semantics and may carry only @RestApplication, @ApiDocs, @OpenAPIDefinition with only info and security set, @ConditionalOnProperty, @NoAutoWire, and java.lang and java.lang.annotation annotations` |
 | Disallowed annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which a @RestApplication declaration's superinterface may not carry: a superinterface of a declaration may carry only java.lang and java.lang.annotation annotations` |
 | Declaration-only annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which is not allowed: that annotation is honored only on the @RestApplication declaring interface itself` |
-| `@OpenAPIDefinition` element other than `info` (error) | `{Declaration} carries @io.swagger.v3.oas.annotations.OpenAPIDefinition with an element other than info set, which is not allowed on a @RestApplication declaration: only its info element may be set` |
+| `@OpenAPIDefinition` element other than `info` and `security` (error) | `{Declaration} carries @io.swagger.v3.oas.annotations.OpenAPIDefinition with an element other than info and security set, which is not allowed on a @RestApplication declaration: only its info and security elements may be set` |
+| `@OpenAPIDefinition(security)` outside a declaring interface (error) | `{Type} carries @OpenAPIDefinition(security), which secures nothing at runtime: document-level security is enforced only from an application's @RestApplication interface. Declare it there, or declare @SecurityRequirement on the resource classes or methods.` |
 | `@ApiDocs` with an invalid policy (error) | `{Declaration} declares @ApiDocs with an invalid policy {Policy}: {reason}; policy must name a public interface that extends only AccessPolicy and declares valid, non-conflicting requirements` |
 | `@ApiDocs` with a public policy and a scheme (error) | `{Declaration} declares @ApiDocs(policy = {Policy}) with a securityScheme; securityScheme is set only when the policy is not public (a public policy is exactly one @PermitAll)` |
 | `@ApiDocs` with a policy that is not public and no scheme (error) | `{Declaration} declares @ApiDocs(policy = {Policy}) without a non-blank securityScheme; a policy that is not public needs securityScheme to name the security scheme that authenticates its readers` |

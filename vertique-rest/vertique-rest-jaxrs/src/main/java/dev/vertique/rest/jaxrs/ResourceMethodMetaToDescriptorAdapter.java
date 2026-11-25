@@ -60,6 +60,25 @@ final class ResourceMethodMetaToDescriptorAdapter {
      *     annotations, parameters, and body
      */
     static JaxRsOperationDescriptor adapt(ResourceMethodMeta meta, @Nullable String applicationName) {
+        return adapt(meta, applicationName, SecuritySchemeAnnotationScanner.DocumentSecurity.NONE);
+    }
+
+    /**
+     * Adapts the given {@link ResourceMethodMeta} into a {@link JaxRsOperationDescriptor} that
+     * reports the given application name and inherits the given document-level security.
+     *
+     * @param meta            the internal resource-method metadata; must not be {@code null}
+     * @param applicationName the name of the application the operation's mount serves, or {@code null}
+     *                        when the mount serves no named application
+     * @param document        the document-level security of the mount's application; {@link
+     *                        SecuritySchemeAnnotationScanner.DocumentSecurity#NONE} for a mount with none
+     * @return a descriptor exposing the operation's identity, application name, security,
+     *     annotations, parameters, and body
+     */
+    static JaxRsOperationDescriptor adapt(
+            ResourceMethodMeta meta,
+            @Nullable String applicationName,
+            SecuritySchemeAnnotationScanner.DocumentSecurity document) {
         String operationId = resolveOperationId(meta);
         List<ParamDescriptor> parameters = mapParameters(meta.params());
         List<FilePartDescriptor> fileParts = mapFileParts(meta.params());
@@ -68,8 +87,10 @@ final class ResourceMethodMetaToDescriptorAdapter {
         // single-scheme for a name() requirement, multi-scheme (AND) for a combine() requirement.
         // The adapter passes the sets through unchanged. A malformed @SecurityRequirement (neither or
         // both of name/combine) fails startup inside the scanner rather than being silently dropped.
-        List<SecurityRequirementSet> securityRequirementSets = SecuritySchemeAnnotationScanner.effectiveRequirements(
-                meta.methodAnnotations(), meta.classAnnotations());
+        // An operation with no method- or class-level requirement and no public marker inherits the
+        // document level of the application that mounts it.
+        List<SecurityRequirementSet> securityRequirementSets =
+                SecuritySchemeAnnotationScanner.effectiveRequirements(meta, document);
         return new AdaptedDescriptor(
                 meta, operationId, parameters, fileParts, body, securityRequirementSets, applicationName);
     }

@@ -81,8 +81,8 @@ class RestApplicationAllowListTest {
     private static final String NO_AUTO_WIRE_FQN = "dev.vertique.codegen.NoAutoWire";
     private static final String CONDITIONAL_ON_PROPERTIES_FQN = "dev.vertique.codegen.ConditionalOnProperties";
 
-    /** rest-024's statement that only {@code @OpenAPIDefinition}'s {@code info} element may be set. */
-    private static final String INFO_ONLY_PHRASE = "only its info element may be set";
+    /** The statement that only {@code @OpenAPIDefinition}'s {@code info} and {@code security} may be set. */
+    private static final String INFO_ONLY_PHRASE = "only its info and security elements may be set";
 
     private static final String API_DOCS_IMPORTS = """
             import dev.vertique.rest.openapi.docs.ApiDocs;
@@ -265,6 +265,7 @@ class RestApplicationAllowListTest {
         String classRetainedSuper = base + "classretainedsuper";
         String namedOnApi = base + "namedonapi";
         String openApiTagsDefault = base + "openapitagsdefault";
+        String openApiSecurity = base + "openapisecurity";
         String memberAnnotations = base + "memberannotations";
 
         return Stream.of(
@@ -341,6 +342,19 @@ class RestApplicationAllowListTest {
                                         "import io.swagger.v3.oas.annotations.OpenAPIDefinition;\n"
                                                 + "import io.swagger.v3.oas.annotations.info.Info;",
                                         "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"))",
+                                        ""))),
+                acceptedRow(
+                        "Api with @OpenAPIDefinition(info = ..., security = @SecurityRequirement(name = \"bearerAuth\"))"
+                                + " (document-level security)",
+                        unit(
+                                openApiSecurity,
+                                apiFixture(
+                                        openApiSecurity,
+                                        "import io.swagger.v3.oas.annotations.OpenAPIDefinition;\n"
+                                                + "import io.swagger.v3.oas.annotations.info.Info;\n"
+                                                + "import io.swagger.v3.oas.annotations.security.SecurityRequirement;",
+                                        "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"),"
+                                                + " security = @SecurityRequirement(name = \"bearerAuth\"))",
                                         ""))),
                 acceptedRow(
                         "Api with @OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"), tags = {})"

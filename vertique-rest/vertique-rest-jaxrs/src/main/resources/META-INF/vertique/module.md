@@ -1543,8 +1543,9 @@ is logged either way. An inactive registration is never logged.
 ### Declaration annotations
 
 A declaring interface may carry only `@RestApplication`, the annotation named
-`dev.vertique.rest.openapi.docs.ApiDocs`, `@OpenAPIDefinition` with every element other than `info` at
-its default, and types in `java.lang` or `java.lang.annotation`; the source-retained
+`dev.vertique.rest.openapi.docs.ApiDocs`, `@OpenAPIDefinition` with every element other than `info` and
+`security` at its default (`security` is the application's
+[document-level security](#document-level-security)), and types in `java.lang` or `java.lang.annotation`; the source-retained
 `@ConditionalOnProperty` and `@NoAutoWire` are permitted too but are enforced on a superinterface by
 the compile-time processor only, since reflection cannot see a `SOURCE`-retained annotation. On a
 superinterface, only `java.lang` and `java.lang.annotation` types are allowed — one of the three
@@ -1704,6 +1705,67 @@ operationId namespace (see [Startup failures](#startup-failures)). This parse ru
 gate as the operationId rule below, and never
 when no registered strategy carries the configured `jaxrs.validationStrategy` id (`createRouter`'s own
 fail-fast selection reports that separately).
+
+### Document-level security
+
+An application's `@RestApplication` declaring interface is its document. `@OpenAPIDefinition(security
+= ...)` on it is the document-level security requirement of every operation the application mounts,
+with OpenAPI's precedence; the first rule that applies decides an operation's requirement sets:
+
+1. the method's own requirements (`@SecurityRequirement`, `@SecurityRequirements`, or
+   `@Operation(security)`);
+2. the resource class's requirements;
+3. **public:** an empty `@SecurityRequirements({})` declared on the resource class or on the resource
+   class's own method gives the operation no requirement set (OpenAPI's `security: []`). It opts out of
+   the document level only and never clears a class-level requirement. `@Operation(security = {})`
+   cannot be told apart from an absent `security`, so it is not a marker;
+4. the document's requirements, each `@SecurityRequirement` one OR alternative, in declaration order;
+5. none.
+
+```java
+@RestApplication(name = "orders", path = "/api/orders", resources = OrderResource.class)
+@OpenAPIDefinition(security = @SecurityRequirement(name = "bearerAuth"))
+public interface OrdersApi {}
+
+@Path("")
+public class OrderResource {
+    @GET @Path("/{id}")                       // inherits bearerAuth: 401 without a token
+    public Order get(@PathParam("id") String id) { ... }
+
+    @GET @Path("/health")
+    @SecurityRequirements({})                 // public
+    public String health() { return "ok"; }
+}
+```
+
+The inherited sets are the operation's requirement sets everywhere the declared ones are: the
+authentication handler, the fail-closed shape checks, the security policy validator, the explicit
+security policy classification below, and the operation's `security` in a generated OpenAPI document.
+Generated and reflectively scanned operations resolve them in the same place, so both see the same
+sets. The document's own shape is checked once per mount: a multi-scheme (`combine`) requirement, or
+scopes on one of several alternatives, fails startup naming the application and its declaring
+interface.
+
+- **`@PermitAll` under document-level security** fails startup with the security module's
+  `CONFLICTING_SEMANTICS` violation, as `@PermitAll` with a declared requirement always has. Add
+  `@SecurityRequirements({})` to keep the operation anonymous (login and health routes), or remove
+  `@PermitAll`.
+- **The marker must be declared on the resource itself.** Annotation resolution merges the resource's
+  superclasses and interfaces, so a marker found only on a superclass, an interface or an inherited
+  method fails startup naming the operation, rather than opening every resource that inherits it.
+- **Other placements fail.** A resource class whose class, superclass or interface carries
+  `@OpenAPIDefinition` with a non-empty `security` fails startup naming the class, on every mount type.
+  The compile-time processor also fails compilation for that annotation on any type other than a
+  declaring interface, such as a stand-alone configuration class that only the build-time OpenAPI
+  generator reads; the runtime cannot see such a class, so a build without the processor does not
+  catch it.
+- **No document level** applies to a hand-built or legacy default mount (no declaring interface) or to
+  a synthetic operation (`SyntheticOperationInstaller`, see [Module Dagger Bindings](#module-dagger-bindings)),
+  which carries its own policy.
+- **The build-time swagger file can differ for the marker.** swagger-core writes no operation
+  `security` for an empty `@SecurityRequirements`, so that file shows the root `security` on an
+  operation the runtime and the application's generated document treat as public. The runtime is
+  authoritative.
 
 ### Explicit security policy
 
@@ -1975,7 +2037,9 @@ section-name, shape, key, or non-string problem remains (see [Startup failures](
 | `REQUIRES_ACTION_INVALID` | a `@RequiresAction` declaration is malformed |
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
-| `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration |
+| `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration (under
+[document-level security](#document-level-security), an operation made public with
+`@SecurityRequirements({})` is implicit unless it also carries `@PermitAll`) |
 
 Building the `RestApplications` view (see [The `RestApplications`
 view](#the-restapplications-view) above) and the composer's step-1 and membership checks (see
@@ -2200,7 +2264,8 @@ Three INTERNAL framework packages back these sibling-module seams. Each is outsi
 promise and not a stable application API.
 
 `dev.vertique.rest.jaxrs.synthetic` holds `SyntheticOperationInstaller`, which lets a sibling framework
-module install a framework-owned route through the resource security chain, behind the completion
+module install a framework-owned route through the resource security chain (with its own policy: an
+application's [document-level security](#document-level-security) does not apply to it), behind the completion
 recorder, so its requests complete as `RestRequestCompletedEvent`s; an installed route deliberately
 bypasses two things a resource route would normally go through: the API-scoped middleware, request
 interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount never run for it,

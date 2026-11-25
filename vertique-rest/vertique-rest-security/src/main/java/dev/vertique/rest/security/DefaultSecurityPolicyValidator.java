@@ -131,7 +131,10 @@ public class DefaultSecurityPolicyValidator implements SecurityPolicyValidator {
                     String.format(
                             "Operation '%s' has @PermitAll but also has a declared security requirement. "
                                     + "Authentication will run (from the requirement) but authorization is "
-                                    + "skipped (from @PermitAll).",
+                                    + "skipped (from @PermitAll). If the requirement comes from the "
+                                    + "application's @OpenAPIDefinition(security), declare "
+                                    + "@SecurityRequirements({}) on the resource class or method to keep the "
+                                    + "operation anonymous, or remove @PermitAll.",
                             operationId)));
         }
 

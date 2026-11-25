@@ -37,7 +37,7 @@ import javax.lang.model.type.TypeMirror;
  * <ul>
  *   <li>on the declaring interface only: {@code @RestApplication}, {@code @ApiDocs}, {@code
  *       io.swagger.v3.oas.annotations.OpenAPIDefinition} in which every element other than {@code
- *       info} equals its declared default (compared structurally against {@link
+ *       info} and {@code security} equals its declared default (compared structurally against {@link
  *       ExecutableElement#getDefaultValue()}), and the {@code SOURCE}-retained
  *       {@code @ConditionalOnProperty} (single or container form) and {@code @NoAutoWire};
  *   <li>anywhere in scope: annotation types in the packages {@code java.lang} and {@code
@@ -95,7 +95,7 @@ public final class ApplicationAnnotationValidator {
     /**
      * The fully qualified names of the {@code RUNTIME}-retained annotations allowed on the declaring
      * interface only; on a superinterface each is a compile error. {@code @OpenAPIDefinition} is
-     * additionally limited to its {@code info} element.
+     * additionally limited to its {@code info} and {@code security} elements.
      */
     private static final Set<String> RUNTIME_DECLARATION_ONLY =
             Set.of(REST_APPLICATION_FQN, API_DOCS_FQN, OPEN_API_DEFINITION_FQN);
@@ -183,7 +183,7 @@ public final class ApplicationAnnotationValidator {
      * Checks one annotation directly present on one type in {@code declaration}'s scope, reporting a
      * compile error when it is a declaration-only annotation found on a superinterface, a
      * {@code RUNTIME}-retained annotation outside the allow list, or an {@code @OpenAPIDefinition}
-     * setting an element other than {@code info}. A {@code CLASS}-retained annotation, one with no
+     * setting an element other than {@code info} and {@code security}. A {@code CLASS}-retained annotation, one with no
      * retention meta-annotation at all, and any other {@code SOURCE}-retained annotation are
      * unchecked.
      *
@@ -225,7 +225,7 @@ public final class ApplicationAnnotationValidator {
             reportError(declaration, declarationOnlyMessage(declaration, annotationType, carrier));
             return false;
         }
-        if (OPEN_API_DEFINITION_FQN.equals(annotationFqn) && !isInfoOnlyOpenApiDefinition(mirror)) {
+        if (OPEN_API_DEFINITION_FQN.equals(annotationFqn) && !isInfoAndSecurityOnlyOpenApiDefinition(mirror)) {
             reportError(declaration, infoOnlyMessage(declaration, annotationType));
             return false;
         }
@@ -233,18 +233,20 @@ public final class ApplicationAnnotationValidator {
     }
 
     /**
-     * Returns whether every element of {@code mirror} other than {@code info} that is explicitly set
+     * Returns whether every element of {@code mirror} other than {@code info} and {@code security}
+     * (the document-level security requirements) that is explicitly set
      * equals its declared default, compared structurally since {@link AnnotationValue} has no value
      * equality of its own.
      *
      * @param mirror the {@code OpenAPIDefinition} annotation mirror to check
-     * @return {@code true} when every explicitly set element other than {@code info} is at its
-     *     declared default
+     * @return {@code true} when every explicitly set element other than {@code info} and {@code
+     *     security} is at its declared default
      */
-    private boolean isInfoOnlyOpenApiDefinition(AnnotationMirror mirror) {
+    private boolean isInfoAndSecurityOnlyOpenApiDefinition(AnnotationMirror mirror) {
         for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry :
                 mirror.getElementValues().entrySet()) {
-            if ("info".contentEquals(entry.getKey().getSimpleName())) {
+            if ("info".contentEquals(entry.getKey().getSimpleName())
+                    || "security".contentEquals(entry.getKey().getSimpleName())) {
                 continue;
             }
             AnnotationValue defaultValue = entry.getKey().getDefaultValue();
@@ -436,7 +438,7 @@ public final class ApplicationAnnotationValidator {
         if (carrier.equals(declaration)) {
             return ("%s carries @%s, which a @RestApplication declaration may not carry: a declaration has no"
                             + " resource semantics and may carry only @RestApplication, @ApiDocs,"
-                            + " @OpenAPIDefinition with only info set, @ConditionalOnProperty, @NoAutoWire, and"
+                            + " @OpenAPIDefinition with only info and security set, @ConditionalOnProperty, @NoAutoWire, and"
                             + " java.lang and java.lang.annotation annotations")
                     .formatted(binaryName(declaration), binaryName(annotationType));
         }
@@ -463,15 +465,16 @@ public final class ApplicationAnnotationValidator {
 
     /**
      * Builds the message for an {@code @OpenAPIDefinition} on the declaration that sets an element
-     * other than {@code info}, naming the declaration and the annotation by binary name.
+     * other than {@code info} and {@code security}, naming the declaration and the annotation by binary
+     * name.
      *
      * @param declaration    the declaring interface
      * @param annotationType the {@code @OpenAPIDefinition} annotation type
      * @return the violation message
      */
     private String infoOnlyMessage(TypeElement declaration, TypeElement annotationType) {
-        return ("%s carries @%s with an element other than info set, which is not allowed on a"
-                        + " @RestApplication declaration: only its info element may be set")
+        return ("%s carries @%s with an element other than info and security set, which is not allowed on"
+                        + " a @RestApplication declaration: only its info and security elements may be set")
                 .formatted(binaryName(declaration), binaryName(annotationType));
     }
 
