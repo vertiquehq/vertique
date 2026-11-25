@@ -39,7 +39,11 @@ final class ServiceContractTestFixtures {
     static final JavaFileObject SERVICE_CONTRACT_SOURCE =
             SourceFiles.inline("dev.vertique.services.ServiceContract", """
                     package dev.vertique.services;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.Documented;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE) @Retention(RetentionPolicy.RUNTIME) @Documented
                     public @interface ServiceContract {
                         String value();
@@ -50,7 +54,11 @@ final class ServiceContractTestFixtures {
     static final JavaFileObject SERVICE_OPERATION_SOURCE =
             SourceFiles.inline("dev.vertique.services.ServiceOperation", """
                     package dev.vertique.services;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.Documented;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.METHOD) @Retention(RetentionPolicy.RUNTIME) @Documented
                     public @interface ServiceOperation {
                         String value() default "";
@@ -59,7 +67,11 @@ final class ServiceContractTestFixtures {
 
     static final JavaFileObject ONE_WAY_SOURCE = SourceFiles.inline("dev.vertique.services.OneWay", """
             package dev.vertique.services;
-            import java.lang.annotation.*;
+            import java.lang.annotation.Documented;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
             @Target(ElementType.METHOD) @Retention(RetentionPolicy.RUNTIME) @Documented
             public @interface OneWay {}
             """);
@@ -174,7 +186,10 @@ final class ServiceContractTestFixtures {
     static final JavaFileObject DISPATCH_CONTEXT_VALUE_SOURCE =
             SourceFiles.inline("dev.vertique.core.eventbus.DispatchContextValue", """
                     package dev.vertique.core.eventbus;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE) @Retention(RetentionPolicy.RUNTIME)
                     public @interface DispatchContextValue {}
                     """);

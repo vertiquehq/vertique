@@ -36,7 +36,10 @@ class AutoWireProcessorSignalSourcesTest {
     private static final String WORKFLOW_SIGNAL_SOURCE_ANNOTATION = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.CLASS)
@@ -46,7 +49,10 @@ class AutoWireProcessorSignalSourcesTest {
     private static final String SIGNAL_SOURCE_TYPE_ANNOTATION = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.CLASS)

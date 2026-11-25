@@ -21,7 +21,11 @@ class AutoWireProcessorKafkaConsumersTest {
     private static final String KAFKA_LISTENER_ANNOTATION = """
             package dev.vertique.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.Documented;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.RUNTIME)
@@ -35,7 +39,11 @@ class AutoWireProcessorKafkaConsumersTest {
     private static final String KAFKA_SOURCE_ANNOTATION = """
             package dev.vertique.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.Documented;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.RUNTIME)
@@ -49,7 +57,11 @@ class AutoWireProcessorKafkaConsumersTest {
     private static final String KAFKA_CONSUMERS_QUALIFIER = """
             package dev.vertique.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.Documented;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
             import jakarta.inject.Qualifier;
 
             @Qualifier

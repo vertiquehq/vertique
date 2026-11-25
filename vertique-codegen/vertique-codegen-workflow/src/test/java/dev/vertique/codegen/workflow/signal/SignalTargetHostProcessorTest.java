@@ -35,7 +35,11 @@ class SignalTargetHostProcessorTest {
             SourceFiles.inline("dev.vertique.workflow.source.WorkflowSignalTarget", """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Repeatable;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -54,7 +58,10 @@ class SignalTargetHostProcessorTest {
             SourceFiles.inline("dev.vertique.workflow.source.WorkflowSignalTargets", """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -66,7 +73,10 @@ class SignalTargetHostProcessorTest {
     private static final JavaFileObject FORM = SourceFiles.inline("dev.vertique.workflow.source.SignalSourceForm", """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.ANNOTATION_TYPE)
             @Retention(RetentionPolicy.CLASS)
@@ -78,7 +88,10 @@ class SignalTargetHostProcessorTest {
     private static final JavaFileObject KAFKA_LISTENER = SourceFiles.inline("dev.vertique.kafka.KafkaListener", """
             package dev.vertique.kafka;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.RUNTIME)
@@ -95,7 +108,10 @@ class SignalTargetHostProcessorTest {
             package dev.vertique.examples;
 
             import dev.vertique.workflow.source.SignalSourceForm;
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @SignalSourceForm(Feed.class)
             @Target(ElementType.TYPE)
@@ -106,7 +122,10 @@ class SignalTargetHostProcessorTest {
     private static final JavaFileObject PLAIN_SIGNALS = source("PlainSignals", """
             package dev.vertique.examples;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.CLASS)

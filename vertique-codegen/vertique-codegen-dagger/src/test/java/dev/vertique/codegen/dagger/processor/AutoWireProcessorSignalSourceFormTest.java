@@ -42,7 +42,10 @@ class AutoWireProcessorSignalSourceFormTest {
     private static final String SIGNAL_SOURCE_TYPE = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.CLASS)
@@ -54,7 +57,10 @@ class AutoWireProcessorSignalSourceFormTest {
     private static final String FORM = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.ANNOTATION_TYPE)
             @Retention(RetentionPolicy.CLASS)
@@ -72,7 +78,11 @@ class AutoWireProcessorSignalSourceFormTest {
     private static final String SIGNAL_TARGET = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Repeatable;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -90,7 +100,10 @@ class AutoWireProcessorSignalSourceFormTest {
     private static final String SIGNAL_TARGETS = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -121,7 +134,10 @@ class AutoWireProcessorSignalSourceFormTest {
             package dev.vertique.examples;
 
             import dev.vertique.workflow.source.SignalSourceForm;
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @SignalSourceForm(Feed.class)
             @Target(ElementType.TYPE)
@@ -132,7 +148,10 @@ class AutoWireProcessorSignalSourceFormTest {
     private static final String PLAIN_SIGNALS = """
             package dev.vertique.examples;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.CLASS)
