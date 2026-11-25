@@ -6,9 +6,9 @@ package dev.vertique.rest.jaxrs.publication.fixture;
 import dev.vertique.rest.core.application.RestApplication;
 
 /**
- * T006 TP-005's declaring type for application {@code a}. Never implemented: the test builds this
+ * Declaring type for application {@code a}. Never implemented: the test builds this
  * application's mount by hand through the package-private {@code Factory.createApplicationMount},
- * never through generated composition (mirrors T023's ported fixtures).
+ * never through generated composition (like the other declaring-type fixtures).
  */
 @RestApplication(
         name = "a",

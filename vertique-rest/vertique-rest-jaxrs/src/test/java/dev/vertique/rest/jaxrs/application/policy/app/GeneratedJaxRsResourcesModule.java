@@ -19,8 +19,8 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * Hand-written module in the exact C-GEN shape for compilation unit {@code policy.app} (T005,
- * ported to native registrations at T023 L22): registers {@link ManagementApis}'s six declaring
+ * Hand-written module in the generated-module shape for compilation unit {@code policy.app}
+ * (native registrations): registers {@link ManagementApis}'s six declaring
  * interfaces, each gated on the same {@code policy.<variant>.enabled} property that
  * {@code policy.GeneratedJaxRsResourcesModule} already uses to gate that variant's catalog entry.
  * Exactly one is active per test invocation, so the application-mount vs. legacy-default-mount

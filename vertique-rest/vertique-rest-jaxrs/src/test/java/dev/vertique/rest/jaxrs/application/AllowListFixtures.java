@@ -36,7 +36,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-013 and TP-014 fixtures: one declaring interface per
+ * Fixtures: one declaring interface per
  * {@link ApplicationAnnotationBackstopTest} row, each registered by
  * {@link #component(GeneratedRestApplicationRegistration)} against one shared, always-enabled
  * resource ({@link AllowListResource}). Every row's registration is built inline by the test with
@@ -132,7 +132,7 @@ public final class AllowListFixtures {
         }
     }
 
-    /** The {@code @Singleton} component every TP-013/TP-014 row composes through. */
+    /** The {@code @Singleton} component every row composes through. */
     @Singleton
     @Component(
             modules = {
@@ -168,7 +168,7 @@ public final class AllowListFixtures {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-013 failing rows: one disallowed annotation on the declaring interface.
+    // Failing rows: one disallowed annotation on the declaring interface.
     // -----------------------------------------------------------------------------------------
 
     /** Row: {@code @RolesAllowed} on the declaring interface. */
@@ -192,7 +192,7 @@ public final class AllowListFixtures {
     public interface OpenApiServersOnDeclaringApi {}
 
     // -----------------------------------------------------------------------------------------
-    // TP-013 failing rows: a superinterface carrying @RolesAllowed, one and two levels up.
+    // Failing rows: a superinterface carrying @RolesAllowed, one and two levels up.
     // -----------------------------------------------------------------------------------------
 
     /** A direct superinterface carrying {@code @RolesAllowed}. */
@@ -215,7 +215,7 @@ public final class AllowListFixtures {
     public interface RolesOnSuperinterfaceTwoLevelsUpApi extends MiddleSuperinterface {}
 
     // -----------------------------------------------------------------------------------------
-    // TP-013 composing controls.
+    // Composing controls for the allow-list rows.
     // -----------------------------------------------------------------------------------------
 
     /** Control: {@code @RestApplication} alone. */
@@ -238,7 +238,7 @@ public final class AllowListFixtures {
     public interface DeprecatedControlApi {}
 
     // -----------------------------------------------------------------------------------------
-    // TP-014 rows: a superinterface carrying an annotation honored only on the declaring interface.
+    // Honored-only rows: a superinterface carrying an annotation honored only on the declaring interface.
     // -----------------------------------------------------------------------------------------
 
     /** A superinterface declaring a second application (honored only on the declaring interface). */
@@ -266,7 +266,7 @@ public final class AllowListFixtures {
     public interface OpenApiOnSuperinterfaceApi extends OpenApiSuperinterface {}
 
     // -----------------------------------------------------------------------------------------
-    // TP-014 composing control.
+    // Composing control for the honored-only rows.
     // -----------------------------------------------------------------------------------------
 
     /** A superinterface carrying only {@code @Deprecated}. */
@@ -278,7 +278,7 @@ public final class AllowListFixtures {
     public interface DeprecatedOnSuperinterfaceApi extends DeprecatedSuperinterface {}
 
     /**
-     * PIT G4: a runtime annotation type used as a superinterface, carrying only
+     * A runtime annotation type used as a superinterface, carrying only
      * {@code java.lang.annotation} types ({@code @Retention}, {@code @Target}, {@code @Documented}).
      * An annotation interface is the only reachable way to put a {@code java.lang.annotation} type in
      * scope, since every such annotation targets annotation types.

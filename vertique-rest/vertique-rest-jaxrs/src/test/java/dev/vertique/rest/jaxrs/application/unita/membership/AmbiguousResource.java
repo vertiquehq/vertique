@@ -11,9 +11,9 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-005 case 6's resource: cataloged by {@link AmbiguousResourceCatalogModule} <em>and</em>
+ * Resource cataloged by {@link AmbiguousResourceCatalogModule} <em>and</em>
  * contributed manually by {@code manual.membership.AmbiguousResourceManualModule}, so it has both a
- * catalog match and a manual match when listed. C-COMPOSE step 6.7 rejects it as ambiguous.
+ * catalog match and a manual match when listed. The composer rejects it as ambiguous.
  */
 @Path("/ambiguous")
 public class AmbiguousResource {

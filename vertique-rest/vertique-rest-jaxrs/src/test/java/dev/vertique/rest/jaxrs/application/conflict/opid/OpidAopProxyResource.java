@@ -6,10 +6,10 @@ package dev.vertique.rest.jaxrs.application.conflict.opid;
 import jakarta.inject.Inject;
 
 /**
- * TP-005 (T004) case (f)'s AOP-proxy-shaped direct subclass of {@link OpidAopBaseResource}:
+ * Operation-id conflict case (f)'s AOP-proxy-shaped direct subclass of {@link OpidAopBaseResource}:
  * {@code public final}, extends the bean directly, adds no interface, and marks its override with
  * only the source-retained {@code @Override} — no other class or method annotation, no parameter
- * annotations (matching {@code AopProxyEmitter.java:124-127,449-460}, T002 TP-018's precedent).
+ * annotations (matching the shape {@code AopProxyEmitter} generates).
  * {@code sameSurface} accepts exactly this shape, so {@link OpidApis.OpidAopApi}'s listing of
  * {@link OpidAopBaseResource} successfully selects this instance, and the validator's owner rule
  * normalizes this operation to {@link OpidAopBaseResource}, the same owner as
@@ -22,7 +22,7 @@ public final class OpidAopProxyResource extends OpidAopBaseResource {
     public OpidAopProxyResource() {}
 
     /**
-     * Overrides {@link OpidAopBaseResource#list()}, keeping the same method name (PP2-004) and
+     * Overrides {@link OpidAopBaseResource#list()}, keeping the same method name and
      * adding no annotation beyond the source-retained {@code @Override}.
      *
      * @return the base implementation's result

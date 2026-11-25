@@ -27,8 +27,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Proof that {@link JaxRsRouteRegistrar#registerAll} hands every operation's <em>resolved</em> JSON
  * profile to the {@link OperationSchemaSource} — the profile whose mapper parses that operation's
- * body — rather than a fixed profile or the global {@code json.jsonProfile} read directly (FR-001,
- * AC-001.1).
+ * body — rather than a fixed profile or the global {@code json.jsonProfile} read directly.
  *
  * <p>The five selection tiers are exercised across three router builds, each tier distinguished from
  * its neighbours by a different profile id so no two tiers can be confused:

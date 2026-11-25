@@ -58,12 +58,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * validation strategy (no schema-gen dependency), exercising:
  *
  * <ul>
- *   <li>route creation without any {@code openapi.json} on the classpath (FR-001);</li>
+ *   <li>route creation without any {@code openapi.json} on the classpath;</li>
  *   <li>JAX-RS path-template translation, including a regex-constrained {@code {id:\d+}} bound
- *       <em>by name</em> via a named capture group, and multi-parameter templates (FR-002);</li>
- *   <li>{@code BoundRequest} population under {@code none} (binding decoupled from validation, FR-026)
+ *       <em>by name</em> via a named capture group, and multi-parameter templates;</li>
+ *   <li>{@code BoundRequest} population under {@code none} (binding decoupled from validation)
  *       for undeclared query/header/cookie parameters, {@code @BeanParam}, and repeated query values
- *       (collection vs scalar) (FR-024);</li>
+ *       (collection vs scalar);</li>
  *   <li>the preserved handler execution order (auth → gate → contributors → invoker);</li>
  *   <li>fail-fast strategy selection on an unknown {@code validationStrategy} id.</li>
  * </ul>
@@ -74,8 +74,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient} deliberately:
  * a raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
- * so under load {@code body()} can succeed with zero bytes while the status code is correct (issue
- * #167). Nearly every case here asserts on the response body — the echoed binding <em>is</em> the
+ * so under load {@code body()} can succeed with zero bytes while the status code is correct. Nearly every case here asserts on the response body — the echoed binding <em>is</em> the
  * load-bearing signal — so a silently emptied body would fail a binding assertion for a reason
  * unrelated to routing. A {@link WebClient} aggregates the body into its {@code HttpResponse} before
  * completing the send.
@@ -310,7 +309,7 @@ public class AnnotationDrivenRoutingIT {
         }
     }
 
-    /** Contract whose route is an interface default method (issue #630). */
+    /** Contract whose route is an interface default method. */
     public interface DefaultDeleteApi {
 
         /**
@@ -342,7 +341,7 @@ public class AnnotationDrivenRoutingIT {
         });
     }
 
-    // --- Interface default method is routed and dispatched (issue #630) ---
+    // --- Interface default method is routed and dispatched ---
 
     @Test
     @DisplayName("A non-overridden interface default method is routed and dispatched")

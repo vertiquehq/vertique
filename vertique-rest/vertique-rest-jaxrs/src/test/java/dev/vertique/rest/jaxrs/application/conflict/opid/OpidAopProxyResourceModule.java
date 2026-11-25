@@ -9,7 +9,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
- * TP-005 (T004) case (f)'s manual module, contributing {@link OpidAopProxyResource} — the shape
+ * Operation-id conflict case (f)'s manual module, contributing {@link OpidAopProxyResource} — the shape
  * sibling framework modules use. It is the sole manual candidate when {@link OpidAopBaseResource}
  * is listed, so {@link OpidApis.OpidAopApi}'s membership resolution is unambiguous.
  */

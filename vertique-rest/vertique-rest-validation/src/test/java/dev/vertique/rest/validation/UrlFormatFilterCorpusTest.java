@@ -26,21 +26,21 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Proof for the {@code web-validation} gate's {@code url} format check (rest-022 T021, TP-004, FR-020):
+ * Proof for the {@code web-validation} gate's {@code url} format check:
  * on a corpus of at most 512-character values taken from the vertx-json-schema {@code url}
  * expression, the gate's verdict equals the engine's on every filtering-class row (the (a) rows, grouped
  * by class below: schemes, dotted quads, IPv6 literals, non-dotted and malformed hosts, ports, and
- * userinfo, plus {@code http://example.com:/}, which the engine rejects too, E15), and equals C-FORMAT's
- * frozen rule on every other row (the (b) rows), whose difference from the engine's verdict is exactly
+ * userinfo, plus {@code http://example.com:/}, which the engine rejects too), and equals the gate's own
+ * {@code url} rule on every other row (the (b) rows), whose difference from the engine's verdict is exactly
  * {@link #RECORDED_DIFFERENCES}.
  *
  * <p>"The gate's compiled validator" is {@code new PatternInputGuard(4096, 262_144).compile(schema,
- * GATE_OPTIONS)} (E4); {@link #GATE_OPTIONS} is copied literally from {@code
+ * GATE_OPTIONS)}; {@link #GATE_OPTIONS} is copied literally from {@code
  * WebValidationStrategy.SCHEMA_OPTIONS}. "The engine's verdict" is {@code
  * Validator.create(JsonSchema.of(schema.copy()), GATE_OPTIONS)}, the unguarded compilation, with no
- * custom format validator, so vertx-json-schema's own {@code url} regular expression decides. C-FORMAT's
- * {@code url} rule (plan C-FORMAT; coordinator rulings, round B; S3-008) is applied directly with {@link
- * URI} in {@link #cFormatVerdict(String)}, never through a new production class (E5): an absolute URI
+ * custom format validator, so vertx-json-schema's own {@code url} regular expression decides. The gate's
+ * {@code url} rule is applied directly with {@link
+ * URI} in {@link #urlRuleVerdict(String)}, never through a production class: an absolute URI
  * whose scheme is {@code http}, {@code https}, or {@code ftp} (case-insensitively); whose host is
  * present and is not an IPv6 literal; whose host, after one trailing dot is removed, is either a dotted
  * quad outside the rejected private and reserved bands ({@code 0/8}, {@code 10/8}, {@code 127/8}, {@code
@@ -48,14 +48,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * label of at least two characters; and whose port, when the raw authority carries one after the host,
  * has 2 to 5 digits (an empty port fails).
  *
- * <p>At this task's baseline the gate still delegates {@code url} to the engine's own expression (T021's
- * rename has not landed), so every (a) row is green — the gate's verdict equals the engine's trivially —
- * and every (b) row on {@link #RECORDED_DIFFERENCES} is red, since the gate still gives the engine's
- * verdict there rather than C-FORMAT's; the remaining (b) row, where C-FORMAT and the engine already
- * agree, is green too.
- *
- * <p>Review round 1 finding R-001 (ruling E23, 2026-09-28): a dotted-quad octet label longer than one
- * character that starts with {@code 0} is not an octet under C-FORMAT's refined rule, so the host fails
+ * <p>A dotted-quad octet label longer than one
+ * character that starts with {@code 0} is not an octet under the gate's rule, so the host fails
  * the dotted-quad test and, having no alphabetic last label, is rejected — the engine reads such a label
  * as octal (WHATWG URL, glibc {@code inet_aton}), which would let {@code 0177.0.0.1} address the loopback
  * range the filtering promises to reject. Six such hosts join the (a) rows below, all rejected by the
@@ -65,49 +59,49 @@ import org.junit.jupiter.params.provider.MethodSource;
 class UrlFormatFilterCorpusTest {
 
     /**
-     * The gate's compile options, copied literally from {@code WebValidationStrategy.SCHEMA_OPTIONS}
-     * (E4), so this proof characterizes the engine exactly as the gate configures it.
+     * The gate's compile options, copied literally from {@code WebValidationStrategy.SCHEMA_OPTIONS},
+     * so this proof characterizes the engine exactly as the gate configures it.
      */
     private static final JsonSchemaOptions GATE_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
             .setBaseUri("https://vertique.local/")
             .setOutputFormat(OutputFormat.Basic);
 
-    /** T004's default per-string limit; irrelevant here since every value is far shorter. */
+    /** The default per-string limit; irrelevant here since every value is far shorter. */
     private static final int MAX_CHARS = 4096;
 
-    /** T004's default per-request limit; irrelevant here since no window is opened. */
+    /** The default per-request limit; irrelevant here since no window is opened. */
     private static final int MAX_TOTAL_CHARS = 262_144;
 
     /** The body schema every row is judged against. */
     private static final JsonObject URL_SCHEMA =
             new JsonObject().put("type", "string").put("format", "url");
 
-    /** "The gate's compiled validator" (E4). */
+    /** "The gate's compiled validator". */
     private static final Validator GATE_VALIDATOR =
             new PatternInputGuard(MAX_CHARS, MAX_TOTAL_CHARS).compile(URL_SCHEMA, GATE_OPTIONS);
 
-    /** "The engine's verdict", the unguarded compilation with no custom format validator (E4). */
+    /** "The engine's verdict", the unguarded compilation with no custom format validator. */
     private static final Validator ENGINE_VALIDATOR = Validator.create(JsonSchema.of(URL_SCHEMA.copy()), GATE_OPTIONS);
 
     /**
-     * The (b) rows whose C-FORMAT verdict differs from the engine's {@code url} expression, keyed
-     * by input; derived at step 3 in a scratch harness and recorded in {@code evidence/T021.md} § TP-004.
-     * The round-B ruling names four of these classes (non-ASCII hosts, since {@link URI} yields no host
+     * The (b) rows whose verdict under the gate's {@code url} rule differs from the engine's {@code url}
+     * expression, keyed by input.
+     * Four of these differences fall into classes (non-ASCII hosts, since {@link URI} yields no host
      * for one; {@code --} inside a label; a last octet of {@code 0} or {@code 255}; and {@code ?} or
      * {@code #} directly after the host); the remaining three ({@code http://a.com./}, whose trailing dot
-     * C-FORMAT strips and the engine does not, S3-008; a pipe and a malformed percent escape in the path,
+     * the gate's rule strips and the engine does not; a pipe and a malformed percent escape in the path,
      * which {@link URI} rejects and the engine's expression does not reach; and a double-quoted userinfo,
-     * which {@link URI} also rejects) are recorded the same way. R-001 (E23) adds an eighth class:
+     * which {@link URI} also rejects) are recorded the same way. An eighth class is
      * {@code http://8.08.8.8/}, whose second octet label {@code 08} is longer than one character and
-     * starts with {@code 0}; C-FORMAT no longer treats it as an octet (E23), so the host has no
+     * starts with {@code 0}; the gate's rule does not treat it as an octet, so the host has no
      * four-octet reading and no alphabetic last label either, and is rejected, while the engine's
-     * expression still reads {@code 08} as decimal {@code 8} and accepts it. Review round 2 finding
-     * F-001 pins two more: an empty userinfo before {@code @} ({@code http://@example.com/}), which
-     * {@link URI} parses to a userinfo-less host that C-FORMAT then accepts while the engine's expression
+     * expression still reads {@code 08} as decimal {@code 8} and accepts it. Two more
+     * classes: an empty userinfo before {@code @} ({@code http://@example.com/}), which
+     * {@link URI} parses to a userinfo-less host that the gate's rule then accepts while the engine's expression
      * rejects it; and a trailing line feed after the path ({@code http://foo.bar/\n}), which the engine's
      * expression accepts (its {@code $} matches before a final line terminator) while {@link URI}'s
-     * strict parse rejects it. Published in rest-validation's {@code module.md} once T021 lands (INV-8).
+     * strict parse rejects it.
      */
     private static final Set<String> RECORDED_DIFFERENCES = Set.of(
             "http://bücher.de/",
@@ -126,7 +120,7 @@ class UrlFormatFilterCorpusTest {
             "http://@example.com/",
             "http://foo.bar/\n");
 
-    @DisplayName("TP-004: url keeps the engine's filtering, and its other differences are recorded by input")
+    @DisplayName("url keeps the engine's filtering, and its other differences are recorded by input")
     @ParameterizedTest(name = "{0}")
     @MethodSource("urlKeepsTheEngineFilteringAndRecordsOtherDifferencesRows")
     void urlKeepsTheEngineFilteringAndRecordsOtherDifferences(Executable row) throws Throwable {
@@ -134,7 +128,7 @@ class UrlFormatFilterCorpusTest {
     }
 
     /**
-     * TP-004's rows: the (a) filtering-class rows, then the (b) rows outside them.
+     * The rows: the (a) filtering-class rows, then the (b) rows outside them.
      *
      * @return the rows
      */
@@ -212,7 +206,7 @@ class UrlFormatFilterCorpusTest {
                                         "http://example.com:/")),
                         filteringClass("userinfo", List.of("http://user@example.com/", "http://user:pw@example.com/")),
                         filteringClass(
-                                "dotted quads with leading-zero octets (R-001, E23)",
+                                "dotted quads with leading-zero octets",
                                 List.of(
                                         "http://0177.0.0.1/",
                                         "http://012.0.0.1/",
@@ -249,7 +243,7 @@ class UrlFormatFilterCorpusTest {
                 () -> "the gate's url verdict must equal the engine's filtering verdict for " + value);
     }
 
-    // --- (b) rows outside the filtering classes: the gate's verdict must equal C-FORMAT's, and the
+    // --- (b) rows outside the filtering classes: the gate's verdict must equal the url rule's, and the
     // --- difference from the engine's verdict must be exactly RECORDED_DIFFERENCES ---
 
     /**
@@ -279,23 +273,23 @@ class UrlFormatFilterCorpusTest {
     }
 
     /**
-     * Asserts that the gate's verdict for {@code value} equals C-FORMAT's, and that {@code value} is on
-     * {@link #RECORDED_DIFFERENCES} exactly when C-FORMAT's verdict differs from the engine's.
+     * Asserts that the gate's verdict for {@code value} equals the url rule's, and that {@code value} is on
+     * {@link #RECORDED_DIFFERENCES} exactly when the url rule's verdict differs from the engine's.
      *
      * @param value the (b) row's value
      */
     private static void assertDifferenceRow(String value) {
         boolean gate = verdict(GATE_VALIDATOR, value);
-        boolean cFormat = cFormatVerdict(value);
+        boolean urlRule = urlRuleVerdict(value);
         boolean engine = verdict(ENGINE_VALIDATOR, value);
         boolean expectedDifference = RECORDED_DIFFERENCES.contains(value);
         assertAll(
                 () -> assertEquals(
-                        cFormat, gate, () -> "the gate's url verdict must equal C-FORMAT's verdict for " + value),
+                        urlRule, gate, () -> "the gate's url verdict must equal the url rule's verdict for " + value),
                 () -> assertEquals(
                         expectedDifference,
-                        cFormat != engine,
-                        () -> "the recorded-difference list must name exactly the rows where C-FORMAT's verdict"
+                        urlRule != engine,
+                        () -> "the recorded-difference list must name exactly the rows where the url rule's verdict"
                                 + " differs from the engine's: " + value));
     }
 
@@ -311,12 +305,12 @@ class UrlFormatFilterCorpusTest {
     }
 
     /**
-     * C-FORMAT's frozen {@code url} rule, applied directly with {@link URI}.
+     * The gate's {@code url} rule, applied directly with {@link URI}.
      *
      * @param value the candidate value
-     * @return C-FORMAT's verdict
+     * @return the rule's verdict
      */
-    private static boolean cFormatVerdict(String value) {
+    private static boolean urlRuleVerdict(String value) {
         URI uri;
         try {
             uri = new URI(value);
@@ -387,8 +381,8 @@ class UrlFormatFilterCorpusTest {
     }
 
     /**
-     * Returns whether {@code label} is a dotted-quad octet under C-FORMAT's rule as refined by R-001
-     * (ruling E23): all ASCII digits, and, when longer than one character, not starting with {@code 0}
+     * Returns whether {@code label} is a dotted-quad octet under the gate's rule: all ASCII
+     * digits, and, when longer than one character, not starting with {@code 0}
      * (a label like {@code 08} or {@code 0177} is not an octet, so the engine's octal reading of it can
      * never widen the filtering the four-octet test performs).
      *

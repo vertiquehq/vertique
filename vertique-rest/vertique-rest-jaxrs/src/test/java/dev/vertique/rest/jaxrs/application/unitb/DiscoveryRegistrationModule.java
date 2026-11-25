@@ -13,8 +13,8 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * TP-002's registration module for {@link DiscoveryApi}. Reused, with different activation
- * configuration, across every TP-002 row: active alone (row a), active beside {@link ManagementApi}
+ * Registration module for {@link DiscoveryApi}. Reused, with different activation
+ * configuration, across every discovery row: active alone (row a), active beside {@link ManagementApi}
  * (rows b and c), and inactive beside an active {@link ManagementApi} (row d) — the registration
  * itself never changes; only {@link #DISCOVERY_APPLICATION_REGISTRATION_CONDITIONS}'s configured
  * property does.

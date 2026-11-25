@@ -9,7 +9,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
-/** TP-007's resource for {@link ContractBApi}, whose sole operation's id is {@code opB}. */
+/** The resource for {@link ContractBApi}, whose sole operation's id is {@code opB}. */
 @Path("/contract/b")
 public class ContractBResource {
 

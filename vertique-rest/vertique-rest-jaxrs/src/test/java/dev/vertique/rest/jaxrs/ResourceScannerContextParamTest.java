@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies that {@link ResourceScanner} classifies all {@code @Context}-annotated parameters
  * (and all natively injectable types) as {@link ResourceMethodMeta.ParamSource#CONTEXT}
- * (FR-REST-166/167/179 — single CONTEXT source, runtime reflection-path flip).
+ * (a single CONTEXT source on the runtime reflection path).
  *
  * <p>Specifically:
  * <ul>

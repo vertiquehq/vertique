@@ -57,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). Three of the four tests decode the response body as the problem detail and
+ * is correct. Three of the four tests decode the response body as the problem detail and
  * the fourth compares it to the resource's echoed binding, so a silently emptied body would be
  * reported as a validation defect that did not happen. A {@link WebClient} aggregates the body into
  * its {@code HttpResponse} before completing the send, so the race is closed by construction rather

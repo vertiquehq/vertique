@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs.application.dupname;
 import dev.vertique.rest.core.application.RestApplication;
 
 /**
- * TP-008's first simulated compilation unit: registers the name {@code api}, the same name
+ * The first simulated compilation unit: registers the name {@code api}, the same name
  * {@link UnitTwoApi} registers from a second, independent registration module.
  */
 @RestApplication(name = "api", path = "/api/one", resources = UnitOneResource.class)

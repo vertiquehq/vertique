@@ -9,11 +9,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-004 (T004) fixture: the sole resource of {@link OtherMountModule}'s hand-built
+ * Conflict fixture: the sole resource of {@link OtherMountModule}'s hand-built
  * {@code /other/*} mount (case (f)), beside the reused
  * {@link dev.vertique.rest.jaxrs.application.conflict.paths.PathConflictApis.RootApi RootApi} at
  * the root path: {@code /} conflicts with every mount. Its resource method's name is unique
- * across every T004 conflict fixture.
+ * across every conflict fixture.
  */
 @Path("/other-probe")
 public class OtherResource {

@@ -23,14 +23,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice-3 migration tests for the {@link RequestBodyDecoder} SPI and the four built-in decoders,
+ * Tests for the {@link RequestBodyDecoder} SPI and the four built-in decoders,
  * verifying that {@code decode(...)} now accepts a transport-neutral {@link RequestValue} body
- * (FR-024) instead of {@code io.vertx.openapi.validation.RequestParameter}.
+ * instead of {@code io.vertx.openapi.validation.RequestParameter}.
  *
  * <p>Each decoder test wraps a value with {@link RequestValue#of(Object)} and asserts that the
  * decoder reads it through the {@link RequestValue} accessors with the same semantics it previously
  * had against {@code RequestParameter}. The final parity test exercises the numeric / buffer /
- * array / boolean accessors behaviourally (FR-024 "behavioral, not just compiles").
+ * array / boolean accessors behaviourally.
  */
 class RequestBodyDecoderTest {
 

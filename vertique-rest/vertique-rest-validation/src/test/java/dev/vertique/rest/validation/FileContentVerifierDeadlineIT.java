@@ -54,7 +54,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Issue #230 acceptance proof: over a real multipart HTTP exchange, a {@link FileContentVerifier}
+ * Proves that, over a real multipart HTTP exchange, a {@link FileContentVerifier}
  * whose future never resolves is bounded by {@code jaxrs.fileContentVerifierDeadlineMs} and fails
  * closed, while the cooperative cancellation contract stays with the implementor.
  *

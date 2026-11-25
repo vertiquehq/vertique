@@ -17,8 +17,8 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger components for {@link JaxRsApplicationCompositionTest} (TP-001, TP-002, TP-004, TP-005,
- * TP-015), built from the shared native fixture modules plus this lane's single-proof fixtures.
+ * Dagger components for {@link JaxRsApplicationCompositionTest}, built from the shared native fixture modules plus the
+ * single-proof fixtures.
  * Every component's factory takes the application configuration as a
  * {@code @BindsInstance @VertxConfig JsonObject}.
  */
@@ -49,7 +49,7 @@ public final class CompositionComponents {
     /**
      * The standard fixture set: {@code unita} (Catalog, Extra, Disabled), {@code unita.scoped}
      * ({@code ScopedResource}), {@code unitb} ({@code PublicApi}, {@code ManagementApi}), and
-     * {@code manual} (BlobLike). Used by TP-001 and TP-004.
+     * {@code manual} (BlobLike). Used by the rows that need the standard fixture set.
      */
     @Singleton
     @Component(
@@ -107,7 +107,7 @@ public final class CompositionComponents {
     }
 
     /**
-     * TP-002 row (a): {@code unita}, {@code manual}, and only the single-proof
+     * Discovery row (a): {@code unita}, {@code manual}, and only the single-proof
      * {@link dev.vertique.rest.jaxrs.application.unitb.DiscoveryRegistrationModule
      * DiscoveryRegistrationModule} — no {@code unitb} module, so {@code DiscoveryApi} is the only
      * registration, proving the sole discovery rule's success path.
@@ -138,7 +138,7 @@ public final class CompositionComponents {
     }
 
     /**
-     * TP-002 rows (b) to (d): the standard fixture set plus the single-proof
+     * Discovery rows (b) to (d): the standard fixture set plus the single-proof
      * {@link dev.vertique.rest.jaxrs.application.unitb.DiscoveryRegistrationModule
      * DiscoveryRegistrationModule}, so {@code DiscoveryApi} is never the sole registration,
      * whatever the activation configuration.
@@ -170,7 +170,7 @@ public final class CompositionComponents {
     }
 
     /**
-     * TP-015 (G-06 (a)): zero declarations (no registration module at all) plus the single-proof
+     * Re-entry row (a): zero declarations (no registration module at all) plus the single-proof
      * {@link ReentrantResourceModule}, so {@code RestModule.jaxRsRouterMount} runs its
      * zero-declaration body; the component-scoped re-entry guard around that body turns the
      * resource's dependency on this component's own {@code Set<RouterMount>} into a named failure.
@@ -194,7 +194,7 @@ public final class CompositionComponents {
     }
 
     /**
-     * TP-015 (G-06 (b)): {@code unitb} (for {@code PublicApi}, whose static resource list lists
+     * Re-entry row (b): {@code unitb} (for {@code PublicApi}, whose static resource list lists
      * {@link ReentrantResourceModule}'s resource in explicit-mode rows) plus the single-proof
      * {@link ReentrantResourceModule}, so the composer's manual-resource resolution (not the
      * zero-declaration body) is the one that re-enters.
@@ -224,7 +224,7 @@ public final class CompositionComponents {
     }
 
     /**
-     * TP-015 (W-1, round 2): zero declarations (no registration module at all) plus the single-proof
+     * Nested-composition row: zero declarations (no registration module at all) plus the single-proof
      * {@link NestedCompositionResourceModule}, whose resource builds and resolves a SECOND,
      * independent {@link ZeroDeclarationComponent} of its own inside its own construction.
      */

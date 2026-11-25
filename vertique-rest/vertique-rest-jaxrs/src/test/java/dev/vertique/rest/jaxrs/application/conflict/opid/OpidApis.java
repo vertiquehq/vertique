@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs.application.conflict.opid;
 import dev.vertique.rest.core.application.RestApplication;
 
 /**
- * TP-009's ported cross-mount operationId fixtures (the pre-existing lettered cases (a) to (f)),
+ * Ported cross-mount operationId fixtures (the pre-existing lettered cases (a) to (f)),
  * each a native {@code @RestApplication} declaring interface in place of the former {@code
  * jakarta.ws.rs.core.Application} subclass. Never implemented: native composition reads each
  * interface's registration directly.

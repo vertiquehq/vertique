@@ -42,7 +42,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for profile-aware request-body first parse (FR-JSON-024/024A, slice 2.2).
+ * Integration tests for profile-aware request-body first parse.
  *
  * <p>When a resource method selects an explicit JSON profile (here via a class-level
  * {@code @JsonProfile("strict-test")}), {@code DefaultBoundRequest} must perform the FIRST PARSE of
@@ -62,7 +62,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
  * A {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  *
  * <p>Every request body goes out via {@code sendBuffer} with an explicit
@@ -154,7 +154,7 @@ public class ProfiledBodyParseIT {
      * Builds the {@code no-coercion} profile: a Jackson mapper with Vert.x JSON support plus
      * {@code FAIL_ON_UNKNOWN_PROPERTIES} enabled and {@code ALLOW_COERCION_OF_SCALARS} disabled. Both
      * are MATERIALIZATION-time features — they fire when the intermediate JSON is bound to the DTO, not
-     * at the first parse (slice 2.3, FR-JSON-024B/022/023).
+     * at the first parse.
      *
      * <p>The load-bearing divergence is {@code ALLOW_COERCION_OF_SCALARS}: the floor's {@code vertique}
      * mapper leaves it ENABLED (a Jackson default neither reserved profile touches), so it binds a
@@ -235,7 +235,7 @@ public class ProfiledBodyParseIT {
 
     /**
      * Resource selecting the {@code no-coercion} profile, whose endpoints prove the MATERIALIZATION
-     * sites (slice 2.3): the profile mapper — with scalar coercion DISABLED — performs the POJO and
+     * sites: the profile mapper — with scalar coercion DISABLED — performs the POJO and
      * collection binding. A JSON string for the primitive {@code count} is rejected by the profile
      * (400) where the unannotated floor route binds the same body (200).
      */
@@ -245,7 +245,7 @@ public class ProfiledBodyParseIT {
 
         /**
          * Echoes the body's {@code name}; a string value for the primitive {@code count} is rejected at
-         * POJO materialization by the {@code no-coercion} profile mapper (FR-JSON-024B), surfacing as a
+         * POJO materialization by the {@code no-coercion} profile mapper, surfacing as a
          * 400 before the method runs. The floor's mapper would coerce the string and return 200.
          *
          * @param payload the request body bean, materialized by the {@code no-coercion} profile mapper
@@ -262,7 +262,7 @@ public class ProfiledBodyParseIT {
         /**
          * Echoes the size of a {@code List<Payload>} body; a string value for an element's primitive
          * {@code count} is rejected at collection materialization by the {@code no-coercion} profile
-         * mapper (FR-JSON-022/023), surfacing as a 400 before the method runs. Proves the
+         * mapper, surfacing as a 400 before the method runs. Proves the
          * collection/array binding site routes through the profile mapper.
          *
          * @param payloads the request body list, materialized by the {@code no-coercion} profile mapper
@@ -337,7 +337,7 @@ public class ProfiledBodyParseIT {
         // string "5" into the primitive int `count` must throw on the no-coercion PROFILE mapper at
         // convertValue and surface as 400. The floor mapper (coercion enabled) coerces "5" and
         // returns 200 on the identical body (see floorProfile_coercedScalar_acceptedAsToday), so a 400
-        // here proves the PROFILE mapper did the bind (slice 2.3 POJO site, FR-JSON-024B).
+        // here proves the PROFILE mapper did the bind at the POJO site.
         deploy(
                 vertx,
                 ctx,
@@ -359,8 +359,8 @@ public class ProfiledBodyParseIT {
     void strictProfile_listBody_usesProfileMapper(VertxTestContext ctx) {
         // The List<Payload> body materialization must route through the profile mapper too: a string "5"
         // for an element's primitive int `count` must be rejected with 400, proving the collection/array
-        // binding site (not just the POJO site) uses the profile mapper (slice 2.3 collection site,
-        // FR-JSON-022/023). The floor path would coerce and return 200.
+        // binding site (not just the POJO site) uses the profile mapper at the collection site.
+        // The floor path would coerce and return 200.
         deploy(
                 vertx,
                 ctx,

@@ -70,28 +70,29 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.invocation.Invocation;
 
 /**
- * Proofs for the {@code web-validation} gate's reused format checks: TP-001,
- * TP-002, TP-003, TP-006, and TP-007. TP-004 ({@code url}'s filtering corpus) and TP-005 (the HTTP
- * integration test) live in their own classes.
+ * Proofs for the {@code web-validation} gate's reused format checks: long values judged without
+ * overflow, conformance with the JSON Schema Test Suite, the documented verdict differences against
+ * the engine, the private copy's format renames, and the default-limit budgets. The filtering corpus
+ * for {@code url} and the HTTP integration test live in their own classes.
  *
- * <p>"The gate's compiled validator" (TP-002, TP-003) is {@code new PatternInputGuard(4096,
+ * <p>"The gate's compiled validator" is {@code new PatternInputGuard(4096,
  * 262_144).compile(schema, GATE_OPTIONS)}; "the engine's verdict" is {@code
  * Validator.create(JsonSchema.of(schema.copy()), GATE_OPTIONS)}, the unguarded compilation with no
- * custom format validator (E4). "C-FORMAT's verdict" for a value is computed directly with {@link URI}
- * and the single-pass and scanner rules C-FORMAT's frozen table states ({@link #cFormatVerdict(String,
- * String)} and its per-format helpers below), never through the new production classes this task adds
- * (E5): {@code UriFormatChecks}, {@code PointerFormatChecks}, {@code UrlFormatCheck}, and {@code
- * UriTemplateSyntax} do not exist yet, and this proof never references them.
+ * custom format validator. "The reference verdict" for a value is computed directly with {@link URI}
+ * and the single-pass and scanner rules the format table states ({@link #referenceVerdict(String,
+ * String)} and its per-format helpers below), never through the production format-check classes
+ * ({@code UriFormatChecks}, {@code PointerFormatChecks}, {@code UrlFormatCheck}, and {@code
+ * UriTemplateSyntax}), which this proof never references.
  *
- * <p>At this task's baseline (T004's head on the FR-020 branch) the gate-private copy still carries the
- * seven formats' standard names, so vertx-json-schema's own regular expressions decide them: the
- * overflow and timeout reds below are that engine deciding a value its own checks cannot handle.
+ * <p>The engine's own regular expressions decide the seven formats when the gate-private copy keeps
+ * their standard names, so an overflow or timeout in the rows below would be that engine deciding a
+ * value its own checks cannot handle.
  */
 class FormatCheckReuseTest {
 
     /**
      * The gate's compile options, copied literally from {@code WebValidationStrategy.SCHEMA_OPTIONS}
-     * (E4), so every validator here characterizes the engine and the gate exactly as the gate
+     * so every validator here characterizes the engine and the gate exactly as the gate
      * configures them.
      */
     private static final JsonSchemaOptions GATE_OPTIONS = new JsonSchemaOptions()
@@ -99,34 +100,35 @@ class FormatCheckReuseTest {
             .setBaseUri("https://vertique.local/")
             .setOutputFormat(OutputFormat.Basic);
 
-    /** T004's default per-string limit. */
+    /** The default per-string limit. */
     private static final int MAX_CHARS = 4096;
 
-    /** T004's default per-request limit. */
+    /** The default per-request limit. */
     private static final int MAX_TOTAL_CHARS = 262_144;
 
-    /** The stack size TP-001, TP-006's {@code gateFor} row, and TP-007 validate on (S2-001). */
+    /** The stack size the long-value rows, the {@code gateFor} rewrite row, and the budget rows validate on. */
     private static final long ONE_MEGABYTE_STACK = 1 << 20;
 
-    /** TP-001, TP-002, TP-003, and TP-006's per-call timeout. */
+    /** The per-call timeout of the long-value, suite, engine-difference, and rewrite rows. */
     private static final Duration ROW_TIMEOUT = Duration.ofSeconds(10);
 
-    /** TP-007's per-row timeout. */
+    /** The per-row timeout of the budget rows. */
     private static final Duration BUDGET_TIMEOUT = Duration.ofSeconds(30);
 
     /** The operation id every gate row builds its descriptor with. */
     private static final String OPERATION_ID = "formatCheckReuse";
 
     /**
-     * The 4,096-character value the baseline engine's {@code url} expression is still evaluating after a
-     * 10-second cutoff on a 1 MB stack (step 3, E7): {@code "http://" + "a".repeat(4089)}, a single-label
-     * host, invalid under C-FORMAT and the engine alike. TP-001's last row (E11): its red leaves a daemon
-     * thread spinning, so this class's overflow run stays in its own Maven invocation.
+     * The 4,096-character value the engine's own {@code url} expression is still evaluating after a
+     * 10-second cutoff on a 1 MB stack: {@code "http://" + "a".repeat(4089)}, a single-label
+     * host, invalid under the reference verdict and the engine alike. It is the long-value rows' last
+     * row: without format-check reuse it leaves a daemon thread spinning, so this class's overflow run
+     * stays in its own Maven invocation.
      */
     private static final String SLOW_URL_4096 = "http://" + "a".repeat(4089);
 
     /**
-     * The default-limit proofs' envelope (CX-009): the default {@code maxBodySize} of 2 MiB less the 8
+     * The default-limit proofs' envelope: the default {@code maxBodySize} of 2 MiB less the 8
      * bytes of {@code {"v":""}}.
      */
     private static final int BODY_MAX = 2_097_144;
@@ -135,12 +137,12 @@ class FormatCheckReuseTest {
     private static final int HEADER_MAX = 8_000;
 
     /**
-     * TP-007's {@link #HEADER_MAX} rows go through a header parameter of this name (R-003: the contract's
-     * Given routes them through a header parameter, not the body).
+     * The budget rows at {@link #HEADER_MAX} go through a header parameter of this name, not the
+     * body.
      */
     private static final String BUDGET_HEADER_NAME = "X-Format-Value";
 
-    /** TP-007's elapsed-time budget (S4-001). */
+    /** The budget rows' elapsed-time budget. */
     private static final long BUDGET_ELAPSED_NANOS = Duration.ofMillis(250).toNanos();
 
     /**
@@ -150,13 +152,13 @@ class FormatCheckReuseTest {
      */
     private static final int BUDGET_TIMED_RUNS = 3;
 
-    /** TP-007's allocation budget's fixed term (S4-001): 1 MiB. */
+    /** The allocation budget's fixed term: 1 MiB. */
     private static final long BUDGET_ALLOCATION_FIXED = 1L << 20;
 
-    /** TP-007's allocation budget's per-character term (S4-001). */
+    /** The allocation budget's per-character term. */
     private static final long BUDGET_ALLOCATION_PER_CHAR = 16L;
 
-    /** E20's short invalid oracle for each format: at most 16 characters, rejected by the engine too. */
+    /** A short invalid oracle for each format: at most 16 characters, rejected by the engine too. */
     private static final Map<String, String> SHORT_INVALID = Map.ofEntries(
             Map.entry("uri", "a b"),
             Map.entry("uri-reference", "a b"),
@@ -166,7 +168,7 @@ class FormatCheckReuseTest {
             Map.entry("json-pointer-uri-fragment", "/a"),
             Map.entry("uri-template", "{"));
 
-    /** The seven formats C-FORMAT reuses, in the frozen table's order. */
+    /** The seven reused formats, in the format table's order. */
     private static final List<String> SEVEN_FORMATS = List.of(
             "uri",
             "uri-reference",
@@ -177,12 +179,12 @@ class FormatCheckReuseTest {
             "json-pointer-uri-fragment");
 
     // =========================================================================================
-    // TP-001 — Valid and invalid 4,096-character values are judged without overflow, unbounded
+    // Valid and invalid 4,096-character values are judged without overflow, unbounded
     // =========================================================================================
 
     /**
-     * TP-001. Given a body schema {@code {"type": "string", "format": F}} for each of the seven formats
-     * and one valid and one invalid value of exactly 4,096 characters under C-FORMAT's verdict (plus a
+     * Given a body schema {@code {"type": "string", "format": F}} for each of the seven formats
+     * and one valid and one invalid value of exactly 4,096 characters under the reference verdict (plus a
      * small-limit array-body row per format), when the gate handler handles each request on the 1 MB-stack
      * thread under the 10-second preemptive timeout, then no request raises {@code StackOverflowError} or
      * any other throwable, every valid value is accepted, every invalid value's one detail matches its
@@ -192,7 +194,7 @@ class FormatCheckReuseTest {
      * @param row the row
      * @throws Throwable never, but {@link Executable#execute()} declares it
      */
-    @DisplayName("TP-001: reused formats judge long values without overflow, unbounded")
+    @DisplayName("reused formats judge long values without overflow, unbounded")
     @ParameterizedTest(name = "{0}")
     @MethodSource("reusedFormatsJudgeLongValuesWithoutOverflowRows")
     void reusedFormatsJudgeLongValuesWithoutOverflow(Executable row) throws Throwable {
@@ -200,9 +202,9 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * TP-001's rows: one valid and one invalid 4,096-character row per format (url and uri-template carry
-     * extra rows per the Given), then one small-limit array-body row per format. {@link #SLOW_URL_4096} is
-     * last (E11).
+     * The long-value rows: one valid and one invalid 4,096-character row per format (url and uri-template
+     * carry extra rows), then one small-limit array-body row per format. {@link #SLOW_URL_4096} is
+     * last.
      *
      * @return the rows
      */
@@ -245,7 +247,7 @@ class FormatCheckReuseTest {
                 "https://example.com/" + "{a}".repeat(1358) + "{b",
                 false));
 
-        // SLOW_URL_4096 must be last (E11): its baseline red leaves a daemon thread spinning.
+        // SLOW_URL_4096 must be last: without format-check reuse it leaves a daemon thread spinning.
         rows.add(longValueRow("url", "invalid, SLOW_URL_4096", SLOW_URL_4096, false));
 
         for (String format : SEVEN_FORMATS) {
@@ -266,12 +268,12 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Builds one of TP-001's long-value rows.
+     * Builds one long-value row.
      *
      * @param format the format
      * @param label  the row's label suffix
      * @param value  the 4,096-character value
-     * @param valid  whether the value is valid under C-FORMAT's verdict
+     * @param valid  whether the value is valid under the reference verdict
      * @return the row
      */
     private static Named<Executable> longValueRow(String format, String label, String value, boolean valid) {
@@ -279,7 +281,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Asserts one TP-001 long-value row: the gate handler, on the 1 MB-stack thread, judges {@code value}
+     * Asserts one long-value row: the gate handler, on the 1 MB-stack thread, judges {@code value}
      * without a throwable, accepting it when {@code valid} and otherwise producing one detail matching the
      * format's short invalid oracle.
      *
@@ -315,7 +317,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * TP-001's small-limit row: with {@code validationPatternMaxChars} 16 and
+     * The small-limit row: with {@code validationPatternMaxChars} 16 and
      * {@code validationPatternMaxTotalChars} 32, an array body holding {@code format}'s valid
      * 4,096-character value twice must be accepted, with no {@code patternInputLength} or
      * {@code patternInputTotalLength} detail: the format is neither bounded (the value exceeds 16) nor
@@ -348,8 +350,8 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Returns the detail the gate reports for {@code format}'s short invalid value (E20), used as TP-001's
-     * per-format oracle.
+     * Returns the detail the gate reports for {@code format}'s short invalid value, used as the long-value
+     * rows' per-format oracle.
      *
      * @param format the format
      * @return the one detail
@@ -368,19 +370,19 @@ class FormatCheckReuseTest {
     }
 
     // =========================================================================================
-    // TP-002 — The reused checks follow the JSON Schema Test Suite, with recorded differences only
+    // The reused checks follow the JSON Schema Test Suite, with recorded differences only
     // =========================================================================================
 
     /**
-     * TP-002. Given every case of the five copied suite files, the derived {@code json-pointer-uri-fragment}
+     * Given every case of the five copied suite files, the derived {@code json-pointer-uri-fragment}
      * cases, the single-pass rows, and the extra fragment rows, when each is validated through the gate's
      * compiled validator, then every case gets the suite's verdict except exactly the cases on its format's
-     * recorded-difference list (uri-template has none, F1).
+     * recorded-difference list (uri-template has none).
      *
      * @param row the row
      * @throws Throwable never, but {@link Executable#execute()} declares it
      */
-    @DisplayName("TP-002: reused formats follow the JSON Schema Test Suite, with recorded differences only")
+    @DisplayName("reused formats follow the JSON Schema Test Suite, with recorded differences only")
     @ParameterizedTest(name = "{0}")
     @MethodSource("reusedFormatsFollowTheJsonSchemaTestSuiteRows")
     void reusedFormatsFollowTheJsonSchemaTestSuite(Executable row) throws Throwable {
@@ -388,14 +390,14 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * {@code uri.json}'s two recorded differences (step 3): {@code java.net.URI} accepts a non-numeric port
+     * {@code uri.json}'s two recorded differences: {@code java.net.URI} accepts a non-numeric port
      * and a leading zero in an IPv4 address embedded in an IPv6 literal, both of which the suite rejects.
      */
     private static final Set<String> URI_JSON_DIFFERENCES =
             Set.of("non-numeric port is invalid", "leading zero in an embedded IPv4 address is invalid");
 
     /**
-     * {@code uri-reference.json}'s four recorded differences (step 3): an empty network-path authority
+     * {@code uri-reference.json}'s four recorded differences: an empty network-path authority
      * ({@code java.net.URI} rejects it, the suite accepts it), and three cases where {@code java.net.URI}
      * is more lenient than the suite (a non-numeric port, more than one at-sign, a leading zero in an
      * embedded IPv4 address).
@@ -406,18 +408,18 @@ class FormatCheckReuseTest {
             "more than one at-sign in the authority",
             "a leading zero in the IPv4 part of an IPv6 literal");
 
-    /** {@code json-pointer.json}: no recorded difference (step 3: the single-pass rule matches every case). */
+    /** {@code json-pointer.json}: no recorded difference: the single-pass rule matches every case. */
     private static final Set<String> JSON_POINTER_JSON_DIFFERENCES = Set.of();
 
     /**
-     * {@code relative-json-pointer.json}: no recorded difference (step 3: the prefix-plus-pointer rule
-     * matches every case).
+     * {@code relative-json-pointer.json}: no recorded difference: the prefix-plus-pointer rule
+     * matches every case.
      */
     private static final Set<String> RELATIVE_JSON_POINTER_JSON_DIFFERENCES = Set.of();
 
     /**
      * The {@code json-pointer.json} string cases, percent-encoded and prefixed with {@code #}: no recorded
-     * difference (step 3).
+     * difference.
      */
     private static final Set<String> JSON_POINTER_URI_FRAGMENT_DIFFERENCES = Set.of();
 
@@ -458,7 +460,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Builds {@code uri-template.json}'s rows: every case must get the suite's verdict (F1, no difference
+     * Builds {@code uri-template.json}'s rows: every case must get the suite's verdict (there is no difference
      * list).
      *
      * @return the rows
@@ -479,7 +481,7 @@ class FormatCheckReuseTest {
     /**
      * Derives {@code json-pointer-uri-fragment}'s rows from {@code json-pointer.json}'s string cases: each
      * prefixed with {@code #}, its characters percent-encoded outside RFC 3986 {@code pchar / "/" / "?"}
-     * (E8), plus the non-string cases tested directly.
+     * plus the non-string cases tested directly.
      *
      * @return the rows
      */
@@ -510,7 +512,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * The extra {@code json-pointer-uri-fragment} rows (E8, TP-002's Given) and the single-pass rows (E14).
+     * The extra {@code json-pointer-uri-fragment} rows and the single-pass rows.
      *
      * @return the rows
      */
@@ -538,7 +540,7 @@ class FormatCheckReuseTest {
 
     /**
      * Percent-encodes every character of {@code value} (by UTF-8 byte) outside RFC 3986
-     * {@code pchar / "/" / "?"}, with {@code %} itself re-encoded as {@code %25} (E8).
+     * {@code pchar / "/" / "?"}, with {@code %} itself re-encoded as {@code %25}.
      *
      * @param value the string case's data
      * @return the encoded fragment content, without its leading {@code #}
@@ -558,7 +560,7 @@ class FormatCheckReuseTest {
 
     /**
      * Returns whether byte {@code c} is inside RFC 3986 {@code pchar / "/" / "?"} and so needs no
-     * percent-encoding; {@code %} is always excluded so it is always re-encoded (E8).
+     * percent-encoding; {@code %} is always excluded so it is always re-encoded.
      *
      * @param c the byte, as an unsigned int
      * @return whether it is safe unencoded
@@ -580,19 +582,19 @@ class FormatCheckReuseTest {
     }
 
     // =========================================================================================
-    // TP-003 — Verdict differences against the engine are exactly the documented list
+    // Verdict differences against the engine are exactly the documented list
     // =========================================================================================
 
     /**
-     * TP-003. Given a pinned corpus of at most 512-character values for the six formats other than
-     * {@code url} (TP-004 owns {@code url}), when each is validated through the gate's compiled validator,
-     * then the gate's verdict equals C-FORMAT's verdict on every row, so the rows where the gate differs
+     * Given a pinned corpus of at most 512-character values for the six formats other than
+     * {@code url} (which has its own corpus class), when each is validated through the gate's compiled validator,
+     * then the gate's verdict equals the reference verdict on every row, so the rows where the gate differs
      * from the engine are exactly the documented difference list.
      *
      * @param row the row
      * @throws Throwable never, but {@link Executable#execute()} declares it
      */
-    @DisplayName("TP-003: engine verdict differences are exactly the documented list")
+    @DisplayName("engine verdict differences are exactly the documented list")
     @ParameterizedTest(name = "{0}")
     @MethodSource("engineVerdictDifferencesAreExactlyTheDocumentedListRows")
     void engineVerdictDifferencesAreExactlyTheDocumentedList(Executable row) throws Throwable {
@@ -600,7 +602,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * {@code uri}'s documented differences (step 3, extended by review round 1 finding R-002):
+     * {@code uri}'s documented differences:
      * {@code java.net.URI} rejects {@code "http://"}; a trailing {@code \n} the engine accepts;
      * {@code [0]} inside a query, which the engine rejects but {@link URI} parses; and an IPvFuture host
      * literal ({@code [v1.x]}), which the engine accepts but {@link URI} does not parse.
@@ -609,7 +611,7 @@ class FormatCheckReuseTest {
             Set.of("http://", "http://foo.bar/\n", "http://a.com/?x[0]=1", "http://[v1.x]/");
 
     /**
-     * {@code uri-reference}'s documented differences (step 3, extended by R-002): {@code java.net.URI}
+     * {@code uri-reference}'s documented differences: {@code java.net.URI}
      * rejects {@code "http://"} and {@code "a:"}, both of which the engine's expression accepts; a
      * trailing {@code \n} the engine accepts; {@code [0]} inside a query or a bare fragment, which the
      * engine rejects but {@link URI} parses; and an IPvFuture host literal, which the engine accepts but
@@ -619,39 +621,38 @@ class FormatCheckReuseTest {
             Set.of("http://", "a:", "/p\n", "http://a.com/?x[0]=1", "#[0]", "http://[v1.x]/");
 
     /**
-     * {@code json-pointer}'s one documented difference (R-002): a trailing {@code \n}, which is not an
-     * empty string and does not start with {@code /}, so C-FORMAT rejects it while the engine accepts it.
+     * {@code json-pointer}'s one documented difference: a trailing {@code \n}, which is not an
+     * empty string and does not start with {@code /}, so the reference verdict rejects it while the engine accepts it.
      */
     private static final Set<String> JSON_POINTER_CORPUS_DIFFERENCES = Set.of("\n");
 
     /**
-     * {@code relative-json-pointer}'s one documented difference (R-002): a trailing {@code \n} after the
-     * {@code 0} prefix, which C-FORMAT's {@code json-pointer} check on the remainder rejects while the
+     * {@code relative-json-pointer}'s one documented difference: a trailing {@code \n} after the
+     * {@code 0} prefix, which the reference {@code json-pointer} check on the remainder rejects while the
      * engine accepts.
      */
     private static final Set<String> RELATIVE_JSON_POINTER_CORPUS_DIFFERENCES = Set.of("0\n");
 
     /**
-     * {@code json-pointer-uri-fragment}'s documented differences (R-002): a trailing {@code \n}, which the
+     * {@code json-pointer-uri-fragment}'s documented differences: a trailing {@code \n}, which the
      * engine accepts; {@code %7E2} and a trailing {@code %7E}, whose percent-decoded tilde the engine's
-     * expression does not check the way C-FORMAT's {@code json-pointer} pass does; and a non-ASCII
+     * expression does not check the way the reference {@code json-pointer} pass does; and a non-ASCII
      * character, {@code ?}, and {@code [0]} after the leading {@code /}, all valid JSON-pointer reference
-     * tokens C-FORMAT accepts once percent-decoded through {@link URI}'s fragment, which the engine's
+     * tokens the reference verdict accepts once percent-decoded through {@link URI}'s fragment, which the engine's
      * expression rejects.
      */
     private static final Set<String> JSON_POINTER_URI_FRAGMENT_CORPUS_DIFFERENCES =
             Set.of("#/a\n", "#/%7E2", "#/%7E", "#/ä", "#/a?b", "#/a[0]");
 
     /**
-     * {@code uri-template}'s documented differences (step 3, E14; extended by review round 1 findings
-     * R-002 and R-005, and by the closing-round PIT contract-gap rows): the engine's expression does not
+     * {@code uri-template}'s documented differences: the engine's expression does not
      * accept a dotted variable name ({@code {a.b}}), or one whose second label is a percent-encoded
      * triplet ({@code {a.%41}}), both of which RFC 6570 and the scanner accept; a trailing {@code \n}, an
      * apostrophe, U+0085, a lone high surrogate embedded in a literal, and U+FFFF, on which the scanner
      * and the engine's expression disagree in both directions; a lone high surrogate at the end of the
      * value and a lone low surrogate, both of which the scanner rejects and the engine's expression
      * accepts; and U+E0001, U+EFFFE, and U+FFFFE, each outside RFC 3987's {@code ucschar} range (the
-     * {@code %xE1000-EFFFD} and {@code %xF0000-FFFFD} bands exclude them, R-005) but accepted by the
+     * {@code %xE1000-EFFFD} and {@code %xF0000-FFFFD} bands exclude them) but accepted by the
      * engine's expression.
      */
     private static final Set<String> URI_TEMPLATE_CORPUS_DIFFERENCES = Set.of(
@@ -693,8 +694,7 @@ class FormatCheckReuseTest {
                 "http://[::1]/",
                 "http://",
                 "a:",
-                // R-002 (review round 1): a bracketed query index and an IPvFuture host, shared by uri
-                // and uri-reference (the finding's "uri/uri-reference" class)
+                // a bracketed query index and an IPvFuture host, shared by uri and uri-reference
                 "http://a.com/?x[0]=1",
                 "#[0]",
                 "http://[v1.x]/");
@@ -702,7 +702,7 @@ class FormatCheckReuseTest {
             rows.add(corpusRow("uri", value, URI_CORPUS_DIFFERENCES));
             rows.add(corpusRow("uri-reference", value, URI_REFERENCE_CORPUS_DIFFERENCES));
         }
-        // R-002: a trailing newline, one row per format since each format's grammar starts differently
+        // a trailing newline, one row per format since each format's grammar starts differently
         rows.add(corpusRow("uri", "http://foo.bar/\n", URI_CORPUS_DIFFERENCES));
         rows.add(corpusRow("uri-reference", "/p\n", URI_REFERENCE_CORPUS_DIFFERENCES));
 
@@ -713,11 +713,11 @@ class FormatCheckReuseTest {
             rows.add(corpusRow("relative-json-pointer", value, RELATIVE_JSON_POINTER_CORPUS_DIFFERENCES));
             rows.add(corpusRow("json-pointer-uri-fragment", value, JSON_POINTER_URI_FRAGMENT_CORPUS_DIFFERENCES));
         }
-        // R-002: a trailing newline, one row per pointer format (each format's own prefix rule differs)
+        // a trailing newline, one row per pointer format (each format's own prefix rule differs)
         rows.add(corpusRow("json-pointer", "\n", JSON_POINTER_CORPUS_DIFFERENCES));
         rows.add(corpusRow("relative-json-pointer", "0\n", RELATIVE_JSON_POINTER_CORPUS_DIFFERENCES));
         rows.add(corpusRow("json-pointer-uri-fragment", "#/a\n", JSON_POINTER_URI_FRAGMENT_CORPUS_DIFFERENCES));
-        // R-002: percent-decoded tilde escapes and reference tokens valid only after fragment decoding
+        // percent-decoded tilde escapes and reference tokens valid only after fragment decoding
         rows.add(corpusRow("json-pointer-uri-fragment", "#/%7E2", JSON_POINTER_URI_FRAGMENT_CORPUS_DIFFERENCES));
         rows.add(corpusRow("json-pointer-uri-fragment", "#/%7E", JSON_POINTER_URI_FRAGMENT_CORPUS_DIFFERENCES));
         rows.add(corpusRow("json-pointer-uri-fragment", "#/ä", JSON_POINTER_URI_FRAGMENT_CORPUS_DIFFERENCES));
@@ -743,8 +743,7 @@ class FormatCheckReuseTest {
                 "{=a}",
                 "{a",
                 "a}",
-                // Closing-round PIT contract-gap rows: literal characters and structural edge cases the
-                // corpus above does not yet reach.
+                // literal characters and structural edge cases the corpus above does not yet reach
                 "a~b",
                 "a\"b",
                 "{a%41}",
@@ -767,7 +766,7 @@ class FormatCheckReuseTest {
         for (String value : templateCorpus) {
             rows.add(corpusRow("uri-template", value, URI_TEMPLATE_CORPUS_DIFFERENCES));
         }
-        // R-002: a trailing newline in a literal, and literal characters on which the scanner and the
+        // a trailing newline in a literal, and literal characters on which the scanner and the
         // engine's expression disagree in both directions (an apostrophe, U+0085, a lone high surrogate,
         // and U+FFFF)
         rows.add(corpusRow("uri-template", "{a}\n", URI_TEMPLATE_CORPUS_DIFFERENCES));
@@ -775,14 +774,13 @@ class FormatCheckReuseTest {
         rows.add(corpusRow("uri-template", "a\u0085b", URI_TEMPLATE_CORPUS_DIFFERENCES));
         rows.add(corpusRow("uri-template", "a\uD800b", URI_TEMPLATE_CORPUS_DIFFERENCES));
         rows.add(corpusRow("uri-template", "a\uFFFFb", URI_TEMPLATE_CORPUS_DIFFERENCES));
-        // R-005: U+E0001 is below RFC 3987's ucschar lower bound 0xE1000 (the %xE1000-EFFFD band starts
+        // U+E0001 is below RFC 3987's ucschar lower bound 0xE1000 (the %xE1000-EFFFD band starts
         // above it), so the scanner rejects it while the engine's expression accepts it.
         rows.add(corpusRow("uri-template", "a\uDB40\uDC01b", URI_TEMPLATE_CORPUS_DIFFERENCES));
 
-        // Closing-round PIT contract-gap rows: a lone high surrogate at the end of the value, a lone low
-        // surrogate, and the code points immediately above the ucschar upper bounds the scanner enforces
-        // for the two highest supplementary ranges (R-005) \u2014 all four the engine's expression accepts and
-        // the scanner rejects.
+        // A lone high surrogate at the end of the value, a lone low surrogate, and the code points
+        // immediately above the ucschar upper bounds the scanner enforces for the two highest
+        // supplementary ranges: all four the engine's expression accepts and the scanner rejects.
         rows.add(corpusRow("uri-template", "a\uD800", URI_TEMPLATE_CORPUS_DIFFERENCES));
         rows.add(corpusRow("uri-template", "a\uDC00b", URI_TEMPLATE_CORPUS_DIFFERENCES));
         rows.add(corpusRow("uri-template", "a\uDB7F\uDFFEb", URI_TEMPLATE_CORPUS_DIFFERENCES));
@@ -818,8 +816,8 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Builds one TP-003 corpus row: the gate's verdict must equal C-FORMAT's verdict, and the row must be
-     * on {@code differences} exactly when C-FORMAT's verdict differs from the engine's.
+     * Builds one engine-difference corpus row: the gate's verdict must equal the reference verdict, and the row must be
+     * on {@code differences} exactly when the reference verdict differs from the engine's.
      *
      * @param format      the format
      * @param value       the corpus value
@@ -831,30 +829,30 @@ class FormatCheckReuseTest {
     }
 
     private static void assertCorpusRow(String format, String value, Set<String> differences) {
-        boolean cFormat = cFormatVerdict(format, value);
+        boolean reference = referenceVerdict(format, value);
         boolean engine = engineVerdict(format, value);
         boolean gate = gateVerdict(format, value);
         boolean expectedDifference = differences.contains(value);
         assertAll(
                 "(" + format + ") " + jsonLabel(value),
                 () -> assertEquals(
-                        cFormat,
+                        reference,
                         gate,
-                        () -> "(" + format + ") the gate's verdict must equal C-FORMAT's verdict for "
+                        () -> "(" + format + ") the gate's verdict must equal the reference verdict for "
                                 + jsonLabel(value)),
                 () -> assertEquals(
                         expectedDifference,
-                        cFormat != engine,
+                        reference != engine,
                         () -> "(" + format + ") the documented-difference list must name exactly the rows"
-                                + " where C-FORMAT differs from the engine: " + jsonLabel(value)));
+                                + " where the reference verdict differs from the engine: " + jsonLabel(value)));
     }
 
     // =========================================================================================
-    // TP-006 — The private copy renames exactly the seven formats; the shared schemas keep them
+    // The private copy renames exactly the seven formats; the shared schemas keep them
     // =========================================================================================
 
     /**
-     * TP-006. Given a matrix of hand-built schemas carrying each of the seven formats at seven structural
+     * Given a matrix of hand-built schemas carrying each of the seven formats at seven structural
      * positions, a node combining {@code format: uri} with a string {@code pattern}, the bounded and
      * unaffected formats, formats inside literal-keyword values, a property literally named {@code format},
      * a non-string {@code format} value, and an operation whose body and query-parameter schemas carry
@@ -864,7 +862,7 @@ class FormatCheckReuseTest {
      *
      * @param row the row
      */
-    @DisplayName("TP-006: the private copy renames exactly the seven formats")
+    @DisplayName("the private copy renames exactly the seven formats")
     @ParameterizedTest(name = "{0}")
     @MethodSource("rewriteRenamesTheReusedFormatsInThePrivateCopyRows")
     void rewriteRenamesTheReusedFormatsInThePrivateCopy(Executable row) throws Throwable {
@@ -919,7 +917,7 @@ class FormatCheckReuseTest {
                 .put("pattern", "^a+$")
                 .put("allOf", new JsonArray().add(new JsonObject().put("format", "x-vertique-pattern-input-bound")));
         rows.add(Named.of(
-                "(uri, pattern position) renamed, plus T004's bound entry",
+                "(uri, pattern position) renamed, plus the bound entry",
                 () -> assertRewriteRow(patternPlusFormat, patternPlusFormatExpected)));
 
         for (String format : List.of("idn-hostname", "idn-email", "regex")) {
@@ -931,8 +929,7 @@ class FormatCheckReuseTest {
                             "allOf",
                             new JsonArray().add(new JsonObject().put("format", "x-vertique-pattern-input-bound")));
             rows.add(Named.of(
-                    "(" + format + ") unchanged apart from T004's bound entry",
-                    () -> assertRewriteRow(input, expected)));
+                    "(" + format + ") unchanged apart from the bound entry", () -> assertRewriteRow(input, expected)));
         }
         for (String format : List.of("iri", "iri-reference", "date-time", "uuid", "x-app-format")) {
             JsonObject input = new JsonObject().put("type", "string").put("format", format);
@@ -974,7 +971,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Asserts one TP-006 rewrite row: {@code PatternInputGuard.rewrite(input)} equals {@code expected}
+     * Asserts one rewrite row: {@code PatternInputGuard.rewrite(input)} equals {@code expected}
      * exactly, {@code input} itself is left unmodified, and the rewrite returns a new instance.
      *
      * @param input    the row's input schema
@@ -992,7 +989,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * TP-006's {@code gateFor} row: a deep copy of the operation's body and query-parameter schemas taken
+     * The {@code gateFor} row: a deep copy of the operation's body and query-parameter schemas taken
      * before {@code gateFor}, compared to the same objects after it. {@code gateFor} never mutates or
      * replaces them, so publication, which copies before {@code gateFor}, never sees a renamed format.
      */
@@ -1029,29 +1026,29 @@ class FormatCheckReuseTest {
     }
 
     // =========================================================================================
-    // TP-007 — Default-limit proofs: every reused format stays within budget, or takes its fallback
+    // Default-limit proofs: every reused format stays within budget, or takes its fallback
     // =========================================================================================
 
     /**
-     * TP-007. Given grammar-shaped worst-case values of each reused format padded to {@link #BODY_MAX} and
+     * Given grammar-shaped worst-case values of each reused format padded to {@link #BODY_MAX} and
      * {@link #HEADER_MAX} characters, each valid shape with an invalid twin whose single violation is its
-     * last character (E9), when the gate handler handles each request on the 1 MB-stack thread under a
+     * last character, when the gate handler handles each request on the 1 MB-stack thread under a
      * 30-second preemptive timeout (warm-up, then timed) and the format validator judges the
      * already-renamed name directly (warm-up, then timed, measuring elapsed time and allocated bytes),
-     * then every row is answered with no throwable and C-FORMAT's verdict, and the timed run stays within
-     * the pre-decided budget.
+     * then every row is answered with no throwable and the reference verdict, and the timed run stays within
+     * the fixed budget.
      *
      * @param row the row
      * @throws Throwable never, but {@link Executable#execute()} declares it
      */
-    @DisplayName("TP-007: reused formats stay within budget at the default limits")
+    @DisplayName("reused formats stay within budget at the default limits")
     @ParameterizedTest(name = "{0}")
     @MethodSource("reusedFormatsStayWithinBudgetAtTheDefaultLimitsRows")
     void reusedFormatsStayWithinBudgetAtTheDefaultLimits(Executable row) throws Throwable {
         row.execute();
     }
 
-    /** One TP-007 grammar-shaped construction (E9): {@code prefix + unit* + suffix}, padded to length. */
+    /** One grammar-shaped construction: {@code prefix + unit* + suffix}, padded to length. */
     private record BudgetShape(
             String format, String label, String prefix, String unit, String suffix, char filler, char invalidChar) {
 
@@ -1062,7 +1059,7 @@ class FormatCheckReuseTest {
          * before {@code prefix}, so a format whose grammar constrains the leading character (json-pointer's
          * "empty or starts with /", for example) is never broken by it; the invalid twin's unconditional
          * last-character technique tolerates filler landing last (verified at BODY_MAX and HEADER_MAX for
-         * every shape below, evidence T021.md TP-007).
+         * every shape below).
          *
          * @param targetLength the exact target length
          * @return the valid value
@@ -1083,7 +1080,7 @@ class FormatCheckReuseTest {
 
         /**
          * Builds the invalid twin of {@link #valid(int)}: the same value with its last character replaced
-         * (E9). uri, uri-reference, url, and uri-template use a raw space, which is unconditionally illegal
+         * uri, uri-reference, url, and uri-template use a raw space, which is unconditionally illegal
          * in all four grammars regardless of what the last character otherwise is; the three JSON-pointer
          * formats use a bare tilde, unconditionally invalid at the end of a value since a trailing
          * {@code ~} is never followed by {@code 0} or {@code 1}.
@@ -1133,12 +1130,12 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Asserts one TP-007 row: the constructed value's own C-FORMAT verdict matches the row's declared
+     * Asserts one budget row: the constructed value's own reference verdict matches the row's declared
      * shape (a sanity check on the construction itself); the gate handler answers it twice (warm-up, timed)
      * on the 1 MB-stack thread with no throwable and that verdict, through the body for a {@link
-     * #BODY_MAX} row and through a header parameter for a {@link #HEADER_MAX} row (R-003); and the format
+     * #BODY_MAX} row and through a header parameter for a {@link #HEADER_MAX} row; and the format
      * validator's direct, already-renamed judgement of the value, measured on its own 1 MB-stack thread,
-     * also gives that verdict within the pre-decided time and allocation budget.
+     * also gives that verdict within the fixed time and allocation budget.
      *
      * @param shape  the construction
      * @param length the exact target length ({@link #BODY_MAX} or {@link #HEADER_MAX})
@@ -1151,12 +1148,12 @@ class FormatCheckReuseTest {
                 value.length(),
                 () -> "(" + shape.format() + ", " + shape.label() + ") the construction must be exactly " + length
                         + " characters");
-        boolean cFormat = cFormatVerdict(shape.format(), value);
+        boolean reference = referenceVerdict(shape.format(), value);
         assertEquals(
                 valid,
-                cFormat,
+                reference,
                 () -> "(" + shape.format() + ", " + shape.label() + ") the Given: the construction's declared"
-                        + " shape must match C-FORMAT's independently computed verdict");
+                        + " shape must match the independently computed reference verdict");
 
         boolean header = length == HEADER_MAX;
         Handler<RoutingContext> gate = header
@@ -1195,7 +1192,7 @@ class FormatCheckReuseTest {
         printBudgetRowFigures(shape, length, valid, value.length(), measurement, allowedAllocation);
         assertAll(
                 "(" + shape.format() + ", " + shape.label() + ") the direct call",
-                () -> assertEquals(valid, measurement.valid(), "the direct result must equal C-FORMAT's verdict"),
+                () -> assertEquals(valid, measurement.valid(), "the direct result must equal the reference verdict"),
                 () -> assertTrue(
                         measurement.elapsedNanos() <= BUDGET_ELAPSED_NANOS,
                         () -> "elapsed " + measurement.elapsedNanos() + "ns must be at most " + BUDGET_ELAPSED_NANOS
@@ -1207,9 +1204,9 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Prints one TP-007 row's per-row figures to standard output, after its timed run and before the
-     * assertions that judge it, so the line appears whether the row passes or fails (the contract's
-     * evidence requirement). Never prints the value itself (E9's value-free rule), only its length.
+     * Prints one budget row's per-row figures to standard output, after its timed run and before the
+     * assertions that judge it, so the line appears whether the row passes or fails. Never prints the
+     * value itself, only its length.
      *
      * @param shape             the construction
      * @param length            the exact target length ({@link #BODY_MAX} or {@link #HEADER_MAX})
@@ -1227,7 +1224,7 @@ class FormatCheckReuseTest {
             long allowedAllocation) {
         String lengthLabel = length == BODY_MAX ? "BODY_MAX" : "HEADER_MAX";
         System.out.printf(
-                "TP-007 | %s | %s | %s | %s | length=%d | elapsedMs=%.3f | allocatedBytes=%d | budgetBytes=%d |"
+                "format-budget | %s | %s | %s | %s | length=%d | elapsedMs=%.3f | allocatedBytes=%d | budgetBytes=%d |"
                         + " verdict=%s%n",
                 shape.format(),
                 shape.label(),
@@ -1241,7 +1238,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Asserts that per-thread allocation measurement is supported and enabled on this JVM (E10); TP-007's
+     * Asserts that per-thread allocation measurement is supported and enabled on this JVM; the
      * allocation budget is meaningless otherwise.
      */
     private static void assertAllocationMeasurementEnabled() {
@@ -1254,7 +1251,7 @@ class FormatCheckReuseTest {
     /**
      * One untimed warm-up judgement of {@code value} at {@code renamedFormat} via {@link
      * PatternInputGuard#validateFormat(String, String, Object)}, then {@link #BUDGET_TIMED_RUNS} timed runs
-     * whose elapsed time and allocated bytes are measured on this call's own thread (PK5-002, E10). Every
+     * whose elapsed time and allocated bytes are measured on this call's own thread. Every
      * run must give the same verdict.
      *
      * @param renamedFormat the already-renamed format name
@@ -1301,37 +1298,37 @@ class FormatCheckReuseTest {
     private record DirectMeasurement(boolean valid, long elapsedNanos, long allocatedBytes) {}
 
     // =========================================================================================
-    // Shared verdict computation (E4, E5): C-FORMAT's frozen table, applied directly with java.net.URI
-    // and the single-pass and scanner rules it states, never through the new production classes.
+    // Shared verdict computation: the format table, applied directly with java.net.URI
+    // and the single-pass and scanner rules it states, never through the production classes.
     // =========================================================================================
 
     /**
-     * Dispatches to the per-format C-FORMAT verdict function.
+     * Dispatches to the per-format reference verdict function.
      *
      * @param format the format
      * @param value  the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatVerdict(String format, String value) {
+    private static boolean referenceVerdict(String format, String value) {
         return switch (format) {
-            case "uri" -> cFormatUri(value);
-            case "uri-reference" -> cFormatUriReference(value);
-            case "url" -> cFormatUrl(value);
-            case "uri-template" -> cFormatUriTemplate(value);
-            case "json-pointer" -> cFormatJsonPointer(value);
-            case "relative-json-pointer" -> cFormatRelativeJsonPointer(value);
-            case "json-pointer-uri-fragment" -> cFormatJsonPointerUriFragment(value);
-            default -> throw new IllegalArgumentException("not one of C-FORMAT's seven formats: " + format);
+            case "uri" -> referenceUri(value);
+            case "uri-reference" -> referenceUriReference(value);
+            case "url" -> referenceUrl(value);
+            case "uri-template" -> referenceUriTemplate(value);
+            case "json-pointer" -> referenceJsonPointer(value);
+            case "relative-json-pointer" -> referenceRelativeJsonPointer(value);
+            case "json-pointer-uri-fragment" -> referenceJsonPointerUriFragment(value);
+            default -> throw new IllegalArgumentException("not one of the seven reused formats: " + format);
         };
     }
 
     /**
-     * {@code uri}: {@link URI} parse, {@code isAbsolute()}, ASCII-only (C-FORMAT's frozen table).
+     * {@code uri}: {@link URI} parse, {@code isAbsolute()}, ASCII-only (the format table).
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatUri(String value) {
+    private static boolean referenceUri(String value) {
         if (!isAscii(value)) {
             return false;
         }
@@ -1345,12 +1342,12 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * {@code uri-reference}: {@link URI} parse, ASCII-only (C-FORMAT's frozen table).
+     * {@code uri-reference}: {@link URI} parse, ASCII-only (the format table).
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatUriReference(String value) {
+    private static boolean referenceUriReference(String value) {
         if (!isAscii(value)) {
             return false;
         }
@@ -1372,13 +1369,13 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * {@code url}: {@link URI} absolute, then the post-parse scheme/host/port filter C-FORMAT's frozen
-     * table states, matching {@code UrlFormatFilterCorpusTest#cFormatVerdict(String)} (TP-004).
+     * {@code url}: {@link URI} absolute, then the post-parse scheme/host/port filter the format
+     * table states, matching the reference verdict of the {@code url} filtering corpus test.
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatUrl(String value) {
+    private static boolean referenceUrl(String value) {
         URI uri;
         try {
             uri = new URI(value);
@@ -1416,9 +1413,9 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Returns whether {@code label} is a dotted-quad octet under C-FORMAT's rule as refined by review
-     * round 1 finding R-001 (ruling E23): all ASCII digits, and, when longer than one character, not
-     * starting with {@code 0} (mirrors {@code UrlFormatFilterCorpusTest#isOctetLabel}, TP-004's oracle; a
+     * Returns whether {@code label} is a dotted-quad octet under the format table's refined rule:
+     * all ASCII digits, and, when longer than one character, not
+     * starting with {@code 0} (mirrors {@code UrlFormatFilterCorpusTest#isOctetLabel}, the {@code url} corpus oracle; a
      * label like {@code 08} or {@code 0000000008} is not an octet, so the engine's octal or decimal
      * reading of it can never widen the filtering the four-octet test performs).
      *
@@ -1476,12 +1473,12 @@ class FormatCheckReuseTest {
 
     /**
      * {@code json-pointer}: empty, or a leading {@code /}, then one iterative pass in which every {@code ~}
-     * is followed by {@code 0} or {@code 1} (C-FORMAT's frozen table; no {@code JsonPointer.compile}).
+     * is followed by {@code 0} or {@code 1} (the format table; no {@code JsonPointer.compile}).
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatJsonPointer(String value) {
+    private static boolean referenceJsonPointer(String value) {
         if (value.isEmpty()) {
             return true;
         }
@@ -1500,12 +1497,12 @@ class FormatCheckReuseTest {
     /**
      * {@code relative-json-pointer}: prefix {@code 0} or a digit string without a leading zero (one
      * iterative pass, ASCII digits only), then {@code #} alone or the {@code json-pointer} check on the
-     * remainder (C-FORMAT's frozen table).
+     * remainder (the format table).
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatRelativeJsonPointer(String value) {
+    private static boolean referenceRelativeJsonPointer(String value) {
         int i = 0;
         int len = value.length();
         if (i >= len || !isAsciiDigit(value.charAt(i))) {
@@ -1519,7 +1516,7 @@ class FormatCheckReuseTest {
             }
         }
         String remainder = value.substring(i);
-        return remainder.equals("#") || cFormatJsonPointer(remainder);
+        return remainder.equals("#") || referenceJsonPointer(remainder);
     }
 
     private static boolean isAsciiDigit(char c) {
@@ -1528,12 +1525,12 @@ class FormatCheckReuseTest {
 
     /**
      * {@code json-pointer-uri-fragment}: leading {@code #}, percent-decoding through {@link URI}'s
-     * fragment, then the {@code json-pointer} check (C-FORMAT's frozen table).
+     * fragment, then the {@code json-pointer} check (the format table).
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatJsonPointerUriFragment(String value) {
+    private static boolean referenceJsonPointerUriFragment(String value) {
         if (value.isEmpty() || value.charAt(0) != '#') {
             return false;
         }
@@ -1544,21 +1541,21 @@ class FormatCheckReuseTest {
             return false;
         }
         String fragment = uri.getFragment();
-        return fragment != null && cFormatJsonPointer(fragment);
+        return fragment != null && referenceJsonPointer(fragment);
     }
 
     /**
      * {@code uri-template}: the framework's own single-forward-pass RFC 6570 §2 template-syntax scanner
-     * (C-FORMAT's frozen table, F1), derived by hand from the grammar (E14): literals (§2.1, percent-encoded
+     * (the format table), derived by hand from the grammar: literals (§2.1, percent-encoded
      * triplets checked in place, {@code ucschar}/{@code iprivate} ranges for non-ASCII), and expressions
      * (§2.2–§2.4: {@code {}, an optional operator (op-level2, op-level3, or op-reserve), a comma-separated
      * variable list of varnames each with an optional {@code :} prefix modifier of 1 to 9999 or an
      * {@code *} explode, {@code }}); one forward pass, constant state, no recursion.
      *
      * @param value the value
-     * @return C-FORMAT's verdict
+     * @return the reference verdict
      */
-    private static boolean cFormatUriTemplate(String value) {
+    private static boolean referenceUriTemplate(String value) {
         int i = 0;
         int len = value.length();
         while (i < len) {
@@ -1617,8 +1614,8 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Whether {@code codePoint} is in RFC 3987's {@code ucschar} or {@code iprivate} range. Review round 1
-     * finding R-005: RFC 3987 §2.2's {@code ucschar} production reads {@code %xE1000-EFFFD} for this band,
+     * Whether {@code codePoint} is in RFC 3987's {@code ucschar} or {@code iprivate} range. RFC 3987
+     * §2.2's {@code ucschar} production reads {@code %xE1000-EFFFD} for this band,
      * not {@code %xE0000-EFFFD}; the lower 4,096 code points ({@code U+E0000}–{@code U+E0FFF}) are outside
      * {@code ucschar}, so, absent a matching {@code iprivate} band there, a code point in that range (for
      * example {@code U+E0001}) must be rejected.
@@ -1655,7 +1652,7 @@ class FormatCheckReuseTest {
 
     /**
      * Scans {@code { operator? varlist }} starting at {@code {}; the operator set is op-level2, op-level3,
-     * and op-reserve (E14: {@code + # . / ; ? &} and {@code = , ! @ |}).
+     * and op-reserve ({@code + # . / ; ? &} and {@code = , ! @ |}).
      *
      * @param value the value
      * @param start the index of {@code {}
@@ -1747,11 +1744,11 @@ class FormatCheckReuseTest {
     }
 
     // =========================================================================================
-    // Gate and engine helpers (E4): "the gate's compiled validator" and "the engine's verdict"
+    // Gate and engine helpers: "the gate's compiled validator" and "the engine's verdict"
     // =========================================================================================
 
     /**
-     * "The gate's compiled validator"'s verdict for {@code format} on {@code instance} (E4).
+     * "The gate's compiled validator"'s verdict for {@code format} on {@code instance}.
      *
      * @param format   the format
      * @param instance the instance
@@ -1765,7 +1762,7 @@ class FormatCheckReuseTest {
 
     /**
      * "The engine's verdict" for {@code format} on {@code instance}: the unguarded compilation, with no
-     * custom format validator (E4).
+     * custom format validator.
      *
      * @param format   the format
      * @param instance the instance
@@ -1778,7 +1775,7 @@ class FormatCheckReuseTest {
 
     /**
      * Returns {@code {"type": "string", "format": F}} for a string instance, or {@code {"format": F}} for
-     * a non-string one (E8): the suite's own non-string schema, under which every instance is valid.
+     * a non-string one: the suite's own non-string schema, under which every instance is valid.
      *
      * @param format   the format
      * @param instance the instance
@@ -1853,7 +1850,7 @@ class FormatCheckReuseTest {
     }
 
     // =========================================================================================
-    // Small-stack helper (E9's "onSmallStack"), copied in shape from T004's PatternInputGuardTest
+    // Small-stack helper ("onSmallStack"), copied in shape from PatternInputGuardTest
     // =========================================================================================
 
     /**
@@ -1868,7 +1865,7 @@ class FormatCheckReuseTest {
     private static <T> SmallStackResult<T> onSmallStack(Duration timeout, Supplier<T> body) {
         AtomicReference<T> result = new AtomicReference<>();
         AtomicReference<Throwable> uncaught = new AtomicReference<>();
-        Thread thread = new Thread(null, () -> result.set(body.get()), "t021-1mb-stack", ONE_MEGABYTE_STACK);
+        Thread thread = new Thread(null, () -> result.set(body.get()), "one-megabyte-stack", ONE_MEGABYTE_STACK);
         thread.setDaemon(true);
         thread.setUncaughtExceptionHandler((failed, throwable) -> uncaught.set(throwable));
         assertTimeoutPreemptively(timeout, () -> {
@@ -1900,7 +1897,7 @@ class FormatCheckReuseTest {
     }
 
     // =========================================================================================
-    // Minimal gate/mock builders, copied from T004's PatternInputGuardTest (E5)
+    // Minimal gate/mock builders, copied from PatternInputGuardTest
     // =========================================================================================
 
     private static JaxRsConfig defaults() {
@@ -1926,9 +1923,9 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Builds the gate for an operation with one header parameter (R-003, TP-007's {@link #HEADER_MAX}
-     * rows: the contract's Given routes them through a header parameter, not the body), copied in shape
-     * from T004's {@code PatternInputGuardTest#overLongParameter}.
+     * Builds the gate for an operation with one header parameter (the {@link #HEADER_MAX}
+     * budget rows go through a header parameter, not the body), copied in shape
+     * from {@code PatternInputGuardTest#overLongParameter}.
      *
      * @param config       the configuration
      * @param name         the header's name
@@ -1964,7 +1961,7 @@ class FormatCheckReuseTest {
     }
 
     /**
-     * Handles one request on the calling thread inside a preemptive timeout, for TP-001's oracle
+     * Handles one request on the calling thread inside a preemptive timeout, for the long-value rows' oracle
      * computation (short values only, no overflow risk).
      *
      * @param gate    the gate

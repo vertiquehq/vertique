@@ -12,18 +12,18 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * W-1 fixture (round 2 of the P01 gate re-review): a manually contributed resource whose
+ * Fixture: a manually contributed resource whose
  * {@code @Inject} constructor builds and resolves a SECOND, entirely independent Dagger
  * component's {@code Set<RouterMount>} — never the component currently composing this resource
- * itself. Unlike {@link ReentrantResource} (G-06), which depends on its OWN component's
+ * itself. Unlike {@link ReentrantResource}, which depends on its OWN component's
  * {@code Set<RouterMount>} and must be rejected, this fixture's nested composition is of a
  * different component and is legitimate: it must succeed.
  *
  * <p>The composition-wide re-entry guard ({@code JaxRsApplicationComposer.COMPOSING}) is, as of
- * the G-06 fix, one {@code ThreadLocal<Boolean>} flag per thread rather than one keyed by
+ * the re-entry fix, one {@code ThreadLocal<Boolean>} flag per thread rather than one keyed by
  * component identity, so it cannot tell this legitimate nested composition of a different
  * component apart from a same-component re-entry — both run on the same thread. This fixture
- * proves that gap (round-2 finding W-1).
+ * proves that gap.
  *
  * <p>No {@code Provider} indirection is needed here (contrast {@link ReentrantResource}): the
  * nested component is built and resolved imperatively inside the constructor body, invisible to

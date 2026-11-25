@@ -32,11 +32,11 @@ import org.junit.jupiter.api.Test;
  * (not a scalar {@code componentType} collection on a non-annotated param), and a {@code byte[]}
  * body param does not become a multi-value collection.
  *
- * <p>Also covers the FORM analogues (plan §4, S5): unlike QUERY, today's {@code ResourceScanner}
- * FORM branch (F5) rewrites every collection-shaped {@code @FormParam}'s declared type to
- * {@code List.class}, so a {@code Set}/{@code SortedSet}/{@code NavigableSet}/{@code Collection}/
- * array {@code @FormParam} incorrectly reports {@code type() == List.class} today. The FORM tests
- * below pin the fix: the declared type must be preserved exactly like QUERY.
+ * <p>Also covers the FORM analogues: the {@code ResourceScanner} FORM branch must not rewrite a
+ * collection-shaped {@code @FormParam}'s declared type to {@code List.class}, so a
+ * {@code Set}/{@code SortedSet}/{@code NavigableSet}/{@code Collection}/array {@code @FormParam}
+ * reports its declared type. The FORM tests below pin that: the declared type is preserved exactly
+ * like QUERY.
  */
 class ResolveComponentTypeRecognizesSetSortedSetAndArrayTest {
 
@@ -278,10 +278,10 @@ class ResolveComponentTypeRecognizesSetSortedSetAndArrayTest {
         assertEquals(FileUpload.class, pm.componentType());
     }
 
-    // --- FORM analogues (plan §4, S5) ---
+    // --- FORM analogues ---
 
     @Test
-    @DisplayName("Set<Integer> @FormParam preserves the declared Set type (today: rewritten to List)")
+    @DisplayName("Set<Integer> @FormParam preserves the declared Set type (not rewritten to List)")
     void formSetPreservesDeclaredType() {
         ResourceMethodMeta.ParamMeta pm = firstParamOf(new FormCollectionParamResource(), "setParam");
         assertEquals(Set.class, pm.type());
@@ -289,7 +289,7 @@ class ResolveComponentTypeRecognizesSetSortedSetAndArrayTest {
     }
 
     @Test
-    @DisplayName("SortedSet<String> @FormParam preserves the declared SortedSet type (today: rewritten to List)")
+    @DisplayName("SortedSet<String> @FormParam preserves the declared SortedSet type (not rewritten to List)")
     void formSortedSetPreservesDeclaredType() {
         ResourceMethodMeta.ParamMeta pm = firstParamOf(new FormCollectionParamResource(), "sortedSetParam");
         assertEquals(SortedSet.class, pm.type());
@@ -297,7 +297,7 @@ class ResolveComponentTypeRecognizesSetSortedSetAndArrayTest {
     }
 
     @Test
-    @DisplayName("NavigableSet<String> @FormParam preserves the declared NavigableSet type (today: rewritten to List)")
+    @DisplayName("NavigableSet<String> @FormParam preserves the declared NavigableSet type (not rewritten to List)")
     void formNavigableSetPreservesDeclaredType() {
         ResourceMethodMeta.ParamMeta pm = firstParamOf(new FormCollectionParamResource(), "navigableSetParam");
         assertEquals(NavigableSet.class, pm.type());
@@ -305,7 +305,7 @@ class ResolveComponentTypeRecognizesSetSortedSetAndArrayTest {
     }
 
     @Test
-    @DisplayName("Collection<String> @FormParam preserves the declared Collection type (today: rewritten to List)")
+    @DisplayName("Collection<String> @FormParam preserves the declared Collection type (not rewritten to List)")
     void formCollectionPreservesDeclaredType() {
         ResourceMethodMeta.ParamMeta pm = firstParamOf(new FormCollectionParamResource(), "collectionParam");
         assertEquals(Collection.class, pm.type());
@@ -313,7 +313,7 @@ class ResolveComponentTypeRecognizesSetSortedSetAndArrayTest {
     }
 
     @Test
-    @DisplayName("Integer[] @FormParam preserves the declared array type (today: rewritten to List)")
+    @DisplayName("Integer[] @FormParam preserves the declared array type (not rewritten to List)")
     void formArrayPreservesDeclaredType() {
         ResourceMethodMeta.ParamMeta pm = firstParamOf(new FormCollectionParamResource(), "arrayParam");
         assertEquals(Integer[].class, pm.type());

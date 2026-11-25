@@ -14,9 +14,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Conditionally-gated JAX-RS resource fixture. It conceptually carries a
  * {@code @ConditionalOnProperty(name = "unita.disabledResource.enabled")} — mirrored at runtime by
  * {@code unita}'s {@link GeneratedJaxRsResourcesModule}'s hand-coded
- * {@code DISABLED_RESOURCE_BINDING_CONDITIONS} array, the same shape T001's legacy
+ * {@code DISABLED_RESOURCE_BINDING_CONDITIONS} array, the same shape the legacy
  * {@code DisabledResource} uses, since {@code vertique-codegen-core} (which owns the compile-time
- * annotation) is not a test dependency of this module. No fixture configuration in this task sets
+ * annotation) is not a test dependency of this module. No fixture configuration sets
  * {@code unita.disabledResource.enabled}, so the condition never matches by default.
  * {@link #failIfConstructed} lets proofs assert this resource's lazy
  * {@link jakarta.inject.Provider} is never called while its condition fails or it is otherwise

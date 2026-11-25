@@ -14,8 +14,8 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger component for {@link JaxRsApplicationMountConflictTest} (TP-003), built from the
- * {@code conflict.paths} compilation unit's seven overriding applications (T004's
+ * Dagger component for {@link JaxRsApplicationMountConflictTest}, built from the
+ * {@code conflict.paths} compilation unit's seven overriding applications (the
  * {@code …app/conflict/paths/} fixtures). Every application registration is always present, so
  * composer step 1 (registration checks) always runs over the full set; each
  * {@code @MethodSource} row activates exactly the two applications its case names through the
@@ -27,7 +27,7 @@ public final class ConflictCompositionComponents {
     private ConflictCompositionComponents() {}
 
     /**
-     * TP-003's sole fixture set: only the {@code conflict.paths} unit, so no unrelated
+     * The sole fixture set: only the {@code conflict.paths} unit, so no unrelated
      * membership, catalog, or manual-resource interaction can produce a violation other than the
      * deliberate path conflict (or, for the control, none at all).
      */

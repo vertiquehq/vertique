@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit test proving {@link DefaultBoundRequest} routes a missing-{@code Content-Type}, JSON-shaped
  * request body through the resolved profile mapper's strict first parse rather than the lenient
- * Vert.x JSON-shape probe (FR-JSON-024A).
+ * Vert.x JSON-shape probe.
  *
  * <p>This exercises {@code DefaultBoundRequest.bindBody}'s missing-content-type branch directly: when
  * a resolved profile mapper is stashed on the routing context under

@@ -6,9 +6,9 @@ package dev.vertique.rest.jaxrs.application.unitb.membership;
 import jakarta.ws.rs.ext.Provider;
 
 /**
- * TP-005 case 2's listed-only type: a class annotated {@code @jakarta.ws.rs.ext.Provider}. Listed
+ * Listed-only type: a class annotated {@code @jakarta.ws.rs.ext.Provider}. Listed
  * by {@link MembershipViolationRegistrations#providerCaseRegistration} but never Dagger-bound;
- * C-COMPOSE step 6.2 rejects it as an unsupported provider before any catalog or manual match is
+ * the composer rejects it as an unsupported provider before any catalog or manual match is
  * attempted.
  */
 @Provider

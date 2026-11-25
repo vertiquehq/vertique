@@ -62,10 +62,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * (default 262,144) in total is rejected at the crossing, and pattern-free positions are neither
  * bounded nor counted. Each rejection is a 400 carrying one value-free detail.
  *
- * <p><strong>Two halves are preservation proofs pinned at the baseline.</strong> TP-009's 4,096-character
- * worst case and TP-016's pattern-free bulk body are answered by the unmodified gate (open-core
- * {@code 2f54d2d9}) exactly as the {@code BASELINE_*} constants record; the bound must leave both answers
- * unchanged.
+ * <p><strong>Two halves are preservation proofs.</strong> The 4,096-character worst case and
+ * the pattern-free bulk body are answered by the gate exactly as the {@code EXPECTED_*} constants
+ * record; the bound must leave both answers unchanged.
  *
  * <p><strong>Catastrophic-input methods.</strong> {@link #bodyValueBoundaryOverHttp()} and
  * {@link #overLongPatternedHeaderIsRejected()} send a value to {@link #CATASTROPHIC}, which the gate
@@ -74,7 +73,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * methods alone raise the class timeout, to 60 seconds.
  *
  * <p>Requests are issued through a {@link WebClient}, which aggregates the response body before its
- * future completes (issue #167).
+ * future completes.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -96,11 +95,11 @@ public class PatternInputBoundIT {
     static final String LOWERCASE = "^[a-z]*$";
 
     /**
-     * TP-009's 4,096 half, pinned from the baseline gate (open-core {@code 2f54d2d9}): the {@code errors}
-     * the unmodified gate answers {@code {"text": worst(4096)}} with, a single {@code pattern} detail,
+     * The 4,096-character worst-case half: the {@code errors}
+     * the gate answers {@code {"text": worst(4096)}} with, a single {@code pattern} detail,
      * so the pattern ran. The location is the one the gate reports in {@code pointer}.
      */
-    private static final JsonArray BASELINE_WORST_CASE_ERRORS = new JsonArray()
+    private static final JsonArray EXPECTED_WORST_CASE_ERRORS = new JsonArray()
             .add(new JsonObject()
                     .put("pointer", "/text")
                     .put("detail", "must match pattern: " + QUADRATIC)
@@ -108,17 +107,16 @@ public class PatternInputBoundIT {
                     .put("type", "pattern")
                     .put("args", new JsonObject().put("pattern", QUADRATIC)));
 
-    /** TP-009's 4,096 half, pinned from the baseline gate: the status of that answer. */
-    private static final int BASELINE_WORST_CASE_STATUS = 400;
+    /** The 4,096-character worst-case half: the status of that answer. */
+    private static final int EXPECTED_WORST_CASE_STATUS = 400;
 
     /**
-     * TP-016's first half, pinned from the baseline gate (open-core {@code 2f54d2d9}): the status of the
-     * pattern-free bulk body.
+     * The pattern-free bulk body's first half: the status of the answer.
      */
-    private static final int BASELINE_BULK_STATUS = 200;
+    private static final int EXPECTED_BULK_STATUS = 200;
 
-    /** TP-016's first half, pinned from the baseline gate: the response body of that answer. */
-    private static final String BASELINE_BULK_BODY = "stamps=20000 ids=10000";
+    /** The pattern-free bulk body's first half: the response body of that answer. */
+    private static final String EXPECTED_BULK_BODY = "stamps=20000 ids=10000";
 
     /** The bound's default per-string limit. */
     private static final int DEFAULT_MAX_CHARS = 4096;
@@ -181,11 +179,11 @@ public class PatternInputBoundIT {
         servers.clear();
     }
 
-    // --- TP-009 ---
+    // --- the bound at the body value boundary ---
 
     /**
-     * TP-009 (AC-020.1). Over HTTP, {@code {"text": worst(4096)}} against {@link #QUADRATIC} is judged
-     * exactly as the baseline gate judges it (the pattern ran), and {@code {"text": "a".repeat(4096) +
+     * Over HTTP, {@code {"text": worst(4096)}} against {@link #QUADRATIC} is judged
+     * as before the bound existed (the pattern ran), and {@code {"text": "a".repeat(4096) +
      * "!"}} against {@link #CATASTROPHIC} is rejected unevaluated with one value-free
      * {@code patternInputLength} detail. Neither resource runs.
      *
@@ -193,7 +191,7 @@ public class PatternInputBoundIT {
      */
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    @DisplayName("TP-009: over HTTP, 4,096 worst-case characters are judged as today; 4,097 are not evaluated")
+    @DisplayName("over HTTP, 4,096 worst-case characters are judged as today; 4,097 are not evaluated")
     void bodyValueBoundaryOverHttp() throws Exception {
         QuadraticTextResource quadratic = new QuadraticTextResource();
         CatastrophicTextResource catastrophic = new CatastrophicTextResource();
@@ -202,14 +200,14 @@ public class PatternInputBoundIT {
         Reply inBound = post(port, "/quadratic/text", textBody(worst(4096)), REPLY_SECONDS);
 
         assertAll(
-                "AC-020.1: a 4,096-character worst case is judged exactly as the baseline gate judges it",
-                () -> assertEquals(BASELINE_WORST_CASE_STATUS, inBound.status(), "body: " + inBound.body()),
-                () -> assertEquals(BASELINE_WORST_CASE_ERRORS, inBound.errors(), "body: " + inBound.body()));
+                "a 4,096-character worst case is judged exactly as before the bound existed",
+                () -> assertEquals(EXPECTED_WORST_CASE_STATUS, inBound.status(), "body: " + inBound.body()),
+                () -> assertEquals(EXPECTED_WORST_CASE_ERRORS, inBound.errors(), "body: " + inBound.body()));
 
         Reply overLong = post(port, "/catastrophic/text", textBody("a".repeat(4096) + "!"), CATASTROPHIC_REPLY_SECONDS);
 
         assertAll(
-                "AC-020.1: a 4,097-character body value is rejected without evaluating the pattern, value-free",
+                "a 4,097-character body value is rejected without evaluating the pattern, value-free",
                 () -> assertTrue(
                         overLong.contentType().startsWith("application/problem+json"),
                         "content type: " + overLong.contentType()),
@@ -221,10 +219,10 @@ public class PatternInputBoundIT {
                 () -> assertEquals(0, catastrophic.invocations.get(), "the over-long value must not run"));
     }
 
-    // --- TP-010 ---
+    // --- over-long patterned header ---
 
     /**
-     * TP-010 (AC-020.1). Over HTTP, an 8,000-character {@code X-Token} header whose parameter carries
+     * Over HTTP, an 8,000-character {@code X-Token} header whose parameter carries
      * {@link #CATASTROPHIC} is rejected unevaluated with one value-free {@code patternInputLength}
      * detail naming the header. The value stays under the server's default 8,192-byte header block so
      * the request reaches the gate.
@@ -233,7 +231,7 @@ public class PatternInputBoundIT {
      */
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    @DisplayName("TP-010: over HTTP, an over-long patterned header is rejected unevaluated")
+    @DisplayName("over HTTP, an over-long patterned header is rejected unevaluated")
     void overLongPatternedHeaderIsRejected() throws Exception {
         PatternedHeaderResource resource = new PatternedHeaderResource();
         int port = start(defaultMount(), Set.of(resource));
@@ -241,7 +239,7 @@ public class PatternInputBoundIT {
         Reply rejected = get(port, "/header/token", "X-Token", "a".repeat(7999) + "!", CATASTROPHIC_REPLY_SECONDS);
 
         assertAll(
-                "AC-020.1: an 8 KiB patterned header is rejected without evaluating the pattern, value-free",
+                "an 8 KiB patterned header is rejected without evaluating the pattern, value-free",
                 () -> assertSingleBoundDetail(
                         rejected, "X-Token", "header", "patternInputLength", "maxChars", DEFAULT_MAX_CHARS),
                 () -> assertFalse(rejected.body().contains(A_RUN), "the value leaked: " + abbreviate(rejected.body())),
@@ -249,10 +247,10 @@ public class PatternInputBoundIT {
                 () -> assertEquals(0, resource.invocations.get(), "the rejected header must not reach the resource"));
     }
 
-    // --- TP-011 ---
+    // --- over-long key on a case-insensitive body ---
 
     /**
-     * TP-011 (AC-020.1). Over HTTP, a 5,000-character key on a case-insensitively bound body, whose
+     * Over HTTP, a 5,000-character key on a case-insensitively bound body, whose
      * generated schema folds member names through {@code patternProperties}, is rejected with one
      * value-free {@code patternInputLength} detail: neither the key nor the generated fold pattern
      * reaches the response.
@@ -260,7 +258,7 @@ public class PatternInputBoundIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("TP-011: over HTTP, a 5,000-character key on a case-insensitive body is rejected")
+    @DisplayName("over HTTP, a 5,000-character key on a case-insensitive body is rejected")
     void overLongKeyOnCaseInsensitiveBodyIsRejected() throws Exception {
         CaseInsensitiveNameResource resource = new CaseInsensitiveNameResource();
         int port = start(defaultMount(), Set.of(resource));
@@ -269,7 +267,7 @@ public class PatternInputBoundIT {
                 post(port, "/case-insensitive/name", new JsonObject().put("k".repeat(5000), "v"), REPLY_SECONDS);
 
         assertAll(
-                "AC-020.1: a 5,000-character case-insensitive key is rejected on the bound, value-free",
+                "a 5,000-character case-insensitive key is rejected on the bound, value-free",
                 () -> assertSingleBoundDetail(
                         rejected, "", "body", "patternInputLength", "maxChars", DEFAULT_MAX_CHARS),
                 () -> assertFalse(
@@ -280,10 +278,10 @@ public class PatternInputBoundIT {
                 () -> assertEquals(0, resource.invocations.get(), "the rejected body must not reach the resource"));
     }
 
-    // --- TP-012 ---
+    // --- per-request total ---
 
     /**
-     * TP-012 (AC-020.2). Over HTTP, a body of 100 map values of 4,000 characters, each reaching a
+     * Over HTTP, a body of 100 map values of 4,000 characters, each reaching a
      * {@link #LOWERCASE} pattern position (400,000 characters), is rejected on the per-request total
      * with one value-free {@code patternInputTotalLength} detail, and a body of 10,000 values of eight
      * characters is accepted.
@@ -291,7 +289,7 @@ public class PatternInputBoundIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("TP-012: over HTTP, 100 × 4,000 characters fail the total and 10,000 × 8 are accepted")
+    @DisplayName("over HTTP, 100 × 4,000 characters fail the total and 10,000 × 8 are accepted")
     void requestTotalOverHttp() throws Exception {
         assertEquals(
                 Map.of("/properties/values/additionalProperties/pattern", LOWERCASE),
@@ -305,7 +303,7 @@ public class PatternInputBoundIT {
         Reply manySmall = post(port, "/values/entries", entries(10_000, "abcdefgh"), REPLY_SECONDS);
 
         assertAll(
-                "AC-020.2",
+                "the per-request total bounds the body and a body of many small values is accepted",
                 () -> assertSingleBoundDetail(
                         overTotal, "", "body", "patternInputTotalLength", "maxTotalChars", DEFAULT_MAX_TOTAL_CHARS),
                 () -> assertFalse(overTotal.body().contains(A_RUN), "a value leaked: " + abbreviate(overTotal.body())),
@@ -321,17 +319,17 @@ public class PatternInputBoundIT {
                                 + " not"));
     }
 
-    // --- TP-013 ---
+    // --- configured limits ---
 
     /**
-     * TP-013 (AC-020.2). Limits configured under {@code jaxrs} reach the gate, and invalid ones fail the
+     * Limits configured under {@code jaxrs} reach the gate, and invalid ones fail the
      * mount's graph at its {@code JaxRsConfig} provider, naming the failing setting, so no server
      * starts.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("TP-013: configured limits reach the gate, and invalid ones fail startup naming the setting")
+    @DisplayName("configured limits reach the gate, and invalid ones fail startup naming the setting")
     void configuredLimitsApplyAndInvalidOnesFailStartup() throws Exception {
         QuadraticTextResource resource = new QuadraticTextResource();
         RestTestMount configured = MountFixtures.mount(
@@ -347,7 +345,7 @@ public class PatternInputBoundIT {
                 mountFailure(jaxrs(new JsonObject().put("validationPatternMaxTotalChars", 4095)));
 
         assertAll(
-                "AC-020.2",
+                "configured limits apply and invalid limits fail startup",
                 () -> assertSingleBoundDetail(seventeen, null, null, "patternInputLength", "maxChars", 16),
                 () -> assertEquals(
                         200, sixteen.status(), "the 16-character value must be accepted; body: " + sixteen.body()),
@@ -360,18 +358,18 @@ public class PatternInputBoundIT {
                         "jaxrs.validationPatternMaxChars"));
     }
 
-    // --- TP-016 ---
+    // --- pattern-free bulk body ---
 
     /**
-     * TP-016 (AC-020.4). Over HTTP, a pattern-free body of 20,000 {@code Instant} timestamps
-     * ({@code format: date-time}) and 10,000 UUIDs, about 0.85 MB, is answered exactly as the baseline
-     * gate answers it, so 760,000 characters at pattern-free positions are neither bounded nor counted;
+     * Over HTTP, a pattern-free body of 20,000 {@code Instant} timestamps
+     * ({@code format: date-time}) and 10,000 UUIDs, about 0.85 MB, is answered exactly as before the
+     * bound existed, so 760,000 characters at pattern-free positions are neither bounded nor counted;
      * the same body with one 4,097-character {@code @Pattern} string is rejected at that position alone.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("TP-016: a pattern-free bulk body passes; one over-long patterned string alone is rejected")
+    @DisplayName("a pattern-free bulk body passes; one over-long patterned string alone is rejected")
     void patternFreeBodyIsUnaffectedAndOnePatternedStringIsRejectedAlone() throws Exception {
         assertAll(
                 "the Given: pattern-free date-time and uuid positions, and one pattern, at note",
@@ -392,16 +390,16 @@ public class PatternInputBoundIT {
         Reply accepted = post(port, "/plain-bulk/body", bulkBody(20_000, 10_000), REPLY_SECONDS);
 
         assertAll(
-                "AC-020.4: 760,000 characters at pattern-free date-time and uuid positions are answered as today",
-                () -> assertEquals(BASELINE_BULK_STATUS, accepted.status(), "body: " + abbreviate(accepted.body())),
-                () -> assertEquals(BASELINE_BULK_BODY, accepted.body()),
+                "760,000 characters at pattern-free date-time and uuid positions are answered as today",
+                () -> assertEquals(EXPECTED_BULK_STATUS, accepted.status(), "body: " + abbreviate(accepted.body())),
+                () -> assertEquals(EXPECTED_BULK_BODY, accepted.body()),
                 () -> assertEquals(1, plain.invocations.get(), "the pattern-free body must reach the resource once"));
 
         Reply rejected = post(
                 port, "/patterned-bulk/body", bulkBody(20_000, 10_000).put("note", "a".repeat(4097)), REPLY_SECONDS);
 
         assertAll(
-                "AC-020.4: only the over-long patterned position is rejected; no timestamp or identifier is",
+                "only the over-long patterned position is rejected; no timestamp or identifier is",
                 () -> assertTrue(
                         rejected.contentType().startsWith("application/problem+json"),
                         "content type: " + rejected.contentType()),
@@ -692,7 +690,7 @@ public class PatternInputBoundIT {
 
     // --- Resources and bodies ---
 
-    /** TP-009 and TP-013: a text member carrying {@link #QUADRATIC}. */
+    /** A text member carrying {@link #QUADRATIC}. */
     public static class QuadraticTextBody {
 
         /** The patterned text. */
@@ -724,7 +722,7 @@ public class PatternInputBoundIT {
         }
     }
 
-    /** TP-009: a text member carrying {@link #CATASTROPHIC}. */
+    /** A text member carrying {@link #CATASTROPHIC}. */
     public static class CatastrophicTextBody {
 
         /** The patterned text. */
@@ -756,7 +754,7 @@ public class PatternInputBoundIT {
         }
     }
 
-    /** TP-010: a header parameter carrying {@link #CATASTROPHIC}, counting invocations. */
+    /** A header parameter carrying {@link #CATASTROPHIC}, counting invocations. */
     @Path("/header")
     public static class PatternedHeaderResource {
 
@@ -780,8 +778,8 @@ public class PatternInputBoundIT {
     }
 
     /**
-     * TP-011: case-insensitively bound with one {@code String name} member, the {@code
-     * F5CaseInsensitiveClosedBody} shape of {@link ProfiledSchemaSynthesisIT}.
+     * Case-insensitively bound with one {@code String name} member, the same closed-body shape
+     * {@link ProfiledSchemaSynthesisIT} uses.
      */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
     public static class CaseInsensitiveNameBody {
@@ -814,7 +812,7 @@ public class PatternInputBoundIT {
         }
     }
 
-    /** TP-012: map values each reaching a {@link #LOWERCASE} pattern position. */
+    /** Map values each reaching a {@link #LOWERCASE} pattern position. */
     public static class PatternedValuesBody {
 
         /** The patterned values. */
@@ -845,7 +843,7 @@ public class PatternInputBoundIT {
         }
     }
 
-    /** TP-016: timestamps and identifiers, and nothing else. */
+    /** Timestamps and identifiers, and nothing else. */
     public static class BulkBody {
 
         /** Timestamps ({@code format: date-time}). */
@@ -855,7 +853,7 @@ public class PatternInputBoundIT {
         public List<UUID> ids;
     }
 
-    /** TP-016: {@link BulkBody}'s members and one patterned string. */
+    /** {@link BulkBody}'s members and one patterned string. */
     public static class PatternedBulkBody {
 
         /** Timestamps ({@code format: date-time}). */

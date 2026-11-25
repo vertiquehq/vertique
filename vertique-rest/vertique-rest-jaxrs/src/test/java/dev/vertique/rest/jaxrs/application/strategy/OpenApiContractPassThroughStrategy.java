@@ -19,10 +19,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Test-source pass-through strategy carrying the id {@code "openapi-contract"}: reports
  * {@link #resolvesOperationsFromMountContract()} {@code true}, so the mount validator's flag-gated
- * location parse runs (TP-009, TP-010), and records every {@link #bindToMount(MountMeta)} location
+ * location parse runs, and records every {@link #bindToMount(MountMeta)} location
  * plus, for each gate built through the mount-aware {@code gateFor}, the pair (operationId,
  * {@code mountMeta.openapiPath()}) both at router-build time and once more per request, before
- * calling {@code ctx.next()} (TP-007). Installs a gate for every operation so the per-request
+ * calling {@code ctx.next()}. Installs a gate for every operation so the per-request
  * recording runs; never fails a request.
  */
 public final class OpenApiContractPassThroughStrategy implements RequestValidationStrategy {

@@ -9,7 +9,7 @@ import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
 import dev.vertique.rest.jaxrs.application.unita.scoped.ScopedResource;
 
 /**
- * TP-001's explicit-mode application fixture, registered by
+ * Explicit-mode application fixture, registered by
  * {@link GeneratedJaxRsResourcesModule#publicApplicationRegistration}: listing
  * {@link ScopedResource}, {@link CatalogResource}, and the manual {@link BlobLikeResource}. Never
  * implemented: native composition reads {@link #resources()} from the registration directly and

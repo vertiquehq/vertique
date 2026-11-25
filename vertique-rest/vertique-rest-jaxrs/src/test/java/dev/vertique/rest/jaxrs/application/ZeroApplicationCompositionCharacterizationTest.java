@@ -26,18 +26,17 @@ import org.junit.jupiter.api.Test;
 /**
  * Characterizes today's zero-declaration JAX-RS mount composition against the legacy-shaped
  * generated module under {@code application.legacy}: no registration-set parameter, no catalog
- * entries — exactly the shape {@code GeneratedJaxRsResourcesModuleEmitter} emits at the rest-024
- * branch-start commit (D002, "older-processor modules contribute unconditionally").
+ * entries — exactly the shape {@code GeneratedJaxRsResourcesModuleEmitter} emits for
+ * older-processor modules, which contribute unconditionally.
  *
- * <p>Pins three of the four facts the suite characterizes (plan I-1): the {@code @JaxRsResources}
- * content (TP-001), the default mount's configured base path and OpenAPI contract location
- * (TP-002), and the absent default mount for an empty resource set (TP-003). The fourth —
+ * <p>Pins three of the four facts the suite characterizes: the {@code @JaxRsResources}
+ * content, the default mount's configured base path and OpenAPI contract location,
+ * and the absent default mount for an empty resource set. The fourth —
  * per-{@code HttpVerticle}-instance construction — is pinned by
- * {@link ZeroApplicationCompositionCharacterizationIT} (TP-004).
+ * {@link ZeroApplicationCompositionCharacterizationIT}.
  *
- * <p>This suite is green at the rest-024 branch-start commit with no production change and stays
- * green at every later rest-024 task commit; later tasks never edit its assertions. A later red is
- * an FR-001 regression, not an authorized flip.
+ * <p>This suite pins the legacy zero-declaration behavior: a failure here is a regression in
+ * that behavior, not an expectation to be flipped.
  */
 class ZeroApplicationCompositionCharacterizationTest {
 

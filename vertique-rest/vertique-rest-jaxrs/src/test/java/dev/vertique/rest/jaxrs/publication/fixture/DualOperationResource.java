@@ -11,7 +11,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T006 TP-004's fixture resource: {@link #withParams(String, String)} declares a path and a query
+ * Fixture resource: {@link #withParams(String, String)} declares a path and a query
  * parameter (so {@link CountingSchemaSource} can attach schemas for both, plus one schema for a key
  * this resource declares no parameter for); {@link #withoutBody()} declares neither, standing in for
  * an operation whose schema source result has no body schema.

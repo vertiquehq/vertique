@@ -53,12 +53,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * no converter or provider can satisfy MUST fail at router-build time, while a resource whose only
  * "exotic" param is a built-in (or provider-backed) must build cleanly.
  *
- * <p><b>RED rationale (behavior-RED, compiles against current code):</b> today {@code ResourceScanner}
- * accepts an arbitrary parameter type without checking that a converter exists — a
- * {@code @QueryParam CustomType} scans and builds a router fine, only failing (opaquely) at invoke
- * time. So {@link #unconvertibleTypeFailsRouterBuild()} asserts an exception that is NOT thrown today,
- * making it RED until the {@code resolver.canResolve(ctx)} build-time check is added. The
- * built-in/body-skip cases assert the current no-throw behavior is preserved.
+ * <p>A {@code @QueryParam CustomType} with no converter is rejected by the
+ * {@code resolver.canResolve(ctx)} build-time check, so {@link #unconvertibleTypeFailsRouterBuild()}
+ * asserts an exception at router build rather than an opaque failure at invoke time. The
+ * built-in/body-skip cases assert that the no-throw behavior is preserved.
  *
  * <p>This class mirrors {@link AnnotationDrivenRoutingIT}'s {@code unknownStrategyFailsFast}: the
  * config-error path of {@code createRouter} throws synchronously, so the assertion is a direct
@@ -67,7 +65,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>The one request-time case uses a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). That case asserts on the echoed element count in the body, so a silently
+ * is correct. That case asserts on the echoed element count in the body, so a silently
  * emptied body would fail it for a reason unrelated to the strict provider. A {@link WebClient}
  * aggregates the body into its {@code HttpResponse} before completing the send.
  */
@@ -266,9 +264,8 @@ public class RouteStartupValidationTest {
         JaxRsRouterMount.Factory factory = TestFactories.builder().build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new UnconvertibleResource()));
 
-        // Today this builds cleanly (no startup validation), so RED. The intended fix throws at build
-        // time. Asserting Throwable keeps the test resilient to the precise exception type the impl
-        // picks (the plan names IllegalStateException) while still pinning the fail-fast outcome.
+        // The build must throw. Asserting Throwable keeps the test resilient to the precise exception
+        // type the implementation picks while still pinning the fail-fast outcome.
         Throwable thrown = assertThrows(
                 Throwable.class,
                 () -> mount.createRouter(vertx),
@@ -325,8 +322,8 @@ public class RouteStartupValidationTest {
                 TestFactories.builder().paramConversionResolver(resolver).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new StrictCollectionResource()));
 
-        // RED today: forDescriptorConvertibleType still passes the collection genericType (List<MyType>),
-        // so the strict provider returns null at startup and the route is rejected with
+        // forDescriptorConvertibleType must not pass the collection genericType (List<MyType>) to the
+        // strict provider: it would return null at startup and the route would be rejected with
         // UNRESOLVABLE_PARAM_CONVERTER — even though the same element converts at request time.
         assertDoesNotThrow(
                 () -> mount.createRouter(vertx),
@@ -338,7 +335,7 @@ public class RouteStartupValidationTest {
      * A {@code @BeanParam} bean whose {@code x} field declares the same unconvertible type as
      * {@link UnconvertibleType}. {@code descriptor.parameters()} never sees this field (it is not a
      * top-level path/query/header/cookie/form parameter — the bean itself is), so only the
-     * bean-field-aware validation pass (fix H) can catch it.
+     * bean-field-aware validation pass can catch it.
      */
     public static class UnconvertibleBeanParams {
         @QueryParam("x")
@@ -370,11 +367,10 @@ public class RouteStartupValidationTest {
         JaxRsRouterMount.Factory factory = TestFactories.builder().build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new UnconvertibleBeanParamResource()));
 
-        // RED today: descriptor.parameters() only exposes TOP-LEVEL path/query/header/cookie/form
-        // params — a @BeanParam's own fields are excluded (its source is BEAN_PARAM, not a bindable
-        // location), so the bean's "x" field currently slips through startup validation and the route
-        // mounts cleanly, only failing (opaquely) at first request. The intended fix walks the bean's
-        // convertible fields too and rejects this at build time.
+        // descriptor.parameters() only exposes TOP-LEVEL path/query/header/cookie/form params — a
+        // @BeanParam's own fields are excluded (its source is BEAN_PARAM, not a bindable location), so
+        // startup validation must walk the bean's convertible fields too; otherwise the bean's "x"
+        // field slips through and the route mounts cleanly, only failing (opaquely) at first request.
         Throwable thrown = assertThrows(
                 Throwable.class,
                 () -> mount.createRouter(vertx),

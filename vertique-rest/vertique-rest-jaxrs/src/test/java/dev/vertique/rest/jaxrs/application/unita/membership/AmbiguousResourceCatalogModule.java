@@ -12,8 +12,8 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 
 /**
- * Hand-written module in the exact C-GEN shape cataloging {@link AmbiguousResource} (TP-005 case
- * 6), always enabled. Paired with {@code manual.membership.AmbiguousResourceManualModule}, which
+ * Hand-written module in the generated-module shape cataloging {@link AmbiguousResource},
+ * always enabled. Paired with {@code manual.membership.AmbiguousResourceManualModule}, which
  * contributes a manual instance of the same class, so a listed
  * {@link AmbiguousResource} has both a catalog match and a manual match.
  */

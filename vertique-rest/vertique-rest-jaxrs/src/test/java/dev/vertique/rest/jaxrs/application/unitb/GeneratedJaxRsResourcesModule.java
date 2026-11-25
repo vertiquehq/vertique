@@ -20,7 +20,7 @@ import java.util.List;
  * Hand-written module in the exact shape the annotation processor would emit for compilation unit
  * {@code unitb}: an applications-only unit registering {@link PublicApi} and {@link ManagementApi},
  * each gated on its own {@code active} flag exactly as {@code GeneratedRestApplicationRegistration}
- * mirrors {@code @ConditionalOnProperty} (E17). {@code name}, {@code path}, and {@code resources}
+ * mirrors {@code @ConditionalOnProperty}. {@code name}, {@code path}, and {@code resources}
  * match each interface's own {@code @RestApplication} declaration.
  */
 @Module

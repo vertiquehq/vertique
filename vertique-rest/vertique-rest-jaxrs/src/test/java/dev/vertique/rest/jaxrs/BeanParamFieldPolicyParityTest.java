@@ -54,7 +54,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * End-to-end parity test for the bean-param field input-policy fix (HIGH 1 — round-4 review).
+ * End-to-end parity test for the bean-param field input-policy fix.
  *
  * <p>Drives {@link ParameterExtractor#materializeBean} and {@link ParameterExtractor#extractArguments}
  * with a mocked {@link InputObjectProcessor} so the assertions observe what production code
@@ -122,7 +122,7 @@ class BeanParamFieldPolicyParityTest {
 
     /**
      * Bean whose single field pairs an additive {@code @Sanitize} with {@code @SkipSanitization} —
-     * the field-level shape of the IP-15 parameter conflict.
+     * the field-level shape of the parameter-level policy conflict.
      */
     static class ConflictingBean {
         @QueryParam("q")
@@ -146,7 +146,7 @@ class BeanParamFieldPolicyParityTest {
 
     /**
      * Resource whose {@code @BeanParam} parameter itself carries {@code @Sanitize} — the shape
-     * issue #533 requires both engines to honour.
+     * both engines must honour.
      */
     @Path("/bean-param-param-policy")
     static class BeanParamParameterSanitizedResource {
@@ -402,7 +402,7 @@ class BeanParamFieldPolicyParityTest {
     }
 
     @Nested
-    @DisplayName("@BeanParam parameter policies — parameter-level @Sanitize applies on both paths (#533)")
+    @DisplayName("@BeanParam parameter policies — parameter-level @Sanitize applies on both paths")
     class BeanParamParameterPolicies {
 
         @Test
@@ -464,7 +464,7 @@ class BeanParamFieldPolicyParityTest {
     }
 
     @Nested
-    @DisplayName("real-engine regressions — cache isolation and type-only metadata (#533 review)")
+    @DisplayName("real-engine regressions — cache isolation and type-only metadata")
     class RealEngineRegressions {
 
         @BeforeEach

@@ -14,12 +14,12 @@ import jakarta.inject.Provider;
 import java.util.Set;
 
 /**
- * Hand-written module in exactly the shape {@code GeneratedJaxRsResourcesModuleEmitter} emits at
- * the rest-024 branch-start commit: one {@code @Provides @ElementsIntoSet @JaxRsResources} binding
+ * Hand-written module in exactly the shape {@code GeneratedJaxRsResourcesModuleEmitter} emits for
+ * zero-declaration composition: one {@code @Provides @ElementsIntoSet @JaxRsResources} binding
  * per DI-eligible resource, no registration-set parameter, and no
- * {@code GeneratedJaxRsResourceEntry} contribution — neither of those C-GEN types exists before
- * T002. This fixture represents a module produced by an older processor (D002), which in explicit
- * mode behaves as manual contributions; later rest-024 tasks never migrate it to the new shape.
+ * {@code GeneratedJaxRsResourceEntry} contribution — the shape an older processor produced. In
+ * explicit mode such a module behaves as manual contributions, and this fixture is never migrated
+ * to the newer shape.
  */
 @Module
 public final class GeneratedJaxRsResourcesModule {

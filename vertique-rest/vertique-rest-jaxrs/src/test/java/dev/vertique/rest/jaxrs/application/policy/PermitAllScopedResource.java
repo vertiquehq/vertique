@@ -12,13 +12,13 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T005 TP-002 case (e): class-level {@link PermitAll} together with a scoped class-level
+ * Case (e): class-level {@link PermitAll} together with a scoped class-level
  * {@link SecurityRequirement} (non-empty {@code scopes()}) for
- * {@link PolicySecurityModule#SCHEME_NAME}. Per RL-8 this case is a guard only: both "declared
+ * {@link PolicySecurityModule#SCHEME_NAME}. This case is a guard only: both "declared
  * public" ({@code PermitAll}, no restricting declaration) and "restricts callers" (a non-empty,
- * non-anonymous requirement set) suppress the FR-013 warning, so this fixture cannot itself
+ * non-anonymous requirement set) suppress the implicit-policy warning, so this fixture cannot itself
  * distinguish which rule wins — that precedence is proven by
- * {@code ExplicitPolicyClassificationTest} (TP-005) with constructed inputs.
+ * {@code ExplicitPolicyClassificationTest} with constructed inputs.
  */
 @Path("/permitted-scoped")
 @PermitAll

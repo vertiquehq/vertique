@@ -8,9 +8,9 @@ import jakarta.ws.rs.container.ResourceInfo;
 import jakarta.ws.rs.core.FeatureContext;
 
 /**
- * TP-005 case 9's listed-only type: a class implementing {@link DynamicFeature}. Listed by
+ * Listed-only type: a class implementing {@link DynamicFeature}. Listed by
  * {@link MembershipViolationRegistrations#dynamicFeatureCaseRegistration} but never Dagger-bound;
- * C-COMPOSE step 6.2 rejects it as an unsupported feature before any catalog or manual match is
+ * the composer rejects it as an unsupported feature before any catalog or manual match is
  * attempted.
  */
 public class SampleDynamicFeatureType implements DynamicFeature {

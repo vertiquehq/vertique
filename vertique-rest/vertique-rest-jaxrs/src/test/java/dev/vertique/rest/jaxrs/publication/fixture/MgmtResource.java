@@ -12,14 +12,14 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 /**
- * T006 TP-001's single resource for the hand-built {@code /api/mgmt/*} mount: one plain success
+ * Single resource for the hand-built {@code /api/mgmt/*} mount: one plain success
  * operation, one {@code HEAD}-only operation, and one operation that itself returns a {@code 400}
- * (TP-007's fixed request table exercises all three, plus a {@code 405} by sending an unsupported
+ * (the fixed request table exercises all three, plus a {@code 405} by sending an unsupported
  * method against {@link #echo()}'s path and a {@code 404} against an undeclared path).
  *
  * <p>Every operation declares its own path segment so {@link #echo()}, {@link #echoAgain()},
  * {@link #head()}, and {@link #bad()} sort into a fixed, reflection-order-independent registration
- * order under the most-specific-path-first rule (T006 E27).
+ * order under the most-specific-path-first rule.
  */
 @Path("/echo")
 public class MgmtResource {

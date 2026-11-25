@@ -93,17 +93,16 @@ import org.junit.jupiter.api.function.Executable;
 
 /**
  * End-to-end proof that the body schema a {@code web-validation} route validates against is
- * synthesized through the route's <em>effective</em> JSON mapper profile (TP-001), and that the
- * property-model decisions the gate already makes under the built-in profiles are preserved
- * (TP-010).
+ * synthesized through the route's <em>effective</em> JSON mapper profile, and that the
+ * property-model decisions the gate already makes under the built-in profiles are preserved.
  *
- * <p><strong>The two halves are deliberately at different baselines.</strong> TP-001 is a
- * behavior-change proof: at the task's baseline commit {@code {"amount":"1.50"}} receives a 400,
- * because the unprofiled generator still says {@code "type":"number"} for a {@code BigDecimal}.
- * TP-010 is a behavior-preservation proof and is green at that same commit; it is written before the
- * generator changes precisely so the "what did the binder alone decide?" baseline is recorded on
- * unchanged production code. The three TP-010 methods are therefore meaningful on their own and are
- * named individually for the pre-change run:
+ * <p><strong>Profiled synthesis is a behavior change.</strong> {@code {"amount":"1.50"}} is accepted
+ * on a {@code vertique-strict} route, where a generator that ignored the profile would still say
+ * {@code "type":"number"} for a {@code BigDecimal} and answer 400.
+ *
+ * <p><strong>Property-model decisions are a behavior-preservation proof.</strong> They hold whether or
+ * not the generator is profiled, so they record "what did the binder alone decide?" on their own. The
+ * three methods are meaningful independently:
  *
  * <ul>
  *   <li>{@link #unknownEnumStringIsStillRejectedUnderVertique()}</li>
@@ -111,32 +110,31 @@ import org.junit.jupiter.api.function.Executable;
  *   <li>{@link #bindersDecisionOnEachPropertyModelFixtureIsRecordedWithoutTheGate()}</li>
  * </ul>
  *
- * <p><strong>T004 TP-006 (FR-013) is a third half, at a third baseline.</strong>
- * {@link #restoredShapesRejectWrongTypesUnderTheGate()} is a behavior-change proof against T004's
- * parent commit, where four of its five rows answer 200 because the property is not described at all;
+ * <p><strong>The restored input shapes are a third group.</strong>
+ * {@link #restoredShapesRejectWrongTypesUnderTheGate()} is a behavior-change proof: without the
+ * description four of its five rows would answer 200, because the property is not described at all;
  * {@link #binderDecidesTheRestoredShapesWithoutTheGate()} is the gate-disabled characterization,
- * green at that commit and asserted rather than recorded, so the gated rejection cannot silently
- * become redundant.
+ * asserted rather than recorded, so the gated rejection cannot silently become redundant.
  *
- * <p><strong>T007 TP-006 (FR-015) is a fourth half, at a fourth baseline.</strong>
- * {@link #anySetterExtrasAreTypedUnderTheGate()} is a behavior-change proof against T007's parent
- * commit, where every wrong-typed extra and every reserved name answers 200 because the any-setter
- * type's object is open; {@link #binderDecidesAnySetterBodiesWithoutTheGate()} is the gate-disabled
- * characterization, green at that commit and asserted rather than recorded. Its fixtures are declared
- * in this class rather than in the corpus package: no corpus fixture has an any-setter, and the pinned
- * corpus documents must not change.
+ * <p><strong>Any-setter extras are a fourth group.</strong>
+ * {@link #anySetterExtrasAreTypedUnderTheGate()} is a behavior-change proof: without the description
+ * every wrong-typed extra and every reserved name would answer 200, because the any-setter type's
+ * object is open; {@link #binderDecidesAnySetterBodiesWithoutTheGate()} is the gate-disabled
+ * characterization, asserted rather than recorded. Its fixtures are declared in this class rather
+ * than in the corpus package: no corpus fixture has an any-setter, and the pinned corpus documents
+ * must not change.
  *
- * <p>Bodies are otherwise the frozen corpus fixtures from {@code dev.vertique.rest.validation.corpus},
+ * <p>Bodies are otherwise the corpus fixtures from {@code dev.vertique.rest.validation.corpus},
  * so the subjects these HTTP proofs exercise are the very types the document corpus pins.
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). The {@code none}-mount date case pairs its status with the echoed bound
+ * is correct. The {@code none}-mount date case pairs its status with the echoed bound
  * value, so an emptied body would fail it for a reason unrelated to the path under test.
  */
 @ExtendWith(VertxExtension.class)
-// 60s rather than testing.md's 20s default: the heaviest method starts a mount and issues seven
+// 60s rather than the default 20s: the heaviest method starts a mount and issues seven
 // sequential round trips, and every method builds its own Dagger graph and router.
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ProfiledSchemaSynthesisIT {
@@ -204,10 +202,10 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- TP-001: the strict decimal body form ---
+    // --- the strict decimal body form ---
 
     /**
-     * TP-001 (AC-009.1). A {@code vertique-strict} route under {@code web-validation} accepts the
+     * A {@code vertique-strict} route under {@code web-validation} accepts the
      * decimal <em>string</em> its profile actually parses and rejects every other form before the
      * resource runs.
      *
@@ -272,10 +270,9 @@ public class ProfiledSchemaSynthesisIT {
      * onto {@code amount_cents} and the gate rejected {@code {"amount_cents": 500}} — a body the
      * constructor turns into {@code amount = 5}, well under the field's own ceiling.
      *
-     * <p>Behavior-change: red at {@code fcc201cb} (the task's baseline commit, with the join still in
-     * place) — a 400, never reaching the resource. Green after the fix — a 200, bound through the
-     * constructor's own transform. The fixture needs its constructor parameter's compiled name present
-     * at runtime for the pre-fix join to have had anything to bite on; {@code pom.xml}'s test-only
+     * <p>With the join in place the gate answers 400 and the body never reaches the resource; without
+     * it the gate answers 200, bound through the constructor's own transform. The fixture needs its constructor parameter's compiled name present
+     * at runtime for the removed join to have had anything to bite on; {@code pom.xml}'s test-only
      * {@code default-testCompile} override compiles this module's test sources with {@code -parameters}
      * for exactly that reason.
      *
@@ -305,11 +302,11 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
     }
 
-    // --- T006 TP-002: the Positive/Negative family — C3p and C3c parity, both validator modes ---
+    // --- the Positive/Negative family: static-factory and constructor parity, both validator modes ---
 
     /**
-     * TP-002. {@link PositiveFamilyStaticFactoryBody} (C3p: a {@code @JsonCreator} static
-     * factory) and {@link PositiveFamilyConstructorBody} (C3c: a {@code @JsonCreator} constructor), each
+     * {@link PositiveFamilyStaticFactoryBody} (a {@code @JsonCreator} static
+     * factory) and {@link PositiveFamilyConstructorBody} (a {@code @JsonCreator} constructor), each
      * carrying {@code @Positive} directly on the creator parameter, mounted on both the gate ({@link
      * #gateMount()}, no validator) and the validator-backed mount ({@link
      * MountFixtures#validatorBackedMount}) — the unit-level halves of the same fixtures are {@code
@@ -317,19 +314,18 @@ public class ProfiledSchemaSynthesisIT {
      * .staticFactoryCreatorParameterRendersThePositiveFamily} and {@code
      * .constructorCreatorParameterRendersThePositiveFamily} in {@code vertique-json-schema}.
      *
-     * <p>Expected initial result (baseline, unmodified floor): C3p is accepted at {@code amount=-5} and
-     * {@code amount=0} in <em>both</em> modes — red — since neither the floor nor the metadata
-     * supplement (Bean Validation exposes no metadata for a static factory at all) can see this
-     * constraint yet. C3c is accepted at {@code amount=-5} and {@code amount=0} on the gate (no
-     * validator) — red — but already rejected on the validator-backed mount — a CHARACTERIZATION
-     * CONTROL, not a red: Bean Validation exposes a constrained constructor's own parameters directly,
-     * so the metadata supplement already renders {@code exclusiveMinimum: 0} for this shape today. Every
-     * {@code amount=5} case is the sensitivity control, accepted in every mode/fixture combination.
+     * <p>Both fixtures are rejected at {@code amount=-5} and {@code amount=0} on the gate (no validator)
+     * only once the floor renders the Positive-family keyword. On the validator-backed mount the static
+     * factory depends on the floor alone, since Bean Validation exposes no metadata for a static factory
+     * at all; the constructor is already rejected there as a CHARACTERIZATION CONTROL, because Bean
+     * Validation exposes a constrained constructor's own parameters directly, so the metadata
+     * supplement renders {@code exclusiveMinimum: 0} for this shape on its own. Every {@code amount=5}
+     * case is the sensitivity control, accepted in every mode/fixture combination.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("T006 TP-002: a violating value at a static-factory or constructor parameter is rejected at both"
+    @DisplayName("a violating value at a static-factory or constructor parameter is rejected at both"
             + " boundaries, in both validator modes as measured")
     void positiveFamilyRejectsAViolatingValueAtBothBoundaries() throws Exception {
         PositiveFamilyStaticFactoryResource staticFactoryOnGate = new PositiveFamilyStaticFactoryResource();
@@ -343,77 +339,77 @@ public class ProfiledSchemaSynthesisIT {
                 Set.of(staticFactoryOnValidatorMount, constructorOnValidatorMount));
 
         assertAll(
-                // C3p, gate (no validator): expected red now — the floor renders no Positive-family
-                // keyword yet.
+                // static factory, gate (no validator): the floor must render the Positive-family
+                // keyword.
                 () -> assertEquals(
                         400,
                         post(gatePort, "/positive-family/static-factory", "{\"amount\":-5}")
                                 .statusCode(),
-                        "C3p, no validator: amount=-5 must be rejected once the floor renders"
+                        "static factory, no validator: amount=-5 must be rejected once the floor renders"
                                 + " exclusiveMinimum: 0"),
                 () -> assertEquals(
                         400,
                         post(gatePort, "/positive-family/static-factory", "{\"amount\":0}")
                                 .statusCode(),
-                        "C3p, no validator: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                        "static factory, no validator: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
                 () -> assertEquals(
                         200,
                         post(gatePort, "/positive-family/static-factory", "{\"amount\":5}")
                                 .statusCode(),
                         "sensitivity control: amount=5 must be accepted"),
 
-                // C3p, validator-backed mount: expected red now too — Bean Validation exposes no
-                // metadata for a static factory at all, so only the floor (once widened) closes this.
+                // static factory, validator-backed mount: Bean Validation exposes no
+                // metadata for a static factory at all, so only the floor closes this.
                 () -> assertEquals(
                         400,
                         post(validatorPort, "/positive-family/static-factory", "{\"amount\":-5}")
                                 .statusCode(),
-                        "C3p, validator-backed: amount=-5 must be rejected once the floor renders"
+                        "static factory, validator-backed: amount=-5 must be rejected once the floor renders"
                                 + " exclusiveMinimum: 0 (the metadata supplement alone cannot see a static"
                                 + " factory)"),
                 () -> assertEquals(
                         400,
                         post(validatorPort, "/positive-family/static-factory", "{\"amount\":0}")
                                 .statusCode(),
-                        "C3p, validator-backed: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                        "static factory, validator-backed: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
                 () -> assertEquals(
                         200,
                         post(validatorPort, "/positive-family/static-factory", "{\"amount\":5}")
                                 .statusCode(),
                         "sensitivity control: amount=5 must be accepted"),
 
-                // C3c, gate (no validator): expected red now — the floor renders no Positive-family
-                // keyword yet.
+                // constructor, gate (no validator): the floor must render the Positive-family
+                // keyword.
                 () -> assertEquals(
                         400,
                         post(gatePort, "/positive-family/constructor", "{\"amount\":-5}")
                                 .statusCode(),
-                        "C3c, no validator: amount=-5 must be rejected once the floor renders"
+                        "constructor, no validator: amount=-5 must be rejected once the floor renders"
                                 + " exclusiveMinimum: 0"),
                 () -> assertEquals(
                         400,
                         post(gatePort, "/positive-family/constructor", "{\"amount\":0}")
                                 .statusCode(),
-                        "C3c, no validator: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                        "constructor, no validator: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
                 () -> assertEquals(
                         200,
                         post(gatePort, "/positive-family/constructor", "{\"amount\":5}")
                                 .statusCode(),
                         "sensitivity control: amount=5 must be accepted"),
 
-                // C3c, validator-backed mount: CHARACTERIZATION CONTROL — already green at main. Bean
+                // constructor, validator-backed mount: CHARACTERIZATION CONTROL — Bean
                 // Validation exposes a constrained constructor's own parameters directly.
                 () -> assertEquals(
                         400,
                         post(validatorPort, "/positive-family/constructor", "{\"amount\":-5}")
                                 .statusCode(),
-                        "CHARACTERIZATION CONTROL (already green at main): the metadata supplement already"
+                        "CHARACTERIZATION CONTROL: the metadata supplement already"
                                 + " renders exclusiveMinimum for a constructor parameter"),
                 () -> assertEquals(
                         400,
                         post(validatorPort, "/positive-family/constructor", "{\"amount\":0}")
                                 .statusCode(),
-                        "CHARACTERIZATION CONTROL (already green at main)"),
+                        "CHARACTERIZATION CONTROL: the validator-backed mount already rejects the value"),
                 () -> assertEquals(
                         200,
                         post(validatorPort, "/positive-family/constructor", "{\"amount\":5}")
@@ -438,33 +434,32 @@ public class ProfiledSchemaSynthesisIT {
                 "only the accepted (amount=5) body may have reached the resource on the validator-backed" + " mount");
     }
 
-    // --- deserializer-driven-schema spike: the bounded hand-written-builder borrow ---
+    // --- the bounded hand-written-builder borrow ---
 
     /**
-     * The gate-level half of the owner ruling's fix proof for {@code InputPropertyDescriber}'s
+     * The gate-level proof for {@code InputPropertyDescriber}'s
      * builder-method borrow ({@code BuilderBorrowDetector}). {@link TransformingBuilderBody} is
-     * deliberately getter-less — its {@code amount} field has no accessor — so it is the round-2 owner
-     * ruling's control: {@code main} never published a getter-less field's constraint either, so this
-     * shape must stay unresolved before and after the round-2 fix. (The round-1 fixture it was
-     * originally paired with, {@link dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto},
-     * carries a getter and was repurposed for the round-2 characterization instead — see that class's
+     * deliberately getter-less — its {@code amount} field has no accessor — so it is the control for
+     * the getter-backed shapes below: a getter-less field's constraint is never published, so this
+     * shape must stay unresolved. (The unit-level fixture
+     * {@link dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto}
+     * carries a getter and covers the getter-backed case instead — see that class's
      * Javadoc.) Its hand-written builder method divides the incoming value by 100 before assigning it
      * to the built field of the same wire name, and its builder class is named plainly rather than in
      * the Lombok {@code <Type>Builder} convention, so it matches neither {@code @lombok.Generated} nor
      * the fallback shape.
      *
-     * <p>Behavior-change: red at {@code 3802ff0f} (the task's baseline commit, with the borrow still
-     * unconditional) — a 400, never reaching the resource, because the schema published the built
-     * field's {@code @Max(10)} onto the wire property {@code amount}. Green after the fix — a 200,
-     * bound through the builder's own transform: {@code amount=500} divides to {@code amount = 5}, well
-     * under the field's own ceiling, which the gate no longer rejects because the property is now
-     * published by type only.
+     * <p>Were the borrow unconditional, the gate would answer 400 and the body would never reach the
+     * resource, because the schema would publish the built field's {@code @Max(10)} onto the wire
+     * property {@code amount}. The expected result is a 200, bound through the builder's own transform:
+     * {@code amount=500} divides to {@code amount = 5}, well under the field's own ceiling, which the
+     * gate does not reject because the property is published by type only.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
     @DisplayName("The gate accepts a hand-written builder's transformed value, not a borrowed field constraint"
-            + " (owner ruling: hand-written builders go unresolved)")
+            + " (hand-written builders go unresolved)")
     void transformingBuilderMethodAcceptsValueTheFieldsConstraintWouldHaveRejected() throws Exception {
         TransformingBuilderResource resource = new TransformingBuilderResource();
         int gatePort = start(gateMount(), Set.of(resource));
@@ -486,15 +481,14 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
     }
 
-    // --- Round 2 (this task's owner ruling): a getter-backed built property borrows for any builder ---
+    // --- a getter-backed built property borrows for any builder ---
 
     /**
-     * The gate-level half of the round-2 owner ruling's fix proof. A package review found that {@code
-     * BuilderBorrowDetector}'s Lombok-shape gate loosens the gate against {@code main} for a
-     * hand-written builder whose built type has getters: {@code main}'s field walk published every
-     * getter-backed field's constraints regardless of the builder, but the shape gate drops them, so a
-     * value {@code main} would have rejected is silently accepted. {@link Round2WithPrefixBuilderBody},
-     * {@link Round2PlainBuilderClassBody}, and {@link Round2RenamedBuildMethodBody} each violate exactly
+     * The gate-level proof that a getter-backed built property borrows its constraint for any builder.
+     * A hand-written builder whose built type has getters must not lose the getter-backed fields'
+     * constraints just because it does not match {@code BuilderBorrowDetector}'s Lombok shape, or a
+     * value that violates them would be silently accepted. {@link WithPrefixBuilderBody},
+     * {@link PlainBuilderClassBody}, and {@link RenamedBuildMethodBody} each violate exactly
      * one condition of {@code BuilderBorrowDetector}'s Lombok shape — a non-empty {@code withPrefix}, a
      * builder class not named {@code <Type>Builder}, and a build method not named {@code build} — while
      * both built properties ({@code name} and {@code level}) carry a getter, the schema-level unit
@@ -505,57 +499,57 @@ public class ProfiledSchemaSynthesisIT {
      * and {@code
      * dev.vertique.json.schema.BuilderWireNameJoinTest#renamedBuildMethodStillBorrowsThroughTheGetterBackedProperty}.
      *
-     * <p>Expected red now: production code still gates every builder on the Lombok shape regardless of
-     * a getter, so each property is published by type only and every out-of-bound value below is
-     * accepted with a 200 instead of rejected with a 400.
+     * <p>Were every builder gated on the Lombok shape regardless of a getter, each property would be
+     * published by type only and every out-of-bound value below would be accepted with a 200 instead of
+     * rejected with a 400.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("Round 2 (owner ruling): the gate rejects an out-of-bound value for each getter-backed built"
+    @DisplayName("the gate rejects an out-of-bound value for each getter-backed built"
             + " property, whatever shape violation keeps the builder from matching the Lombok convention")
-    void round2GateRejectsOutOfBoundValuesForEachGetterBackedShapeViolation() throws Exception {
-        Round2WithPrefixBuilderResource withPrefix = new Round2WithPrefixBuilderResource();
-        Round2PlainBuilderClassResource plainClass = new Round2PlainBuilderClassResource();
-        Round2RenamedBuildMethodResource renamedMethod = new Round2RenamedBuildMethodResource();
+    void gateRejectsOutOfBoundValuesForEachGetterBackedShapeViolation() throws Exception {
+        WithPrefixBuilderResource withPrefix = new WithPrefixBuilderResource();
+        PlainBuilderClassResource plainClass = new PlainBuilderClassResource();
+        RenamedBuildMethodResource renamedMethod = new RenamedBuildMethodResource();
         int gatePort = start(gateMount(), Set.of(withPrefix, plainClass, renamedMethod));
 
         assertAll(
                 () -> assertEquals(
                         400,
-                        post(gatePort, "/round2-with-prefix/fields", "{\"level\":999}")
+                        post(gatePort, "/getter-backed-with-prefix/fields", "{\"level\":999}")
                                 .statusCode(),
-                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                        "level has a getter, so its @Max(10) must be"
                                 + " borrowed regardless of the builder's non-empty withPrefix"),
                 () -> assertEquals(
                         400,
-                        post(gatePort, "/round2-with-prefix/fields", "{\"name\":\"TOOLONG\"}")
+                        post(gatePort, "/getter-backed-with-prefix/fields", "{\"name\":\"TOOLONG\"}")
                                 .statusCode(),
-                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                        "name has a getter, so its @Size(max = 3) must be"
                                 + " borrowed regardless of the builder's non-empty withPrefix"),
                 () -> assertEquals(
                         400,
-                        post(gatePort, "/round2-plain-class/fields", "{\"level\":999}")
+                        post(gatePort, "/getter-backed-plain-class/fields", "{\"level\":999}")
                                 .statusCode(),
-                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                        "level has a getter, so its @Max(10) must be"
                                 + " borrowed regardless of the builder class's plain name"),
                 () -> assertEquals(
                         400,
-                        post(gatePort, "/round2-plain-class/fields", "{\"name\":\"TOOLONG\"}")
+                        post(gatePort, "/getter-backed-plain-class/fields", "{\"name\":\"TOOLONG\"}")
                                 .statusCode(),
-                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                        "name has a getter, so its @Size(max = 3) must be"
                                 + " borrowed regardless of the builder class's plain name"),
                 () -> assertEquals(
                         400,
-                        post(gatePort, "/round2-renamed-method/fields", "{\"level\":999}")
+                        post(gatePort, "/getter-backed-renamed-method/fields", "{\"level\":999}")
                                 .statusCode(),
-                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                        "level has a getter, so its @Max(10) must be"
                                 + " borrowed regardless of the builder's renamed build method"),
                 () -> assertEquals(
                         400,
-                        post(gatePort, "/round2-renamed-method/fields", "{\"name\":\"TOOLONG\"}")
+                        post(gatePort, "/getter-backed-renamed-method/fields", "{\"name\":\"TOOLONG\"}")
                                 .statusCode(),
-                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                        "name has a getter, so its @Size(max = 3) must be"
                                 + " borrowed regardless of the builder's renamed build method"),
                 () -> assertEquals(
                         0, withPrefix.invocations.get(), "no rejected body may reach the resource under the gate"),
@@ -565,10 +559,10 @@ public class ProfiledSchemaSynthesisIT {
                         0, renamedMethod.invocations.get(), "no rejected body may reach the resource under the gate"));
     }
 
-    // --- H4: getter-only collection with no backing field ---
+    // --- getter-only collection with no backing field ---
 
     /**
-     * The gate-level half of the H4 proof. {@link GetterOnlyCollectionNoBackingFieldBody#getItems()}
+     * The gate-level half of the proof for a getter-only collection. {@link GetterOnlyCollectionNoBackingFieldBody#getItems()}
      * has no backing field named {@code items} at all — the property's only storage is a private field
      * named {@code internal}, populated in place through the getter, which is how Jackson binds a
      * getter-only mutable collection with no setter. The unit-level half (that the property is
@@ -579,7 +573,7 @@ public class ProfiledSchemaSynthesisIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("H4: the gate rejects a wrong-typed item and accepts a valid body for a getter-only collection"
+    @DisplayName("the gate rejects a wrong-typed item and accepts a valid body for a getter-only collection"
             + " with no backing field")
     void getterOnlyCollectionWithNoBackingFieldGateRejectsWrongTypedItemsAndAcceptsValidBody() throws Exception {
         GetterOnlyCollectionResource resource = new GetterOnlyCollectionResource();
@@ -605,10 +599,10 @@ public class ProfiledSchemaSynthesisIT {
                 "only the well-typed body may have reached the resource; the rejected one must not");
     }
 
-    // --- BG1: Lombok builder, constrained private field, no getter — validator-present case ---
+    // --- Lombok builder, constrained private field, no getter — validator-present case ---
 
     /**
-     * The gate-level half of the BG1 proof, validator-present only: the unit-level half (type-only
+     * The gate-level half of the proof for a Lombok builder's getter-less private field, validator-present only: the unit-level half (type-only
      * without a validator, {@code maxLength} with one) is {@code
      * dev.vertique.json.schema.MetadataConstraintSourceCoverageTest
      * .lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne} in {@code
@@ -619,14 +613,14 @@ public class ProfiledSchemaSynthesisIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("BG1: on the validator-backed mount, the gate rejects a too-long name and accepts a valid one for"
+    @DisplayName("on the validator-backed mount, the gate rejects a too-long name and accepts a valid one for"
             + " a Lombok builder's constrained, getter-less private field")
-    void bg1GateRejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
-        Bg1Resource resource = new Bg1Resource();
+    void lombokBuilderNoGetterGateRejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
+        LombokBuilderNoGetterResource resource = new LombokBuilderNoGetterResource();
         int gatePort = start(MountFixtures.validatorBackedMount(vertx, RestTestContributions.none()), Set.of(resource));
 
-        HttpResponse<Buffer> rejected = post(gatePort, "/bg1/name", "{\"name\":\"toolong\"}");
-        HttpResponse<Buffer> accepted = post(gatePort, "/bg1/name", "{\"name\":\"ada\"}");
+        HttpResponse<Buffer> rejected = post(gatePort, "/lombok-builder-no-getter/name", "{\"name\":\"toolong\"}");
+        HttpResponse<Buffer> accepted = post(gatePort, "/lombok-builder-no-getter/name", "{\"name\":\"ada\"}");
 
         assertEquals(
                 400,
@@ -645,10 +639,10 @@ public class ProfiledSchemaSynthesisIT {
                 "only the well-typed body may have reached the resource; the rejected one must not");
     }
 
-    // --- AC-005.2: case-insensitive non-ASCII key at the gate ---
+    // --- case-insensitive non-ASCII key at the gate ---
 
     /**
-     * The gate-level half of the AC-005.2 proof: {@code
+     * The gate-level half of the proof: {@code
      * dev.vertique.json.schema.CaseInsensitiveUnicodeFoldingTest.nonAsciiKeyRefusedByPropertyNames}
      * only matches the generated {@code propertyNames} regex against the confusable spelling —
      * nothing there exercises a real request. This sends the U+212A-folded key through a real HTTP
@@ -659,13 +653,13 @@ public class ProfiledSchemaSynthesisIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("AC-005.2: the gate rejects a U+212A-folded key on a case-insensitive any-setter type, with one"
+    @DisplayName("the gate rejects a U+212A-folded key on a case-insensitive any-setter type, with one"
             + " value-free detail")
-    void ac005NonAsciiKeyRejectedAtTheGateWithAValueFreeDetail() throws Exception {
-        Ac005Resource resource = new Ac005Resource();
+    void nonAsciiKeyRejectedAtTheGateWithAValueFreeDetail() throws Exception {
+        KelvinCaseInsensitiveResource resource = new KelvinCaseInsensitiveResource();
         int gatePort = start(gateMount(), Set.of(resource));
 
-        HttpResponse<Buffer> rejected = post(gatePort, "/ac005/case-insensitive", AC005_KELVIN_KEY_BODY);
+        HttpResponse<Buffer> rejected = post(gatePort, "/kelvin/case-insensitive", KELVIN_KEY_BODY);
 
         String rejectionBody = rejected.bodyAsString();
         JsonArray errors = problemErrors(rejectionBody);
@@ -694,37 +688,37 @@ public class ProfiledSchemaSynthesisIT {
                         "the value-free detail must still identify a failing location; detail: "
                                 + detail(errors).encode()),
                 () -> assertFalse(
-                        rejectionBody.contains(AC005_VALUE_MARKER),
+                        rejectionBody.contains(KELVIN_VALUE_MARKER),
                         "the detail must be value-free: the submitted value must never be echoed; body: "
                                 + rejectionBody));
     }
 
-    // --- F5 (security review round 1, MEDIUM): propertyNames/patternProperties must not echo the client ---
+    // --- propertyNames/patternProperties must not echo the client ---
 
     /**
-     * F5: {@code propertyNames} and {@code patternProperties} are the two keywords this package
+     * {@code propertyNames} and {@code patternProperties} are the two keywords this package
      * extends beyond vertx-json-schema's own generated rules, and both had fallen to {@code
      * WebValidationStrategy}'s default {@code detail} branch, which returned the raw validator message
      * verbatim — that message names the client's own submitted key (both keywords) and, for {@code
-     * patternProperties}, the generated regex too. Reuses AC-005.2's own fixtures: the confusable
+     * patternProperties}, the generated regex too. Reuses the same fixtures: the confusable
      * U+212A-folded key must be refused with neither the raw key text nor the generated {@code
      * propertyNames} pattern reaching the response.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("F5: a propertyNames rejection echoes neither the submitted key nor the generated pattern")
-    void f5PropertyNamesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
-        Ac005Resource resource = new Ac005Resource();
+    @DisplayName("a propertyNames rejection echoes neither the submitted key nor the generated pattern")
+    void propertyNamesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
+        KelvinCaseInsensitiveResource resource = new KelvinCaseInsensitiveResource();
         int gatePort = start(gateMount(), Set.of(resource));
 
-        HttpResponse<Buffer> rejected = post(gatePort, "/ac005/case-insensitive", AC005_KELVIN_KEY_BODY);
+        HttpResponse<Buffer> rejected = post(gatePort, "/kelvin/case-insensitive", KELVIN_KEY_BODY);
         String rejectionBody = rejected.bodyAsString();
 
         assertAll(
                 () -> assertEquals(400, rejected.statusCode(), "body: " + rejectionBody),
                 () -> assertFalse(
-                        rejectionBody.contains(AC005_KELVIN_SIGN + "ey"),
+                        rejectionBody.contains(KELVIN_SIGN + "ey"),
                         "the submitted key spelling must never be echoed; body: " + rejectionBody),
                 () -> assertFalse(
                         rejectionBody.contains("does not match schema"),
@@ -736,7 +730,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * F5's {@code patternProperties} half: a case-insensitively bound, <em>closed</em> type (no
+     * The {@code patternProperties} half: a case-insensitively bound, <em>closed</em> type (no
      * any-setter) whose only member carries a {@code @Size} bound. A folded key ({@code "NAME"}) whose
      * value fails that bound is rejected by {@code patternProperties}, whose vertx-json-schema wrapper
      * message ("Property \"NAME\" matches pattern \"...\" but does not match associated schema") names
@@ -745,12 +739,13 @@ public class ProfiledSchemaSynthesisIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("F5: a patternProperties rejection echoes neither the submitted key nor the generated pattern")
-    void f5PatternPropertiesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
-        F5PatternPropertiesResource resource = new F5PatternPropertiesResource();
+    @DisplayName("a patternProperties rejection echoes neither the submitted key nor the generated pattern")
+    void patternPropertiesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
+        CaseInsensitiveClosedResource resource = new CaseInsensitiveClosedResource();
         int gatePort = start(gateMount(), Set.of(resource));
 
-        HttpResponse<Buffer> rejected = post(gatePort, "/f5/case-insensitive", "{\"NAME\":\"toolong\"}");
+        HttpResponse<Buffer> rejected =
+                post(gatePort, "/closed-case-insensitive/case-insensitive", "{\"NAME\":\"toolong\"}");
         String rejectionBody = rejected.bodyAsString();
 
         assertAll(
@@ -772,17 +767,17 @@ public class ProfiledSchemaSynthesisIT {
                         "the generated case-fold pattern must never be echoed; body: " + rejectionBody));
     }
 
-    /** F5: case-insensitively bound, closed (no any-setter) — the patternProperties-only shape. */
+    /** Case-insensitively bound, closed (no any-setter) — the patternProperties-only shape. */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    public static class F5CaseInsensitiveClosedBody {
+    public static class CaseInsensitiveClosedBody {
 
         @Size(max = 3)
         public String name;
     }
 
-    /** The resource for {@link F5CaseInsensitiveClosedBody}, on the unannotated floor profile. */
-    @Path("/f5")
-    public static class F5PatternPropertiesResource {
+    /** The resource for {@link CaseInsensitiveClosedBody}, on the unannotated floor profile. */
+    @Path("/closed-case-insensitive")
+    public static class CaseInsensitiveClosedResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -790,29 +785,29 @@ public class ProfiledSchemaSynthesisIT {
         /**
          * Echoes the bound name.
          *
-         * @param body the F5 fixture body
+         * @param body the fixture body
          * @return the echoed name
          */
         @POST
         @Path("/case-insensitive")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "f5CaseInsensitiveEcho")
-        public String echo(F5CaseInsensitiveClosedBody body) {
+        @Operation(operationId = "closedCaseInsensitiveEcho")
+        public String echo(CaseInsensitiveClosedBody body) {
             invocations.incrementAndGet();
             return "name=" + body.name;
         }
     }
 
-    // --- TP-010: enum protection and the property-model negatives ---
+    // --- enum protection and the property-model negatives ---
 
     /**
-     * TP-010 (AC-010.2). The gate's {@code enum} keyword still refuses an unrecognized constant on a
+     * The gate's {@code enum} keyword still refuses an unrecognized constant on a
      * route whose effective profile is the {@code vertique} floor, even though {@link
      * dev.vertique.rest.validation.corpus.CorpusStatus#UNKNOWN} carries {@code @JsonEnumDefaultValue}
-     * — the protection the {@code 0.2.0} migration note §8 documents.
+     * — the protection the {@code 0.2.0} migration note documents.
      *
-     * <p>Behavior-preservation: green at the task's baseline commit and green after it. A profiled
+     * <p>Behavior-preservation: a profiled
      * document that dropped the {@code enum} keyword would fail here, and the corpus delta list would
      * show that drop as a loosening entry.
      *
@@ -838,12 +833,10 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * TP-010 (AC-010.3, the gated half). Under {@code web-validation} the gate rejects a JSON object
+     * The gated half. Under {@code web-validation} the gate rejects a JSON object
      * for an {@code Optional<String>}, a boolean for an {@code Instant}, and a number for a
      * {@code LocalDate} — on both built-in profiles, the unannotated {@code vertique} floor and an
      * explicitly selected {@code system} — and no request reaches a resource.
-     *
-     * <p>Behavior-preservation: green at the task's baseline commit and green after it.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -886,7 +879,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * TP-010 (AC-010.3, the gate-disabled half, and the binder evidence AC-002.2 accepts).
+     * The gate-disabled half, which is also the binder evidence.
      *
      * <p>The same two resources are mounted on a fixture configured with
      * {@code jaxrs.validationStrategy: none}, where {@link NoneValidationStrategy} installs no gate
@@ -906,7 +899,7 @@ public class ProfiledSchemaSynthesisIT {
      * </table>
      *
      * <p>This is the only evidence that can ever justify a loosening corpus delta, and it cannot be
-     * reconstructed once generation changes, which is why it is recorded here at the baseline commit.
+     * reconstructed once generation changes, which is why it is recorded here.
      * It is falsifiable in both directions: a mount that silently kept a gate would fail the
      * {@code LocalDate} row, and a binder that started rejecting epoch-day numbers would fail it too
      * and must be re-recorded rather than relaxed. A 400 from the {@code web-validation} mount is
@@ -972,18 +965,18 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(1, systemResource.invocations.get(), "only the LocalDate body may have reached the resource");
     }
 
-    // --- T004 TP-006: the restored input shapes, gate versus binder ---
+    // --- the restored input shapes, gate versus binder ---
 
     /**
-     * T004 TP-006 (AC-013.4, the gated half). A {@code vertique} route under {@code web-validation}
-     * rejects a value the binder would coerce at every value position FR-013 restores, and no request
+     * The gated half. A {@code vertique} route under {@code web-validation}
+     * rejects a value the binder would coerce at every restored value position, and no request
      * reaches the resource.
      *
-     * <p>Behavior-change: at T004's parent commit the date, integer, list, and nested rows are 200,
+     * <p>Behavior-change: without the description the date, integer, list, and nested rows are 200,
      * because the property is not described at all and the gate has nothing to check. The map row is
-     * a green characterization at that commit — its array is refused by the binder, not by the gate —
+     * a characterization — its array is refused by the binder, not by the gate —
      * so this method's value is the other four rows; the map property's description is proven by the
-     * corpus (TP-005) and by the unit proof (TP-001), never by this status code.
+     * corpus and by the unit proof, never by this status code.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -1012,7 +1005,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * T004 TP-006 (AC-013.4, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
+     * The gate-disabled half. On the {@code jaxrs.validationStrategy: none}
      * mount the profile's Jackson binder is the only component that can refuse a body, and each
      * outcome is asserted rather than merely recorded, so the gated rejection above cannot silently
      * become redundant:
@@ -1068,10 +1061,10 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(4, resource.invocations.get(), "only the four coerced bodies may have reached the resource");
     }
 
-    // --- T007 TP-006: any-setter extras and reserved names, gate versus binder ---
+    // --- any-setter extras and reserved names, gate versus binder ---
 
     /**
-     * T007 TP-006 (AC-015.6, the gated half). A {@code vertique} route under {@code web-validation}
+     * The gated half. A {@code vertique} route under {@code web-validation}
      * types an any-setter's extra keys and refuses every name the type binds but never publishes, and
      * no rejected body reaches the resource.
      *
@@ -1082,10 +1075,10 @@ public class ProfiledSchemaSynthesisIT {
      * {@code additionalProperties = FALSE} type and the map subclass are proven at document level by
      * {@code AnySetterDescriptionTest}, which is where their risk lies.
      *
-     * <p>Behavior-change: at T007's parent commit every row but the two valid ones answers 200,
+     * <p>Behavior-change: without the description every row but the two valid ones answers 200,
      * because the object is open — an extra key is never checked at all, and a name the document does
-     * not publish is indistinguishable from an extra key. The two valid rows are green
-     * characterizations at that commit: describing extras must not start rejecting legal traffic.
+     * not publish is indistinguishable from an extra key. The two valid rows are
+     * characterizations: describing extras must not start rejecting legal traffic.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -1140,7 +1133,7 @@ public class ProfiledSchemaSynthesisIT {
                         storageName,
                         "the gate must reject the any-getter's storage name 'extras': Jackson fills that map"
                                 + " through its getter, so {\"extras\":{\"role\":\"admin\"}} sets a read-only"
-                                + " name (design proof v4, SG1)"),
+                                + " name"),
                 () -> assertEquals(
                         2, resource.invocations.get(), "only the two valid bodies may have reached the resource"));
     }
@@ -1254,7 +1247,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * T007 TP-006 (AC-015.6, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
+     * The gate-disabled half. On the {@code jaxrs.validationStrategy: none}
      * mount the profile's Jackson binder is the only component that can refuse a body. Every outcome
      * is asserted rather than merely recorded, so the gated rejections above cannot silently become
      * redundant:
@@ -1329,7 +1322,7 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(5, resource.invocations.get(), "every body must have reached the resource without the gate");
     }
 
-    // --- T008 TP-004 and TP-006: alias spellings and repeated keys, gate versus binder ---
+    // --- alias spellings and repeated keys, gate versus binder ---
 
     /**
      * One gated row: a path, a body, the status the gate must answer, and why.
@@ -1366,7 +1359,7 @@ public class ProfiledSchemaSynthesisIT {
                         "{\"qty\":11}",
                         400,
                         "a constraint violation under the alias: without the alias description the gate never"
-                                + " checks the value and @Max(10) is bypassed (security round 7, N1)"),
+                                + " checks the value and @Max(10) is bypassed"),
                 new AliasCase(
                         prefix + "/optional",
                         "{\"qty\":5,\"note\":\"n\"}",
@@ -1413,7 +1406,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * T008 TP-004 (AC-016.4, the gated half). Under {@code web-validation} every published alias
+     * The gated half. Under {@code web-validation} every published alias
      * spelling is validated against its property's own constraints, on {@code system},
      * {@code vertique}, and {@code vertique-strict} routes.
      *
@@ -1431,15 +1424,15 @@ public class ProfiledSchemaSynthesisIT {
      *   <tr><td>{@code {"r":"ADMIN"}}</td><td>400</td><td>400</td><td>400</td></tr>
      * </table>
      *
-     * <p>Behavior-change at T008's parent commit, which describes no alias: {@code {"qty":11}} is
+     * <p>Behavior-change: without the alias description {@code {"qty":11}} is
      * accepted on the optional types, {@code {"qty":5}} is rejected on the required one as a missing
      * {@code quantity}, and both spellings are accepted under {@code vertique-strict}. The
      * {@code {"r":"ADMIN"}} row is split by the parser, not by the gate: {@code system} applies
      * {@code JacksonDefaults.applySystem} only and does not enable
      * {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}, so its binder already refuses the unknown
      * constant and the route answers 400 without any gate; {@code vertique} and
-     * {@code vertique-strict} bind it to the {@code @JsonEnumDefaultValue} constant, so that row is
-     * green at the parent under {@code system} and red under the other two.
+     * {@code vertique-strict} bind it to the {@code @JsonEnumDefaultValue} constant, so without the alias
+     * description that row is green under {@code system} and red under the other two.
      *
      * <p>Every row is posted before any assertion runs, so one wrong status cannot hide the other
      * forty-seven or the invocation counts.
@@ -1485,7 +1478,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * T008 TP-004 (AC-016.4, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
+     * The gate-disabled half. On the {@code jaxrs.validationStrategy: none}
      * mount the profile's Jackson binder is the only component that can refuse a body, and it accepts
      * every spelling under every profile — which is what makes the strict schema rule above stricter
      * than the binder rather than redundant with it.
@@ -1558,14 +1551,14 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * T008 TP-006 (AC-017.2, the ordinary binder route). With the process codec left at its default,
+     * The ordinary binder route. With the process codec left at its default,
      * a {@code vertique-strict} route rejects a body repeating an identical key before the resource
      * runs, because the binder parses the raw body bytes with that profile's own mapper; a
      * {@code vertique} route accepts it and binds the last value.
      *
-     * <p>Behavior-change at T008's parent commit, where {@code vertique-strict}'s mapper does not
+     * <p>Behavior-change: without the setting {@code vertique-strict}'s mapper does not
      * enable {@code STRICT_DUPLICATE_DETECTION} and the strict route answers 200; the {@code
-     * vertique} row is a green characterization there.
+     * vertique} row is a characterization.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -1587,10 +1580,7 @@ public class ProfiledSchemaSynthesisIT {
                                 + " parses the raw body bytes (DefaultBoundRequest.bindProfiledJsonBody) and the"
                                 + " binder translates the parse rejection to 400"),
                 () -> assertEquals(0, strict.invocations.get(), "the rejected body must not reach the resource"),
-                () -> assertEquals(
-                        200,
-                        vertiqueResponse.statusCode(),
-                        "vertique is unchanged by FR-017 and must keep accepting the body"),
+                () -> assertEquals(200, vertiqueResponse.statusCode(), "vertique must keep accepting the body"),
                 () -> assertEquals(
                         "quantity=2 note=null",
                         vertiqueResponse.bodyAsString(),
@@ -1598,19 +1588,18 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * T008 TP-006 (AC-017.2, the process-codec route). When the route's profile <em>is</em> the
+     * The process-codec route. When the route's profile <em>is</em> the
      * installed process codec, the binder swallows the codec's {@code DecodeException} and binds the
      * raw {@code Buffer} instead; under {@code web-validation} the gate then refuses that buffer, so
      * the client still receives a 400 before the resource runs — but the rejection is the validator
      * refusing a value it does not support, and its detail names an internal buffer class rather than
-     * the repeated key (design proof v7, {@code runs/process-codec-v7.txt} and
-     * {@code runs/buf-validate-v7.txt}).
+     * the repeated key.
      *
-     * <p>This is pinned rather than glossed over: FR-017 claims nothing for the {@code none} strategy
+     * <p>This is pinned rather than glossed over: strict duplicate detection claims nothing for the {@code none} strategy
      * or for a route with no body schema on that path, where the body parameter binds to null and the
      * resource runs — a REST binder defect filed outside this package.
      *
-     * <p>Behavior-change at T008's parent commit, where the installed mapper does not enable the
+     * <p>Behavior-change: without it the installed mapper does not enable the
      * feature and the route answers 200.
      *
      * @throws Exception when a round trip fails or times out
@@ -1637,17 +1626,17 @@ public class ProfiledSchemaSynthesisIT {
                                 + " refusing a Buffer, not from the parser; body: " + response.bodyAsString()));
     }
 
-    // --- T009 TP-002: a closed object and its undeclared property ---
+    // --- a closed object and its undeclared property ---
 
     /**
-     * T009 TP-002 (AC-018.1, the closed-object shape). A body type whose class-level
+     * The closed-object shape. A body type whose class-level
      * {@code @Schema(additionalProperties = FALSE)} publishes a closed object is validated under
      * {@code web-validation}: a body carrying one undeclared property beside the declared one is
      * rejected with 400 before the resource runs, and the rejection carries exactly one body detail
      * that names the failing instance location, carries no keyword and no constraint arguments, and
      * echoes neither the submitted value nor the raw validator message.
      *
-     * <p><strong>What the validator reports for this shape</strong>, measured at T009's parent against
+     * <p><strong>What the validator reports for this shape</strong>, measured against
      * the schema the mount itself synthesizes ({@code {"type":"object","additionalProperties":false,
      * "properties":{"quantity":{"type":"integer"}}}}): {@code getValid()} is {@code false} and the
      * result carries exactly one error, whose keyword location is {@code #/additionalProperties} and
@@ -1655,15 +1644,15 @@ public class ProfiledSchemaSynthesisIT {
      * its own — vertx-json-schema's Basic output leaves it {@code null} — so the location this detail
      * must name is the one the reported error names.
      *
-     * <p>Behavior-change at T009's parent commit, where the single error's keyword is structural, the
-     * gate's detail list therefore stays empty, and the request succeeds with 200 although its own
-     * validator reported the body invalid. This is the second instance of the same defect as
-     * {@link #aliasSpellingsAreValidatedUnderTheGate()}, reached through a different keyword.
+     * <p>Behavior-change: were the single error's keyword treated as structural, the
+     * gate's detail list would stay empty, and the request would succeed with 200 although its own
+     * validator reported the body invalid. {@link #aliasSpellingsAreValidatedUnderTheGate()} guards the
+     * same defect, reached through a different keyword.
      *
      * <p>The gate-disabled row is what makes the 400 the gate's: the fixture's binder is told to ignore
      * an undeclared property, so with no gate the same body reaches the resource. A 400 there would
      * mean the binder, not the gate, refused the body and this proof would be measuring the wrong
-     * component — which is exactly what the first parent measurement showed for a fixture without
+     * component — which is what happens for a fixture without
      * {@code @JsonIgnoreProperties}, and why {@link ClosedQuantity} carries it.
      *
      * @throws Exception when a round trip fails or times out
@@ -1708,9 +1697,9 @@ public class ProfiledSchemaSynthesisIT {
                         "body",
                         detail(errors).getString("location"),
                         "the detail belongs to the body call that failed"),
-                // FR-018 as round 10 corrects it: the detail still identifies a failing location, but the
-                // location it names carries no unbounded client-chosen text. Which bounded spelling it
-                // takes is the executor's recorded choice under AC-018.1 — bounding what the path may
+                // The detail still identifies a failing location, but the
+                // location it names carries no unbounded client-chosen text. Either bounded spelling
+                // is acceptable — bounding what the path may
                 // carry, or falling back to the containing location when the reported location's last
                 // segment is not a name the schema declares — so this row asserts the property both
                 // choices must have, not one of their two literals.
@@ -1761,7 +1750,7 @@ public class ProfiledSchemaSynthesisIT {
                 () -> assertEquals(
                         1, ungated.invocations.get(), "the gate-disabled body must have reached the resource"),
 
-                // --- T010 TP-003: the long client-chosen key ---
+                // --- the long client-chosen key ---
                 () -> assertEquals(
                         400,
                         longKeyRejected.statusCode(),
@@ -1778,7 +1767,7 @@ public class ProfiledSchemaSynthesisIT {
                                 + " detail; body length: " + longKeyBody.length()),
                 () -> assertFalse(
                         longKeyBody.contains(LONG_KEY_MARKER),
-                        "DECISIVE (CO-008): no part of the client's own key may reach the response. The key"
+                        "DECISIVE: no part of the client's own key may reach the response. The key"
                                 + " is the last segment of the instance location the validator reports for an"
                                 + " undeclared property under a closed object, and the value-free detail"
                                 + " passed that location through verbatim, so a client chooses the response's"
@@ -1786,7 +1775,7 @@ public class ProfiledSchemaSynthesisIT {
                                 + (longKeyPath == null ? -1 : longKeyPath.length())),
                 () -> assertTrue(
                         longKeyPath != null && longKeyPath.length() <= VALUE_FREE_PATH_BOUND,
-                        "DECISIVE (CO-008): the value-free detail's path is bounded. A repair that only"
+                        "DECISIVE: the value-free detail's path is bounded. A fix that only"
                                 + " strips the leading slash or the '#' still returns a path of the client's"
                                 + " chosen length and does not satisfy this; path length: "
                                 + (longKeyPath == null ? -1 : longKeyPath.length())),
@@ -1838,20 +1827,19 @@ public class ProfiledSchemaSynthesisIT {
 
     // --- Request bodies ---
 
-    /** AC-005.2: KELVIN SIGN, which folds to ASCII 'k' under Jackson's locale-independent case fold. */
-    private static final String AC005_KELVIN_SIGN = "K";
+    /** KELVIN SIGN, which folds to ASCII 'k' under Jackson's locale-independent case fold. */
+    private static final String KELVIN_SIGN = "K";
 
     /**
-     * AC-005.2: the confusable spelling's value — deliberately within the real {@code key} member's own
+     * The confusable spelling's value — deliberately within the real {@code key} member's own
      * {@code @Size(max = 3)}, so a 400 here can only come from the {@code propertyNames} refusal, never
      * a coincidental length violation on the member the binder's case-insensitive lookup would otherwise
      * route it to. Distinctive enough that its absence from the response is still provable.
      */
-    private static final String AC005_VALUE_MARKER = "AC5";
+    private static final String KELVIN_VALUE_MARKER = "VAL";
 
-    /** AC-005.2: a body spelling the constrained {@code key} member's name with the confusable Kelvin sign. */
-    private static final String AC005_KELVIN_KEY_BODY =
-            "{\"" + AC005_KELVIN_SIGN + "ey\":\"" + AC005_VALUE_MARKER + "\"}";
+    /** A body spelling the constrained {@code key} member's name with the confusable Kelvin sign. */
+    private static final String KELVIN_KEY_BODY = "{\"" + KELVIN_SIGN + "ey\":\"" + KELVIN_VALUE_MARKER + "\"}";
 
     /** The undeclared property's value: distinctive, so its absence from the response is provable. */
     private static final String UNDECLARED_MARKER = "MARKER-4711-MUST-NOT-ECHO";
@@ -1863,10 +1851,9 @@ public class ProfiledSchemaSynthesisIT {
      * The undeclared property's <strong>name</strong> for the bounded-location row: a distinctive
      * literal repeated past 4096 characters.
      *
-     * <p>T009's existing assertions cover the submitted <em>value</em>; this marker is the key itself,
+     * <p>The other closed-object assertions cover the submitted <em>value</em>; this marker is the key itself,
      * which the validator reports as the last segment of the failing instance location and which the
-     * gate's value-free detail therefore carried into the response verbatim, of unbounded length
-     * (CO-008).
+     * gate's value-free detail therefore carried into the response verbatim, of unbounded length.
      */
     private static final String LONG_KEY_MARKER = "LONGKEY-2f9c".repeat(512);
 
@@ -1876,8 +1863,8 @@ public class ProfiledSchemaSynthesisIT {
     /**
      * The bound the value-free detail's path must stay inside. It is far below the marker's length and
      * far above any location the schema's own declared names can spell, so it discriminates a path
-     * carrying a client-chosen key from either repair AC-018.1 admits — bounding what the path may
-     * carry, or falling back to the containing location — without pinning the executor's choice.
+     * carrying a client-chosen key from either acceptable fix — bounding what the path may
+     * carry, or falling back to the containing location — without pinning one choice.
      */
     private static final int VALUE_FREE_PATH_BOUND = 256;
 
@@ -1885,8 +1872,8 @@ public class ProfiledSchemaSynthesisIT {
     private static final String CLOSED_DECLARED_BODY = "{\"quantity\":5}";
 
     /**
-     * The distinguishing fragment of the raw vertx-json-schema message for this failure, measured at
-     * T009's parent: {@code Property "surprise" does not match additional properties schema}. The
+     * The distinguishing fragment of the raw vertx-json-schema message for this failure:
+     * {@code Property "surprise" does not match additional properties schema}. The
      * value-free detail must not be composed from it.
      */
     private static final String RAW_ADDITIONAL_PROPERTIES_MESSAGE = "does not match additional properties schema";
@@ -1898,13 +1885,13 @@ public class ProfiledSchemaSynthesisIT {
     private static final String ANY_SETTER_NUMBER_EXTRA_BODY = "{\"x\":5}";
 
     /** A very long, distinctive undeclared key: its absence from the response is provable. */
-    private static final String ANY_SETTER_LONG_KEY = "CLIENT-KEY-598-MUST-NOT-ECHO-" + "k".repeat(2000);
+    private static final String ANY_SETTER_LONG_KEY = "CLIENT-KEY-MUST-NOT-ECHO-" + "k".repeat(2000);
 
     /** A JSON number under the long undeclared key, where the string any-setter declares strings. */
     private static final String ANY_SETTER_LONG_KEY_NUMBER_BODY = "{\"name\":\"a\",\"" + ANY_SETTER_LONG_KEY + "\":5}";
 
     /** A very long, distinctive undeclared key under a nested object. */
-    private static final String NESTED_CLIENT_KEY = "CLIENT-KEY-598-NESTED-" + "n".repeat(500);
+    private static final String NESTED_CLIENT_KEY = "CLIENT-KEY-NESTED-" + "n".repeat(500);
 
     /** A too-long declared name inside the nullable nested object. */
     private static final String NULLABLE_NESTED_LONG_NAME_BODY = "{\"pet\":{\"name\":\"toolong\"}}";
@@ -1932,7 +1919,7 @@ public class ProfiledSchemaSynthesisIT {
     /** The ignored name the reserved-name type binds on input but never publishes. */
     private static final String ANY_SETTER_ID_BODY = "{\"id\":\"forged\"}";
 
-    /** The any-getter's storage name, which Jackson fills through its getter (SG1). */
+    /** The any-getter's storage name, which Jackson fills through its getter. */
     private static final String ANY_SETTER_STORAGE_BODY = "{\"extras\":{\"role\":\"admin\"}}";
 
     /** A JSON number where the private-field fixture declares a date string property. */
@@ -1961,7 +1948,7 @@ public class ProfiledSchemaSynthesisIT {
 
     // --- Resource fixtures ---
 
-    /** The TP-001 body: one {@code BigDecimal} value position under the strict profile. */
+    /** The strict-decimal body: one {@code BigDecimal} value position under the strict profile. */
     public static class Payment {
 
         /** The decimal amount, whose wire shape the effective profile decides. */
@@ -2039,10 +2026,10 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- T006 TP-002: the Positive/Negative family fixtures ---
+    // --- the Positive/Negative family fixtures ---
 
     /**
-     * C3p: a static-factory {@code @JsonCreator} with {@code @Positive} directly on its own parameter.
+     * A static-factory {@code @JsonCreator} with {@code @Positive} directly on its own parameter.
      * Bean Validation exposes constrained constructors only ({@code
      * BeanDescriptor#getConstraintsForConstructor}), so the metadata supplement contributes nothing for
      * this parameter's owner (a static {@link java.lang.reflect.Method}, never a
@@ -2089,7 +2076,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * C3c: a constructor {@code @JsonCreator} with {@code @Positive} directly on its own parameter. Bean
+     * A constructor {@code @JsonCreator} with {@code @Positive} directly on its own parameter. Bean
      * Validation exposes a constrained constructor's own parameters directly, so the metadata supplement
      * already renders {@code exclusiveMinimum: 0} for this shape today — the validator-backed row's own
      * characterization control.
@@ -2129,7 +2116,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * deserializer-driven-schema spike: a hand-written (non-Lombok) builder whose setter divides the
+     * A hand-written (non-Lombok) builder whose setter divides the
      * incoming value by 100 before assigning it to the built field of the same wire name — the
      * gate-level counterpart to {@link
      * dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto}. The builder class is
@@ -2190,14 +2177,13 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * Round 2: a hand-written builder whose {@code @JsonPOJOBuilder} carries a non-empty
+     * A hand-written builder whose {@code @JsonPOJOBuilder} carries a non-empty
      * {@code withPrefix} ({@code "with"}, never the empty string {@code @Jacksonized} always emits)
      * fails {@code BuilderBorrowDetector}'s shape match on that condition alone. Both built properties
-     * carry a getter, so under the round-2 owner ruling the borrow no longer depends on the shape at
-     * all.
+     * carry a getter, so the borrow does not depend on the shape at all.
      */
-    @JsonDeserialize(builder = Round2WithPrefixBuilderBody.Builder.class)
-    public static class Round2WithPrefixBuilderBody {
+    @JsonDeserialize(builder = WithPrefixBuilderBody.Builder.class)
+    public static class WithPrefixBuilderBody {
 
         @Size(max = 3)
         private final String name;
@@ -2205,7 +2191,7 @@ public class ProfiledSchemaSynthesisIT {
         @Max(10)
         private final int level;
 
-        private Round2WithPrefixBuilderBody(String name, int level) {
+        private WithPrefixBuilderBody(String name, int level) {
             this.name = name;
             this.level = level;
         }
@@ -2243,15 +2229,15 @@ public class ProfiledSchemaSynthesisIT {
                 return this;
             }
 
-            public Round2WithPrefixBuilderBody build() {
-                return new Round2WithPrefixBuilderBody(name, level);
+            public WithPrefixBuilderBody build() {
+                return new WithPrefixBuilderBody(name, level);
             }
         }
     }
 
-    /** The resource for {@link Round2WithPrefixBuilderBody}, on the unannotated floor profile. */
-    @Path("/round2-with-prefix")
-    public static class Round2WithPrefixBuilderResource {
+    /** The resource for {@link WithPrefixBuilderBody}, on the unannotated floor profile. */
+    @Path("/getter-backed-with-prefix")
+    public static class WithPrefixBuilderResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -2259,27 +2245,27 @@ public class ProfiledSchemaSynthesisIT {
         /**
          * Echoes the bound name and level.
          *
-         * @param body the round-2 with-prefix fixture body
+         * @param body the with-prefix fixture body
          * @return the echoed name and level
          */
         @POST
         @Path("/fields")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "round2WithPrefixFieldsEcho")
-        public String echo(Round2WithPrefixBuilderBody body) {
+        @Operation(operationId = "withPrefixFieldsEcho")
+        public String echo(WithPrefixBuilderBody body) {
             invocations.incrementAndGet();
             return "name=" + body.getName() + " level=" + body.getLevel();
         }
     }
 
     /**
-     * Round 2: a hand-written builder class named plainly ({@code Factory}), not in the Lombok
+     * A hand-written builder class named plainly ({@code Factory}), not in the Lombok
      * {@code <Type>Builder} convention, fails {@code BuilderBorrowDetector}'s naming condition alone.
      * Both built properties carry a getter.
      */
-    @JsonDeserialize(builder = Round2PlainBuilderClassBody.Factory.class)
-    public static class Round2PlainBuilderClassBody {
+    @JsonDeserialize(builder = PlainBuilderClassBody.Factory.class)
+    public static class PlainBuilderClassBody {
 
         @Size(max = 3)
         private final String name;
@@ -2287,7 +2273,7 @@ public class ProfiledSchemaSynthesisIT {
         @Max(10)
         private final int level;
 
-        private Round2PlainBuilderClassBody(String name, int level) {
+        private PlainBuilderClassBody(String name, int level) {
             this.name = name;
             this.level = level;
         }
@@ -2325,15 +2311,15 @@ public class ProfiledSchemaSynthesisIT {
                 return this;
             }
 
-            public Round2PlainBuilderClassBody build() {
-                return new Round2PlainBuilderClassBody(name, level);
+            public PlainBuilderClassBody build() {
+                return new PlainBuilderClassBody(name, level);
             }
         }
     }
 
-    /** The resource for {@link Round2PlainBuilderClassBody}, on the unannotated floor profile. */
-    @Path("/round2-plain-class")
-    public static class Round2PlainBuilderClassResource {
+    /** The resource for {@link PlainBuilderClassBody}, on the unannotated floor profile. */
+    @Path("/getter-backed-plain-class")
+    public static class PlainBuilderClassResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -2341,27 +2327,27 @@ public class ProfiledSchemaSynthesisIT {
         /**
          * Echoes the bound name and level.
          *
-         * @param body the round-2 plain-builder-class fixture body
+         * @param body the plain-builder-class fixture body
          * @return the echoed name and level
          */
         @POST
         @Path("/fields")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "round2PlainClassFieldsEcho")
-        public String echo(Round2PlainBuilderClassBody body) {
+        @Operation(operationId = "plainClassFieldsEcho")
+        public String echo(PlainBuilderClassBody body) {
             invocations.incrementAndGet();
             return "name=" + body.getName() + " level=" + body.getLevel();
         }
     }
 
     /**
-     * Round 2: a hand-written builder whose build method is named {@code create}, not {@code build},
+     * A hand-written builder whose build method is named {@code create}, not {@code build},
      * fails {@code BuilderBorrowDetector}'s build-method-name condition alone. Both built properties
      * carry a getter.
      */
-    @JsonDeserialize(builder = Round2RenamedBuildMethodBody.Builder.class)
-    public static class Round2RenamedBuildMethodBody {
+    @JsonDeserialize(builder = RenamedBuildMethodBody.Builder.class)
+    public static class RenamedBuildMethodBody {
 
         @Size(max = 3)
         private final String name;
@@ -2369,7 +2355,7 @@ public class ProfiledSchemaSynthesisIT {
         @Max(10)
         private final int level;
 
-        private Round2RenamedBuildMethodBody(String name, int level) {
+        private RenamedBuildMethodBody(String name, int level) {
             this.name = name;
             this.level = level;
         }
@@ -2407,15 +2393,15 @@ public class ProfiledSchemaSynthesisIT {
                 return this;
             }
 
-            public Round2RenamedBuildMethodBody create() {
-                return new Round2RenamedBuildMethodBody(name, level);
+            public RenamedBuildMethodBody create() {
+                return new RenamedBuildMethodBody(name, level);
             }
         }
     }
 
-    /** The resource for {@link Round2RenamedBuildMethodBody}, on the unannotated floor profile. */
-    @Path("/round2-renamed-method")
-    public static class Round2RenamedBuildMethodResource {
+    /** The resource for {@link RenamedBuildMethodBody}, on the unannotated floor profile. */
+    @Path("/getter-backed-renamed-method")
+    public static class RenamedBuildMethodResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -2423,22 +2409,22 @@ public class ProfiledSchemaSynthesisIT {
         /**
          * Echoes the bound name and level.
          *
-         * @param body the round-2 renamed-build-method fixture body
+         * @param body the renamed-build-method fixture body
          * @return the echoed name and level
          */
         @POST
         @Path("/fields")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "round2RenamedMethodFieldsEcho")
-        public String echo(Round2RenamedBuildMethodBody body) {
+        @Operation(operationId = "renamedMethodFieldsEcho")
+        public String echo(RenamedBuildMethodBody body) {
             invocations.incrementAndGet();
             return "name=" + body.getName() + " level=" + body.getLevel();
         }
     }
 
     /**
-     * H4: a getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
+     * A getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
      * only storage is {@link #internal}, an unrelated field name Jackson populates in place through
      * the getter (no setter is declared). The generator's scoped-member describe path must still find
      * and describe this property through the schema library's own method scope, the same as any other
@@ -2488,7 +2474,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * A Lombok {@code @Builder @Jacksonized} type with a constrained private field and
      * deliberately no getter — {@code LombokBuilderDto} in {@code corpus}, this fixture's
      * {@code @Getter}-carrying counterpart, stays out of reach here since the corpus set is frozen for
      * byte-exact golden comparisons. Jackson's own introspection does not see {@code name} as a
@@ -2499,20 +2485,20 @@ public class ProfiledSchemaSynthesisIT {
      */
     @Builder
     @Jacksonized
-    public static class Bg1NoGetterBody {
+    public static class LombokBuilderNoGetterBody {
 
         @Size(max = 5)
         private final String name;
     }
 
     /**
-     * The resource on the {@code vertique} floor for {@link Bg1NoGetterBody}, mounted on {@link
+     * The resource on the {@code vertique} floor for {@link LombokBuilderNoGetterBody}, mounted on {@link
      * MountFixtures#validatorBackedMount}: it carries no {@code @JsonProfile}, so the gate schema is
      * generated from the unannotated floor profile, and the mount's own graph supplies a real {@link
      * jakarta.validation.Validator} so the metadata supplement is active.
      */
-    @Path("/bg1")
-    public static class Bg1Resource {
+    @Path("/lombok-builder-no-getter")
+    public static class LombokBuilderNoGetterResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -2520,22 +2506,22 @@ public class ProfiledSchemaSynthesisIT {
         /**
          * Echoes the bound name.
          *
-         * @param body the BG1 fixture body
+         * @param body the fixture body
          * @return the echoed name
          */
         @POST
         @Path("/name")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "bg1NameEcho")
-        public String echo(Bg1NoGetterBody body) {
+        @Operation(operationId = "lombokBuilderNoGetterNameEcho")
+        public String echo(LombokBuilderNoGetterBody body) {
             invocations.incrementAndGet();
             return "name=" + body.name;
         }
     }
 
     /**
-     * AC-005.2: a case-insensitively bound, extras-described (any-setter) type — the gate-level
+     * A case-insensitively bound, extras-described (any-setter) type — the gate-level
      * counterpart to {@code CaseInsensitiveUnicodeFoldingTest.CaseInsensitiveWithExtras} in {@code
      * vertique-json-schema}, whose own proof only matches the generated {@code propertyNames} regex
      * against the confusable spelling, never a real request. U+212A KELVIN SIGN folds to ASCII
@@ -2544,7 +2530,7 @@ public class ProfiledSchemaSynthesisIT {
      * {@code propertyNames} rule this type's document carries refuses any non-ASCII key outright instead.
      */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    public static class Ac005CaseInsensitiveAnySetterBody {
+    public static class KelvinCaseInsensitiveAnySetterBody {
 
         @Size(max = 3)
         public String key;
@@ -2564,12 +2550,12 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * The resource on the {@code vertique} floor for {@link Ac005CaseInsensitiveAnySetterBody}: it
+     * The resource on the {@code vertique} floor for {@link KelvinCaseInsensitiveAnySetterBody}: it
      * carries no {@code @JsonProfile}, so the gate schema is generated from the unannotated floor
      * profile.
      */
-    @Path("/ac005")
-    public static class Ac005Resource {
+    @Path("/kelvin")
+    public static class KelvinCaseInsensitiveResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -2577,15 +2563,15 @@ public class ProfiledSchemaSynthesisIT {
         /**
          * Echoes the bound key.
          *
-         * @param body the AC-005.2 fixture body
+         * @param body the fixture body
          * @return the echoed key
          */
         @POST
         @Path("/case-insensitive")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "ac005CaseInsensitiveEcho")
-        public String echo(Ac005CaseInsensitiveAnySetterBody body) {
+        @Operation(operationId = "kelvinCaseInsensitiveEcho")
+        public String echo(KelvinCaseInsensitiveAnySetterBody body) {
             invocations.incrementAndGet();
             return "key=" + body.key;
         }
@@ -2741,7 +2727,7 @@ public class ProfiledSchemaSynthesisIT {
 
     /**
      * The restored-shape resource on the {@code vertique} floor: it carries no {@code @JsonProfile},
-     * so the effective profile is the reserved floor, the profile AC-013.4 names. Every route echoes
+     * so the effective profile is the reserved floor. Every route echoes
      * what the binder produced, so the gate-disabled half can assert the bound value and not merely
      * the status code.
      */
@@ -2832,7 +2818,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- T007 TP-006 fixtures: the three any-setter shapes AC-015.6 names ---
+    // --- fixtures: the three any-setter shapes ---
 
     /**
      * Renders an extras map as {@code key=value:SimpleClassName} pairs, so a proof can assert what the
@@ -2954,7 +2940,7 @@ public class ProfiledSchemaSynthesisIT {
 
     /**
      * The any-setter resource on the {@code vertique} floor: it carries no {@code @JsonProfile}, so
-     * the effective profile is the reserved floor, the profile AC-015.6 names. Every route echoes what
+     * the effective profile is the reserved floor. Every route echoes what
      * the binder produced, so the gate-disabled half asserts the stored value and not merely a status
      * code.
      */
@@ -3013,9 +2999,9 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- Optional-typed extras value (N14/N14n) ---
+    // --- Optional-typed extras value ---
 
-    /** A named property beside an any-setter whose extras value is {@code Optional<Plain>} (N14/N14n). */
+    /** A named property beside an any-setter whose extras value is {@code Optional<Plain>}. */
     public static class OptionalAnySetterExtrasDto {
 
         /** An ordinary property the document publishes. */
@@ -3047,7 +3033,7 @@ public class ProfiledSchemaSynthesisIT {
         /** {@code Plain}'s own schema is what a declared-{@code Optional} extras value must describe. */
         public static class Plain {
 
-            /** The constraint an {@code Optional<Plain>} extras value must still describe (N14). */
+            /** The constraint an {@code Optional<Plain>} extras value must still describe. */
             @Size(max = 3)
             public String name;
         }
@@ -3080,21 +3066,21 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- TP-004/TP-010, map value shapes and the single any-setter N16 shape ---
+    // --- map value shapes and the single any-setter shape ---
 
-    /** S2a/S2b/S2c/S2d — one holder carrying every ordinary-map-property value shape. */
+    /** One holder carrying every ordinary-map-property value shape. */
     public static class MapValueShapesDto {
 
-        /** S2b — a type-use-constrained String value. */
+        /** A type-use-constrained String value. */
         public Map<String, @Size(max = 3) String> tags;
 
-        /** S2a — a bean value, whose own constraint must be described too. */
+        /** A bean value, whose own constraint must be described too. */
         public Map<String, Plain> labels;
 
-        /** S2d — an Optional-wrapped bean value. */
+        /** An Optional-wrapped bean value. */
         public Map<String, Optional<Plain>> opts;
 
-        /** S2c — an opaque, unconstrained control value. */
+        /** An opaque, unconstrained control value. */
         public Map<String, com.fasterxml.jackson.databind.JsonNode> raw;
 
         /** {@code Plain}'s own declared constraint, shared by {@code labels} and {@code opts}. */
@@ -3129,7 +3115,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    /** N16 — a single, non-conjoined any-setter whose value type carries a type-use constraint. */
+    /** A single, non-conjoined any-setter whose value type carries a type-use constraint. */
     public static class SingleAnySetterTypeUseDto {
 
         /** The any-setter's backing storage: the type-use-constrained value position under test. */
@@ -3137,7 +3123,7 @@ public class ProfiledSchemaSynthesisIT {
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 
-    /** The resource: a single route accepting the single any-setter N16 body. */
+    /** The resource: a single route accepting the single any-setter body. */
     @Path("/any-setter-type-use")
     public static class AnySetterTypeUseResource {
 
@@ -3160,17 +3146,17 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- TP-002, several any-setters sharing a wire key ---
+    // --- several any-setters sharing a wire key ---
 
-    /** UW-2AS child: a type-use-constrained any-setter, sharing its wire key with the parent's own. */
+    /** The unwrapped child: a type-use-constrained any-setter, sharing its wire key with the parent's own. */
     public static class SharedAnySetterConjunctionChild {
 
-        /** The child's own any-setter, type-use-constrained (N16 shape). */
+        /** The child's own any-setter, type-use-constrained. */
         @JsonAnySetter
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 
-    /** UW-2AS parent: its own any-setter, plus the unwrapped child's own, sharing every wire key. */
+    /** The parent: its own any-setter, plus the unwrapped child's own, sharing every wire key. */
     public static class SharedAnySetterConjunctionDto {
 
         /** The unwrapped child, declaring its own any-setter. */
@@ -3182,7 +3168,7 @@ public class ProfiledSchemaSynthesisIT {
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** The resource for the UW-2AS shared-any-setter-key shape. */
+    /** The resource for the shared-any-setter-key shape. */
     @Path("/shared-any-setter-conjunction")
     public static class SharedAnySetterConjunctionResource {
 
@@ -3266,7 +3252,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- TP-003, member-level closure ---
+    // --- member-level closure ---
 
     /** The value type both the FALSE-closed member and the unannotated open control member reference. */
     public static class ClosedChild {
@@ -3280,7 +3266,7 @@ public class ProfiledSchemaSynthesisIT {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** M10: a member-level FALSE-closed reference to {@link ClosedChild}, plus an unannotated control. */
+    /** A member-level FALSE-closed reference to {@link ClosedChild}, plus an unannotated control. */
     public static class MemberLevelClosureDto {
 
         /** The FALSE-closed member under test. */
@@ -3314,7 +3300,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+    // --- sibling-ordered unwrapped pair ---
 
     /**
      * The first unwrapped sibling, carrying no any-setter of its own: an aliased, constrained member and
@@ -3337,7 +3323,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * C1: two {@code @JsonUnwrapped} siblings, in this order, where only the *second* sibling carries the
+     * Two {@code @JsonUnwrapped} siblings, in this order, where only the *second* sibling carries the
      * {@code @JsonAnySetter}.
      */
     public static class SiblingUnwrappedParent {
@@ -3348,7 +3334,7 @@ public class ProfiledSchemaSynthesisIT {
         public SiblingUnwrappedB b;
     }
 
-    /** The C1 resource: a single route accepting the sibling-ordered unwrapped pair. */
+    /** The resource: a single route accepting the sibling-ordered unwrapped pair. */
     @Path("/sibling-unwrapped")
     public static class SiblingUnwrappedResource {
 
@@ -3372,7 +3358,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     @Test
-    @DisplayName("C1: a sibling unwrapped child's hidden member is rejected at the gate even though the"
+    @DisplayName("a sibling unwrapped child's hidden member is rejected at the gate even though the"
             + " any-setter is declared on a different sibling, processed later")
     void siblingOrderedUnwrappedHiddenMemberIsRejectedAtTheGate() throws Exception {
         SiblingUnwrappedResource resource = new SiblingUnwrappedResource();
@@ -3394,7 +3380,7 @@ public class ProfiledSchemaSynthesisIT {
                 () -> assertEquals(
                         400,
                         hiddenMemberKey,
-                        "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must"
+                        "DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must"
                                 + " be rejected at the gate rather than reaching the resource through the"
                                 + " extras bucket unconstrained, even though the any-setter is declared on the"
                                 + " second sibling, processed later"),
@@ -3461,7 +3447,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- T008 alias fixtures and resources ---
+    // --- alias fixtures and resources ---
 
     /** A body repeating an identical key, which only a strict-duplicate-detecting mapper refuses. */
     private static final String REPEATED_KEY_BODY = "{\"quantity\":1,\"quantity\":2}";
@@ -3798,7 +3784,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- T009 closed-object fixture and resource ---
+    // --- closed-object fixture and resource ---
 
     /**
      * A closed object: one declared property beside a class-level rule that publishes
@@ -3806,7 +3792,7 @@ public class ProfiledSchemaSynthesisIT {
      * only the schema — can see.
      *
      * <p>{@code @JsonIgnoreProperties(ignoreUnknown = true)} is what makes this fixture a proof of the
-     * <em>gate</em>. Measured at T009's parent: without it every built-in profile's binder refuses an
+     * <em>gate</em>. Without it every built-in profile's binder refuses an
      * undeclared property first, answering 400 with the profile's own {@code "Request body rejected by
      * JSON profile"} problem body and no {@code errors} array at all, on the gate-disabled mount as
      * well as the gated one — so the gate's verdict on this shape would never be observable. Telling
@@ -3825,7 +3811,7 @@ public class ProfiledSchemaSynthesisIT {
 
     /**
      * The closed-object route on the {@code vertique} floor: it carries no {@code @JsonProfile}, so the
-     * effective profile is the unannotated floor AC-018.1 names for this shape.
+     * effective profile is the unannotated floor.
      */
     @Path("/closed")
     public static class ClosedObjectResource {
@@ -3850,7 +3836,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- C-1 (round 5 review finding, spike/deserializer-driven-schema): the gate-level half ---
+    // --- the mapper-wide delegating wrapper: the gate-level half ---
 
     /**
      * Forwards every operation to the delegate, exactly as a bean-preserving wrapper module would —
@@ -3858,38 +3844,38 @@ public class ProfiledSchemaSynthesisIT {
      * vertique-json-schema}, duplicated here since that fixture is package-private in a sibling
      * module and this class needs its own mapper-wide {@link BeanDeserializerModifier}.
      */
-    static final class C1ForwardingDelegatingDeserializer extends DelegatingDeserializer {
-        C1ForwardingDelegatingDeserializer(JsonDeserializer<?> delegate) {
+    static final class ForwardingDelegatingDeserializer extends DelegatingDeserializer {
+        ForwardingDelegatingDeserializer(JsonDeserializer<?> delegate) {
             super(delegate);
         }
 
         @Override
         protected JsonDeserializer<?> newDelegatingInstance(JsonDeserializer<?> newDelegatee) {
-            return new C1ForwardingDelegatingDeserializer(newDelegatee);
+            return new ForwardingDelegatingDeserializer(newDelegatee);
         }
     }
 
     /** An ordinary constrained member, unwrapped onto the parent rather than published as its own object. */
-    static final class C1Child {
+    static final class PlainUnwrappedChild {
         @Size(max = 3)
         public String name;
     }
 
-    /** Carries {@link C1Child} through {@code @JsonUnwrapped}, under the mapper-wide wrapper profile below. */
-    static final class C1Parent {
+    /** Carries {@link PlainUnwrappedChild} through {@code @JsonUnwrapped}, under the mapper-wide wrapper profile below. */
+    static final class PlainUnwrappedParent {
         @JsonUnwrapped
-        public C1Child child;
+        public PlainUnwrappedChild child;
     }
 
     /**
-     * Builds the test-scope profile a {@code @JsonProfile("c1-delegating-wrapper")} route selects: a
+     * Builds the test-scope profile a {@code @JsonProfile("delegating-wrapper")} route selects: a
      * plain mapper whose {@link BeanDeserializerModifier} wraps every bean deserializer in a
      * forwarding {@link DelegatingDeserializer}, the same mapper-wide shape {@code
      * DelegatingDeserializerWrapperTest} exercises at the unit level.
      *
      * @return the wrapper profile, registered through {@link RestTestContributions}
      */
-    private static JsonMapperProfile c1DelegatingWrapperProfile() {
+    private static JsonMapperProfile delegatingWrapperProfile() {
         // Vert.x JSON support: the registry probes a contributed mapper with a JsonObject round trip.
         ObjectMapper mapper =
                 JsonMapper.builder().addModule(VertxJsonSupport.module()).build();
@@ -3901,20 +3887,20 @@ public class ProfiledSchemaSynthesisIT {
                     @Override
                     public JsonDeserializer<?> modifyDeserializer(
                             DeserializationConfig config, BeanDescription beanDesc, JsonDeserializer<?> deserializer) {
-                        return new C1ForwardingDelegatingDeserializer(deserializer);
+                        return new ForwardingDelegatingDeserializer(deserializer);
                     }
                 });
             }
         });
-        return JsonMapperProfiles.of(JsonProfileId.of("c1-delegating-wrapper"), mapper);
+        return JsonMapperProfiles.of(JsonProfileId.of("delegating-wrapper"), mapper);
     }
 
     /**
-     * The resource for {@link C1Parent}, mounted under the {@code c1-delegating-wrapper} profile.
+     * The resource for {@link PlainUnwrappedParent}, mounted under the {@code delegating-wrapper} profile.
      */
-    @Path("/c1")
-    @JsonProfile("c1-delegating-wrapper")
-    public static class C1Resource {
+    @Path("/plain-unwrapped")
+    @JsonProfile("delegating-wrapper")
+    public static class PlainUnwrappedResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -3929,69 +3915,69 @@ public class ProfiledSchemaSynthesisIT {
         @Path("/unwrapped")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "c1UnwrappedEcho")
-        public String echo(C1Parent body) {
+        @Operation(operationId = "plainUnwrappedEcho")
+        public String echo(PlainUnwrappedParent body) {
             invocations.incrementAndGet();
             return "name=" + (body.child == null ? null : body.child.name);
         }
     }
 
     /**
-     * C-1 (independent review, by-reading finding). Under a mapper-wide {@code
+     * Under a mapper-wide {@code
      * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
-     * DelegatingDeserializer}, the review's premise was that {@code InputPropertyDescriber}'s
-     * unwrapped-child loop silently skips an {@code @JsonUnwrapped} child, publishing neither its
+     * DelegatingDeserializer}, one might expect {@code InputPropertyDescriber}'s
+     * unwrapped-child loop to skip an {@code @JsonUnwrapped} child, publishing neither its
      * property nor its {@code @Size(max = 3)} constraint — so the gate would accept an oversized value.
      *
-     * <p>CORRECTED (round 6 finding): this row never actually characterized the loop, and was never red.
-     * {@link C1Child}'s {@code name} member is an ordinary, plain property — not hidden, not an alias,
+     * <p>This row does not characterize the loop itself, and would pass without it.
+     * {@link PlainUnwrappedChild}'s {@code name} member is an ordinary, plain property — not hidden, not an alias,
      * not on an any-setter type — and the schema library's own generation independently publishes a bare
      * {@code @JsonUnwrapped} member's plain properties onto the parent regardless of whether this
      * describer's own loop processes the child at all (measured directly, mirroring {@code
      * DelegatingDeserializerWrapperTest.unwrappedChildUnderMapperWideDelegatingWrapperIsDescribed}'s own
-     * corrected Javadoc: forcing the loop to unconditionally skip every unwrapped child still leaves
+     * Javadoc: forcing the loop to unconditionally skip every unwrapped child still leaves
      * {@code "name"} published with its {@code @Size(max = 3)}). This row is kept as a positive
      * regression guard for that already-independent library behavior, never as the loop's own
      * discriminating proof — the loop's own bug is discriminating only for a shape the library's own
-     * flattening does not cover on its own, which the C-2 row below exercises instead.
+     * flattening does not cover on its own, which the hidden-member row below exercises instead.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("C-1: under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an oversized"
+    @DisplayName("under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an oversized"
             + " unwrapped child value")
-    void c1UnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
-        C1Resource resource = new C1Resource();
+    void plainUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
+        PlainUnwrappedResource resource = new PlainUnwrappedResource();
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(c1DelegatingWrapperProfile())
+                .addJsonMapperProfile(delegatingWrapperProfile())
                 .build();
         int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
 
-        HttpResponse<Buffer> rejected = post(port, "/c1/unwrapped", "{\"name\":\"abcdef\"}");
+        HttpResponse<Buffer> rejected = post(port, "/plain-unwrapped/unwrapped", "{\"name\":\"abcdef\"}");
 
         assertEquals(
                 400,
                 rejected.statusCode(),
-                "C-1 DECISIVE: the unwrapped child's own @Size(max = 3) must reject a 6-character value under"
+                "DECISIVE: the unwrapped child's own @Size(max = 3) must reject a 6-character value under"
                         + " the mapper-wide DelegatingDeserializer wrapper profile; body: "
                         + rejected.bodyAsString());
         assertEquals(
                 0,
                 resource.invocations.get(),
                 "a rejected body must never reach the resource — this row characterizes the schema library's"
-                        + " own independent flattening of a plain unwrapped property (see the corrected"
+                        + " own independent flattening of a plain unwrapped property (see the"
                         + " Javadoc above), not the unwrapped-child loop's own fix");
     }
 
-    // --- Reopened finding: a transient field with a getter and setter loses its constraint (no validator) ---
+    // --- a transient field with a getter and setter, no validator ---
 
     /**
      * A private, {@code transient}, {@code @Max}-constrained numeric field bound through both a getter
      * and a setter — the same shape {@code
      * dev.vertique.json.schema.SetterOnlyFieldBorrowTest.TransientNumericField} pins at the unit level.
      * {@code BeanPropertyDefinition#getField()} is {@code null} for a transient field, and the
-     * write-only fallback W1 added only fires when there is also no getter, so neither path currently
-     * borrows the field's own {@code @Max(10)} onto the published property without a validator.
+     * write-only fallback only fires when there is also no getter, so neither path would
+     * borrow the field's own {@code @Max(10)} onto the published property without a validator.
      */
     static final class TransientNumericFieldBody {
         @Max(10)
@@ -4031,18 +4017,18 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * The gate-level half of the reopened W1 proof, no-validator mode. {@link
+     * The gate-level half of the proof, no-validator mode. {@link
      * dev.vertique.json.schema.SetterOnlyFieldBorrowTest} carries the unit-level halves: the two
      * decisive no-validator proofs and the validator-backed control that the same shape's constraint is
-     * still published under a validator (unaffected by this gap).
+     * still published under a validator.
      *
-     * <p>Expected red now: the gate accepts {@code {"level":999}} with a 200, because the published
+     * <p>Without the borrow the gate accepts {@code {"level":999}} with a 200, because the published
      * property carries no {@code maximum} keyword at all.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("REOPENED: the gate rejects an out-of-range value for a transient numeric field with a getter"
+    @DisplayName("the gate rejects an out-of-range value for a transient numeric field with a getter"
             + " and setter, without a validator")
     void transientNumericFieldWithGetterAndSetterIsRejectedAtTheGateWithoutAValidator() throws Exception {
         TransientNumericFieldResource resource = new TransientNumericFieldResource();
@@ -4053,42 +4039,42 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(
                 400,
                 rejected.statusCode(),
-                "REOPENED DECISIVE (expected red now): a transient field's own @Max(10) must still be"
+                "a transient field's own @Max(10) must still be"
                         + " borrowed onto the published property even though the property also carries a"
                         + " getter, without a validator; body: " + rejected.bodyAsString());
         assertEquals(0, resource.invocations.get(), "a rejected body must never reach the resource");
     }
 
-    // --- C-2 (reopened, round 6 finding): a hidden member on an unwrapped child of an any-setter parent ---
+    // --- a hidden member on an unwrapped child of an any-setter parent ---
 
     /**
      * A {@code @Schema(hidden = true)}-constrained unwrapped member on an any-setter parent — the same
      * shape {@code
      * dev.vertique.json.schema.DelegatingDeserializerWrapperTest.hiddenUnwrappedChildMemberIsReservedUnderMapperWideDelegatingWrapper}
-     * pins at the unit level. Unlike {@link C1Child}'s plain property, a hidden member is never
+     * pins at the unit level. Unlike {@link PlainUnwrappedChild}'s plain property, a hidden member is never
      * published by the type's own class-level members — it can only reach the document through the
      * unwrapped-child loop's own alias/reservation fold, which the mapper-wide wrapper causes the loop to
      * skip entirely, so this shape genuinely discriminates the loop's own bug.
      */
-    static final class C2HiddenChild {
+    static final class HiddenUnwrappedChild {
         @Schema(hidden = true)
         @Size(max = 3)
         public String token;
     }
 
-    /** Carries {@link C2HiddenChild} through {@code @JsonUnwrapped} on an any-setter type. */
-    static final class C2AnySetterParent {
+    /** Carries {@link HiddenUnwrappedChild} through {@code @JsonUnwrapped} on an any-setter type. */
+    static final class HiddenUnwrappedAnySetterParent {
         @JsonUnwrapped
-        public C2HiddenChild child;
+        public HiddenUnwrappedChild child;
 
         @JsonAnySetter
         private final Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** The resource for {@link C2AnySetterParent}, mounted under the {@code c1-delegating-wrapper} profile. */
-    @Path("/c2")
-    @JsonProfile("c1-delegating-wrapper")
-    public static class C2Resource {
+    /** The resource for {@link HiddenUnwrappedAnySetterParent}, mounted under the {@code delegating-wrapper} profile. */
+    @Path("/hidden-unwrapped-any-setter")
+    @JsonProfile("delegating-wrapper")
+    public static class HiddenUnwrappedResource {
 
         /** Counts terminal invocations. */
         public final AtomicInteger invocations = new AtomicInteger();
@@ -4097,24 +4083,24 @@ public class ProfiledSchemaSynthesisIT {
          * Echoes the unwrapped child's hidden token, so an accepted body is observable as more than a
          * status code.
          *
-         * @param body the C-2 fixture body
+         * @param body the fixture body
          * @return the echoed value
          */
         @POST
         @Path("/hidden-unwrapped")
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "c2HiddenUnwrappedEcho")
-        public String echo(C2AnySetterParent body) {
+        @Operation(operationId = "hiddenUnwrappedEcho")
+        public String echo(HiddenUnwrappedAnySetterParent body) {
             invocations.incrementAndGet();
             return "token=" + (body.child == null ? null : body.child.token);
         }
     }
 
     /**
-     * C-2 (reopened, round 6 finding). Under the same mapper-wide {@code DelegatingDeserializer} wrapper
-     * as C-1, the unwrapped-child loop skips {@link C2HiddenChild} for the same reason C-1's own Javadoc
-     * explains — but unlike C-1's plain property, {@code "token"} is hidden, so it can only be reserved
+     * Under the same mapper-wide {@code DelegatingDeserializer} wrapper as the plain unwrapped row, the
+     * unwrapped-child loop skips {@link HiddenUnwrappedChild} for the same reason that row's Javadoc
+     * explains — but unlike its plain property, {@code "token"} is hidden, so it can only be reserved
      * through {@code foldUnwrappedChildIntoParentPlan}, which never runs when the loop skips the child.
      * The real Jackson binder still routes {@code "token"} straight into {@code child.token} regardless
      * of the wrapper (the wrapper only forwards, it does not change how the binder's own unwrapped
@@ -4122,49 +4108,50 @@ public class ProfiledSchemaSynthesisIT {
      * bypass at the gate, not only a description gap — the REST-level counterpart of
      * {@code UnwrappedAnySetterFoldingTest.jacksonBinderRoutesTheHiddenKeyIntoTheConstrainedField}.
      *
-     * <p>Expected red now: the gate accepts {@code {"token":"abcdefghijkl"}} (12 characters, over the
+     * <p>Without the fold the gate accepts {@code {"token":"abcdefghijkl"}} (12 characters, over the
      * child's own {@code @Size(max = 3)}) with a 200.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("C-2: under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an unwrapped any"
+    @DisplayName("under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an unwrapped any"
             + "-setter parent's hidden child value spelling the hidden member's own key")
-    void c2HiddenUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
-        C2Resource resource = new C2Resource();
+    void hiddenUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
+        HiddenUnwrappedResource resource = new HiddenUnwrappedResource();
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(c1DelegatingWrapperProfile())
+                .addJsonMapperProfile(delegatingWrapperProfile())
                 .build();
         int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
 
-        HttpResponse<Buffer> rejected = post(port, "/c2/hidden-unwrapped", "{\"token\":\"abcdefghijkl\"}");
+        HttpResponse<Buffer> rejected =
+                post(port, "/hidden-unwrapped-any-setter/hidden-unwrapped", "{\"token\":\"abcdefghijkl\"}");
 
         assertEquals(
                 400,
                 rejected.statusCode(),
-                "C-2 DECISIVE (expected red now): the unwrapped child's hidden @Size(max = 3) member must be"
+                "DECISIVE: the unwrapped child's hidden @Size(max = 3) member must be"
                         + " reserved under the mapper-wide wrapper profile on an any-setter parent, refusing"
                         + " the key outright rather than letting it fall through to the extras bucket"
                         + " unconstrained; body: " + rejected.bodyAsString());
         assertEquals(
                 0,
                 resource.invocations.get(),
-                "a rejected body must never reach the resource; a green pre-fix run here would mean the"
+                "a rejected body must never reach the resource; reaching it would mean the"
                         + " oversized value reached the resource through the extras bucket because the hidden"
                         + " member was never reserved at all");
     }
 
-    // --- TP-002, Optional-typed extras value ---
+    // --- Optional-typed extras value ---
 
     /**
-     * TP-002 (N14, N14n). An
+     * An
      * any-setter extras value of declared type {@code Optional<Plain>} admits an explicit {@code null}
-     * (Jackson's own {@code Optional.empty()} mapping, closing N14n) and rejects a non-null value
-     * violating {@code Plain}'s own {@code @Size(max = 3)} constraint (closing N14), distinguished from
+     * (Jackson's own {@code Optional.empty()} mapping) and rejects a non-null value
+     * violating {@code Plain}'s own {@code @Size(max = 3)} constraint, distinguished from
      * a broken request path by a companion body that satisfies the constraint.
      *
-     * <p>Expected initial result: red for both bodies — {@code main} rejects the {@code null} body with
-     * {@code type@#/x} (the false reject) and accepts the constraint-violating body (the undescribed
+     * <p>Without the description the {@code null} body is falsely rejected with
+     * {@code type@#/x} and the constraint-violating body is accepted (the undescribed
      * gap).
      *
      * @throws Exception when a round trip fails or times out
@@ -4185,12 +4172,12 @@ public class ProfiledSchemaSynthesisIT {
                 () -> assertEquals(
                         200,
                         nullValue.statusCode(),
-                        "N14n: an explicit null must bind to Optional.empty(), matching Jackson's own mapping;"
-                                + " body: " + nullValue.bodyAsString()),
+                        "an explicit null must bind to Optional.empty(), matching Jackson's own mapping;" + " body: "
+                                + nullValue.bodyAsString()),
                 () -> assertEquals(
                         400,
                         violating.statusCode(),
-                        "N14: a non-null value violating Plain's own @Size(max = 3) must now be rejected; body: "
+                        "a non-null value violating Plain's own @Size(max = 3) must now be rejected; body: "
                                 + violating.bodyAsString()),
                 () -> assertEquals(
                         200,
@@ -4204,17 +4191,16 @@ public class ProfiledSchemaSynthesisIT {
                         "only the null and constraint-satisfying bodies may have reached the resource"));
     }
 
-    // --- TP-004, map value shapes ---
+    // --- map value shapes ---
 
     /**
-     * TP-004 (S2a, S2b, S2d). Every {@code tags}/{@code labels}/{@code opts} body is rejected, including a {@code null}
+     * Every {@code tags}/{@code labels}/{@code opts} body is rejected, including a {@code null}
      * inside the non-{@code Optional} {@code tags} map value (the explicit null rule); a companion
      * {@code opts} body carrying {@code null} is accepted, since {@code opts}'s own declared value type
      * is {@code Optional<Plain>}; the {@code raw} body stays accepted, unaffected.
      *
-     * <p>Expected initial result: red for every {@code tags}/{@code labels}/{@code opts} body —
-     * {@code main} accepts all of them; the {@code raw} body's own acceptance is a characterization
-     * control, not a red.
+     * <p>Without the description every {@code tags}/{@code labels}/{@code opts} body is accepted; the
+     * {@code raw} body's own acceptance is a characterization control.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -4273,15 +4259,15 @@ public class ProfiledSchemaSynthesisIT {
                         "only the opts-null and raw bodies may have reached the resource"));
     }
 
-    // --- TP-010, the single any-setter N16 shape ---
+    // --- the single any-setter shape ---
 
     /**
-     * TP-010 (N16). A body
+     * A body
      * violating the single any-setter's own type-use constraint is rejected; a companion body
      * satisfying the constraint is accepted, distinguishing the rejection from a broken request path.
      *
-     * <p>Expected initial result: red — {@code main} accepts {@code {"k":"TOOLONG"}} (the any-setter's
-     * own extras value carries no maxLength today).
+     * <p>Without the description the gate accepts {@code {"k":"TOOLONG"}} (the any-setter's
+     * own extras value would carry no maxLength).
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -4309,22 +4295,20 @@ public class ProfiledSchemaSynthesisIT {
                         1, resource.invocations.get(), "only the satisfying body may have reached the resource"));
     }
 
-    // --- TP-002, several any-setters sharing a wire key ---
+    // --- several any-setters sharing a wire key ---
 
     /**
-     * TP-002. A body violating either any-setter's own constraint on a wire key both a
-     * parent's own and an unwrapped child's own any-setter share (UW-2AS) is rejected; a companion body
+     * A body violating either any-setter's own constraint on a wire key both a
+     * parent's own and an unwrapped child's own any-setter share is rejected; a companion body
      * satisfying both is accepted. An object-valued two-any-setter pair (both value types are beans) is
      * rejected when either bean's own constraint is violated, and accepted (zero false-reject) when both
      * are satisfied.
      *
-     * <p>Expected initial result: red for the object-valued pair's own conjunction (only one any-setter's
-     * own value schema is described today, so a violation of the other-side bean's own constraint is not
-     * rejected); the UW-2AS body's own rejection may already be green — an earlier change activated the
-     * type-use overlay for a single any-setter's own value position, and UW-2AS's own child value is
-     * exactly that shape, so {@code "TOOLONG"} may already be rejected before this task even though the
-     * document still describes only one any-setter's own value schema, not the conjunction — reported
-     * honestly against the actual baseline run, not assumed.
+     * <p>Describing only one any-setter's own value schema leaves the object-valued pair's conjunction
+     * unchecked, so a violation of the other-side bean's own constraint would not be rejected. The
+     * shared-key body's own rejection is already covered by the type-use overlay for a single
+     * any-setter's own value position, since the child's value is exactly that shape, so it is a
+     * control for the conjunction rather than a proof of it.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -4349,12 +4333,12 @@ public class ProfiledSchemaSynthesisIT {
                 () -> assertEquals(
                         400,
                         sharedViolating.statusCode(),
-                        "UW-2AS: a body violating the unwrapped child's own type-use constraint on the"
+                        "a body violating the unwrapped child's own type-use constraint on the"
                                 + " shared key must be rejected; body: " + sharedViolating.bodyAsString()),
                 () -> assertEquals(
                         200,
                         sharedSatisfying.statusCode(),
-                        "UW-2AS: a body satisfying both any-setters' own constraints on the shared key"
+                        "a body satisfying both any-setters' own constraints on the shared key"
                                 + " must stay accepted, distinguishing the rejection from a broken request"
                                 + " path; body: " + sharedSatisfying.bodyAsString()),
                 () -> assertEquals(
@@ -4374,26 +4358,23 @@ public class ProfiledSchemaSynthesisIT {
                         "the object-valued pair: a body violating the unwrapped child's own bean's"
                                 + " constraint must be rejected; body: " + pairRightViolating.bodyAsString()),
                 () -> assertEquals(
-                        1,
-                        sharedResource.invocations.get(),
-                        "UW-2AS: only the satisfying body may have reached the resource"),
+                        1, sharedResource.invocations.get(), "only the satisfying body may have reached the resource"),
                 () -> assertEquals(
                         1,
                         pairResource.invocations.get(),
                         "the object-valued pair: only the satisfying body may have reached the resource"));
     }
 
-    // --- TP-003, member-level closure ---
+    // --- member-level closure ---
 
     /**
-     * TP-003 (M10). A body carrying an extra key under the member-level
+     * A body carrying an extra key under the member-level
      * FALSE-closed member is rejected; the same extra-key shape under the unannotated control member
-     * is accepted, unaffected — distinguishing this task's own rule's scope from a global tightening. A
+     * is accepted, unaffected — distinguishing the rule's scope from a global tightening. A
      * companion body satisfying the closed member (no extra key) is accepted.
      *
-     * <p>Expected initial result: red for the annotated member ({@code main} accepts it —
-     * {@code evidence/probe-report-327531b4.md} § M10); the control member's own acceptance is already
-     * green and stays green throughout.
+     * <p>Without the rule the annotated member would be accepted; the control member's own acceptance
+     * holds either way.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -4420,7 +4401,7 @@ public class ProfiledSchemaSynthesisIT {
                         200,
                         openAccepted.statusCode(),
                         "the same extra-key shape under the unannotated control member must stay accepted,"
-                                + " proving this task's own rule is scoped to the annotated member; body: "
+                                + " proving the rule is scoped to the annotated member; body: "
                                 + openAccepted.bodyAsString()),
                 () -> assertEquals(
                         200,

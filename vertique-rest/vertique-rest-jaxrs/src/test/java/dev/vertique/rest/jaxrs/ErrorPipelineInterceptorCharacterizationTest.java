@@ -29,19 +29,18 @@ import org.junit.jupiter.api.Test;
  *
  * <p>These tests pin the observable behavior of the three interceptor dispatch paths —
  * {@code beforeMapping} fold, {@code afterMapping} fold, and the {@code onError} sync
- * observer loop — so that the migration to {@link dev.vertique.core.async.Combinators} can be
- * verified GREEN-against-CURRENT before migration (step A) and GREEN-against-MIGRATED after
- * (step B) with no observable change.
+ * observer loop — so that a change in how they are implemented (for example through
+ * {@link dev.vertique.core.async.Combinators}) shows up as an observable behavior change.
  *
  * <p>Specifically characterized:
  * <ul>
- *   <li>FR-ERRPIPE-001: {@code beforeMapping} calls all interceptors in order, threading the
+ *   <li>{@code beforeMapping} calls all interceptors in order, threading the
  *       transformed {@link Throwable}; on interceptor failure the chain continues with the previous
  *       throwable (not the failure), and the next interceptor still runs.</li>
- *   <li>FR-ERRPIPE-002: {@code afterMapping} calls all interceptors in order, threading the
+ *   <li>{@code afterMapping} calls all interceptors in order, threading the
  *       transformed {@link Response}; on interceptor failure the chain continues with the previous
  *       response, and the next interceptor still runs.</li>
- *   <li>FR-ERRPIPE-003: {@code onError} calls all {@link RequestInterceptor}s in order and swallows
+ *   <li>{@code onError} calls all {@link RequestInterceptor}s in order and swallows
  *       a thrown exception silently (no log), continuing with the next interceptor.</li>
  * </ul>
  */
@@ -70,10 +69,10 @@ class ErrorPipelineInterceptorCharacterizationTest {
         registry500 = new ExceptionMapperRegistry(defaults, Set.of());
     }
 
-    // --- FR-ERRPIPE-001: beforeMapping chain ---
+    // --- beforeMapping chain ---
 
     @Nested
-    @DisplayName("FR-ERRPIPE-001: beforeMapping chain threads throwable in order and continues on interceptor failure")
+    @DisplayName("beforeMapping chain threads throwable in order and continues on interceptor failure")
     class BeforeMappingChain {
 
         @Test
@@ -275,10 +274,10 @@ class ErrorPipelineInterceptorCharacterizationTest {
         }
     }
 
-    // --- FR-ERRPIPE-002: afterMapping chain ---
+    // --- afterMapping chain ---
 
     @Nested
-    @DisplayName("FR-ERRPIPE-002: afterMapping chain threads response in order and continues on interceptor failure")
+    @DisplayName("afterMapping chain threads response in order and continues on interceptor failure")
     class AfterMappingChain {
 
         @Test
@@ -450,10 +449,10 @@ class ErrorPipelineInterceptorCharacterizationTest {
         }
     }
 
-    // --- FR-ERRPIPE-003: onError sync observer loop ---
+    // --- onError sync observer loop ---
 
     @Nested
-    @DisplayName("FR-ERRPIPE-003: onError sync observer loop swallows exceptions silently and continues")
+    @DisplayName("onError sync observer loop swallows exceptions silently and continues")
     class OnErrorObserverLoop {
 
         @Test

@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-005 (T004) case (f) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
+ * Operation-id conflict case (f) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}, holding an unproxied {@link OpidAopBaseResource} instance passed directly
  * to {@link JaxRsRouterMount.Factory#create} — never through {@code @JaxRsResources}, so
  * {@link OpidApis.OpidAopApi}'s listing of {@link OpidAopBaseResource} stays unambiguous (matched

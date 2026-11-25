@@ -11,10 +11,10 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T005 TP-002 case (c): protected only by a scopeless class-level {@link SecurityRequirement} for
+ * Case (c): protected only by a scopeless class-level {@link SecurityRequirement} for
  * {@link PolicySecurityModule#SCHEME_NAME} (no {@code scopes()}), so
- * {@code securityRequirementSets()} is a single non-anonymous set. Under C-POLICY this restricts
- * callers — no FR-013 warning — even though the raw {@code SecurityPolicy} stays {@code None}.
+ * {@code securityRequirementSets()} is a single non-anonymous set. Under the policy classification this restricts
+ * callers — no implicit-policy warning — even though the raw {@code SecurityPolicy} stays {@code None}.
  * {@link PolicySecurityModule} installs {@link PolicySecurityModule#SCHEME_NAME}'s handler so
  * startup does not fail-closed on a declared scheme with no collected
  * {@link io.vertx.ext.web.handler.AuthenticationHandler}.

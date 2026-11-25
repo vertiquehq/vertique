@@ -48,42 +48,39 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * T005 TP-002 and TP-004: the FR-013 application-mount warning and its silence off an application
+ * The application-mount security-policy warning and its silence off an application
  * mount.
  *
- * <p>TP-002 ({@link #applicationMountWarnsPerImplicitOperation}) composes {@code policy.app}'s
+ * <p>{@link #applicationMountWarnsPerImplicitOperation} composes {@code policy.app}'s
  * {@code /api/mgmt} mount ({@link ExplicitPolicyComponents.ApplicationMountComponent}) around one
- * of {@link ManagementApis}'s six variant registrations at a time (T023 L22: one native
- * registration per variant, in place of the removed {@code jakarta.ws.rs.core.Application}
- * subclass's config-selected shape): (a) is fully unannotated, with two implicit
+ * of {@link ManagementApis}'s six variant registrations at a time (one native
+ * registration per variant): (a) is fully unannotated, with two implicit
  * operations that must both be named, sorted, in the mount's one WARN event; (b) to (e) each carry
- * a declaration that C-POLICY classifies as either declared public or restricting callers, so none
- * of them warns; (f) (G2-10) is fully unannotated like (a), but its two operations' registration
+ * a declaration that the explicit-policy classification treats as either declared public or restricting callers, so none
+ * of them warns; (f) is fully unannotated like (a), but its two operations' registration
  * order differs from their full-path sort order, proving the warning's {@code .sorted(...)} by full
  * path is observable rather than incidentally matching registration order.
  *
- * <p>TP-003 ({@link #requireExplicitPolicyFailsAnyJaxRsMount}) turns the opt-in on
+ * <p>{@link #requireExplicitPolicyFailsAnyJaxRsMount} turns the opt-in on
  * ({@code jaxrs.security.requireExplicitPolicy: true}) and composes the same variant (a)
  * registration onto both mount shapes: the application mount and the legacy default mount of a
  * zero-declaration component. Both must fail {@code createRouter} with a {@link
  * RouteRegistrationException} carrying one {@code NO_EXPLICIT_SECURITY_POLICY} violation per
- * implicit operation and log no FR-013 warning; a control row per mount shape, hosting variant (b)
+ * implicit operation and log no policy warning; a control row per mount shape, hosting variant (b)
  * ({@code @PermitAll}, every operation explicit), must succeed with no violation.
  *
- * <p>TP-004 ({@link #legacyMountLogsNoPolicyWarningWithoutOptIn}) composes the same variant (a)
+ * <p>{@link #legacyMountLogsNoPolicyWarningWithoutOptIn} composes the same variant (a)
  * resource onto a zero-declaration, legacy default mount
- * ({@link ExplicitPolicyComponents.LegacyDefaultMountComponent}) — I-1's preservation guard: the
+ * ({@link ExplicitPolicyComponents.LegacyDefaultMountComponent}) — a preservation guard: the
  * application-mount condition on the warning means even two implicit operations on a non-application
  * mount stay silent without the opt-in.
  *
- * <p>Every composition satisfies the validated mark (C-CONFLICT, T004) by running the component's
+ * <p>Every composition satisfies the validated mark by running the component's
  * own {@code Set<MountCompositionValidator>} over the resolved {@code Set<RouterMount>} before
- * calling {@code createRouter}, as {@code HttpVerticle.start} does — the unit-proof form the
- * contract's "Integration variant" clause permits.
+ * calling {@code createRouter}, as {@code HttpVerticle.start} does.
  *
- * <p>T023 L22 wording change: every WARN and violation message that named the {@code Application}
- * class now names the active variant's registration by its name and declaring interface instead
- * (§ Mount identity); this class asserts each required fragment individually rather than one
+ * <p>Every WARN and violation message names the active variant's registration by its name and
+ * declaring interface; this class asserts each required fragment individually rather than one
  * hand-composed exact string, since the literal message shape is production's to choose within
  * those required elements.
  */
@@ -95,7 +92,7 @@ class ExplicitSecurityPolicyTest {
     private static final String APPLICATION_MOUNT_PATH = APPLICATION_MOUNT_PREFIX + "/*";
     private static final String LEGACY_MOUNT_PATH = "/*";
 
-    /** The exact FR-013 WARN-substring every capture is filtered on (RL-2). */
+    /** The exact WARN-substring every capture is filtered on. */
     private static final String WARNING_FRAGMENT = "no explicit security policy";
 
     private Logger mountLogger;
@@ -119,7 +116,7 @@ class ExplicitSecurityPolicyTest {
         mountLogger.setLevel(previousMountLevel);
     }
 
-    // --- TP-002 ---
+    // --- application mount warning ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("applicationMountCases")
@@ -139,7 +136,7 @@ class ExplicitSecurityPolicyTest {
             assertEquals(
                     1,
                     result.warnings().size(),
-                    () -> testCase.label() + ": expected exactly one FR-013 warning naming both implicit operations, "
+                    () -> testCase.label() + ": expected exactly one policy warning naming both implicit operations, "
                             + "got: " + result.warnings());
             String warning = result.warnings().get(0);
             for (String fragment : testCase.expectedWarningFragments()) {
@@ -155,14 +152,14 @@ class ExplicitSecurityPolicyTest {
         } else {
             assertTrue(
                     result.warnings().isEmpty(),
-                    () -> testCase.label() + ": expected no FR-013 warning, got: " + result.warnings());
+                    () -> testCase.label() + ": expected no policy warning, got: " + result.warnings());
         }
     }
 
     /**
-     * TP-002's six named rows, (a) to (f) per the contract's case list.
+     * The six named rows, (a) to (f).
      *
-     * @return the six TP-002 cases, in contract order
+     * @return the six application-mount cases, in order
      */
     private static Stream<ExplicitPolicyCase> applicationMountCases() {
         return Stream.of(
@@ -209,7 +206,7 @@ class ExplicitSecurityPolicyTest {
                         List.of(),
                         Optional.empty()),
                 new ExplicitPolicyCase(
-                        "(f) unannotated resource whose registration order differs from full-path sort order (G2-10)",
+                        "(f) unannotated resource whose registration order differs from full-path sort order",
                         "orderMismatch",
                         OrderMismatchResource.class,
                         true,
@@ -224,7 +221,7 @@ class ExplicitSecurityPolicyTest {
                         Optional.of(List.of("aaa", "zzz/yyy"))));
     }
 
-    // --- TP-003 ---
+    // --- opt-in ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("optInCases")
@@ -245,7 +242,7 @@ class ExplicitSecurityPolicyTest {
 
         assertTrue(
                 result.warnings().isEmpty(),
-                () -> testCase.label() + ": no FR-013 warning expected with the opt-in on, got: " + result.warnings());
+                () -> testCase.label() + ": no policy warning expected with the opt-in on, got: " + result.warnings());
 
         if (testCase.expectFailure()) {
             assertEquals(1, result.outcomes().size(), () -> testCase.label() + ": expected exactly one composed mount");
@@ -295,12 +292,12 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * TP-003's four named rows: (a) and (b) drive the unannotated two-operation resource through
+     * The four named rows: (a) and (b) drive the unannotated two-operation resource through
      * the opt-in on the application mount and the legacy default mount respectively, expecting
      * failure; the two controls drive the {@code @PermitAll} resource through the same mount
      * shapes, expecting success.
      *
-     * @return the four TP-003 cases, in contract order
+     * @return the four opt-in cases, in order
      */
     private static Stream<OptInCase> optInCases() {
         return Stream.of(
@@ -368,7 +365,7 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * One TP-003 case: its display label, whether it targets the application mount (versus the
+     * One opt-in case: its display label, whether it targets the application mount (versus the
      * legacy default mount), the {@code policy.<variant>.enabled} segment to enable, the resource
      * class under test, and whether {@code createRouter} must fail.
      *
@@ -389,7 +386,7 @@ class ExplicitSecurityPolicyTest {
         }
     }
 
-    // --- TP-004 ---
+    // --- legacy mount ---
 
     @Test
     @DisplayName("A zero-declaration mount logs no policy warning without the opt-in")
@@ -401,10 +398,11 @@ class ExplicitSecurityPolicyTest {
 
         ComposeResult result = composeAndCreate(component, LEGACY_MOUNT_PATH, Set.of(UnannotatedResource.class), vertx);
 
-        assertAllSucceeded("TP-004", result);
+        assertAllSucceeded("legacy default mount", result);
         assertTrue(
                 result.warnings().isEmpty(),
-                () -> "TP-004: no FR-013 warning expected off an application mount, got: " + result.warnings());
+                () -> "legacy default mount: no policy warning expected off an application mount, got: "
+                        + result.warnings());
     }
 
     // --- Shared composition helper ---
@@ -413,7 +411,7 @@ class ExplicitSecurityPolicyTest {
      * Resolves {@code component}'s {@code Set<RouterMount>} once, asserts the composition's
      * preconditions (mount path and resource types) so a fixture defect fails loudly here rather
      * than surfacing as a misleading warning/violation assertion below, runs every composition
-     * validator over the resolved mounts (satisfying the validated mark, C-CONFLICT), calls
+     * validator over the resolved mounts (satisfying the validated mark), calls
      * {@code createRouter} on every mount, and returns the outcomes together with the WARN events
      * captured since the last {@link #captureMountLogs()}.
      *
@@ -421,7 +419,7 @@ class ExplicitSecurityPolicyTest {
      * @param expectedMountPath    the sole mount path this composition must produce
      * @param expectedResourceTypes the sole mount's expected {@code meta().resourceTypes()}
      * @param vertx                the test's {@link Vertx} instance
-     * @return the {@code createRouter} outcomes and the captured FR-013 WARN events
+     * @return the {@code createRouter} outcomes and the captured policy WARN events
      */
     private ComposeResult composeAndCreate(
             ExplicitPolicyComponents.Provisions component,
@@ -537,7 +535,7 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * Builds TP-004's legacy-default-mount configuration: {@code jaxrs.validationStrategy} always
+     * Builds the legacy-default-mount configuration: {@code jaxrs.validationStrategy} always
      * {@code none}, and only variant (a)'s gate enabled. No application module is present in
      * {@link ExplicitPolicyComponents.LegacyDefaultMountComponent}, so no {@code policy.app.*} key
      * is needed.
@@ -551,19 +549,19 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * One TP-002 case: its display label, the {@code policy.<variant>.enabled} segment to enable
+     * One application-mount case: its display label, the {@code policy.<variant>.enabled} segment to enable
      * (which activates that single {@link ManagementApis} declaring interface's registration),
      * whether the mount must warn, the fragments the single captured WARN must contain (empty for a
-     * non-warning case), and, only for G2-10, the two path fragments the warning's full-path sort
+     * non-warning case), and, only for the sort-order case, the two path fragments the warning's full-path sort
      * must show in order.
      *
      * @param label                    the case's display label
      * @param variant                  the {@code policy.<variant>.enabled} segment
      * @param resourceType             the resource class under test
-     * @param expectWarning            whether the mount must log exactly one FR-013 warning
+     * @param expectWarning            whether the mount must log exactly one policy warning
      * @param expectedWarningFragments the fragments the single captured warning must contain; empty
      *                                 for a non-warning case, where it is never read
-     * @param expectedOperationOrder   for G2-10 only, the two path fragments (first, second) the
+     * @param expectedOperationOrder   for the sort-order case only, the two path fragments (first, second) the
      *                                 warning's full-path sort must show in that order; empty
      *                                 otherwise
      */
@@ -600,11 +598,11 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * One composition's full result: every mount's {@code createRouter} outcome, and the FR-013
+     * One composition's full result: every mount's {@code createRouter} outcome, and the policy
      * WARN events captured during that composition.
      *
      * @param outcomes the per-mount outcomes
-     * @param warnings the captured, filtered FR-013 WARN messages
+     * @param warnings the captured, filtered policy WARN messages
      */
     private record ComposeResult(List<RouterOutcome> outcomes, List<String> warnings) {}
 }

@@ -7,7 +7,7 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.application.unita.ExtraResource;
 
 /**
- * TP-001's second explicit-mode application fixture, registered by
+ * Second explicit-mode application fixture, registered by
  * {@link GeneratedJaxRsResourcesModule#managementApplicationRegistration}: listing
  * {@link ExtraResource} as its sole resource. Never implemented: native composition reads
  * {@link #resources()} from the registration directly and never constructs the declaring

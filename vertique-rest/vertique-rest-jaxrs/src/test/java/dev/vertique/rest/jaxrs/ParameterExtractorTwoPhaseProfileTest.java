@@ -49,8 +49,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * Unit tests for the TWO-PHASE materialization site in {@link ParameterExtractor#deserializeBody}
- * (slice 2.3, FR-JSON-024B). When an {@link InputObjectProcessor} is active, a structured JSON body
+ * Unit tests for the TWO-PHASE materialization site in {@link ParameterExtractor#deserializeBody}. When an {@link InputObjectProcessor} is active, a structured JSON body
  * is intercepted, processed into an intermediate map, and then materialized to the DTO. This test
  * proves the final materialization uses the RESOLVED PROFILE MAPPER stashed on the
  * {@link RoutingContext} under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} — not the process codec's
@@ -58,7 +57,7 @@ import org.slf4j.LoggerFactory;
  * (HTTP 400 via {@code DefaultExceptionMapper}).
  *
  * <p>A full IT for the two-phase path is disproportionate (it requires a sanitization module on the
- * route), so the materialization site is covered here at the unit level as the plan permits: the
+ * route), so the materialization site is covered here at the unit level: the
  * {@link InputObjectProcessor} is a pass-through stub, and the strict mapper DISABLES
  * {@code ALLOW_COERCION_OF_SCALARS} (which the process codec's mapper leaves enabled, verified) so a
  * string for the primitive {@code count} is rejected only when bound by the profile mapper.

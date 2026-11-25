@@ -26,8 +26,7 @@ import jakarta.inject.Singleton;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The Dagger test component of {@link OperationRouteIdentityIT}'s component harness (T003: TP-001 to
- * TP-004, TP-015 and TP-016), after the {@code application.DeploymentComponents} pattern: one
+ * The Dagger test component of {@link OperationRouteIdentityIT}'s component harness, after the {@code application.DeploymentComponents} pattern: one
  * {@code @Singleton} component over {@link RestModule} and this file's {@link SupportModule}, built
  * through a {@code @Component.Factory} that takes the application configuration as a
  * {@code @BindsInstance @VertxConfig JsonObject}, and provisioning {@link HttpVerticle}.
@@ -77,7 +76,7 @@ final class OperationRouteIdentityComponents {
      * <ul>
      *   <li>the {@link OperationRouteIdentityIT.CredentialScheme} security scheme;</li>
      *   <li>the {@link OperationRouteIdentityIT.DescriptorCapture} contributor and the
-     *       {@link OperationRouteIdentityIT.DenyingAuthorization} stand-in (TP-001's 403);</li>
+     *       {@link OperationRouteIdentityIT.DenyingAuthorization} stand-in (the 403 row);</li>
      *   <li>the capturing listeners {@link OperationRouteIdentityIT.RestEventCapture},
      *       {@link OperationRouteIdentityIT.OperationIdentityReader} and
      *       {@link OperationRouteIdentityIT.HttpEventCapture};</li>
@@ -151,7 +150,7 @@ final class OperationRouteIdentityComponents {
         }
 
         /**
-         * Contributes the authorization stand-in behind TP-001's 403 row. Its own descriptor record
+         * Contributes the authorization stand-in behind the 403 row. Its own descriptor record
          * is not read; {@link OperationRouteIdentityIT.DescriptorCapture}'s is.
          *
          * @return the contributor
@@ -175,7 +174,7 @@ final class OperationRouteIdentityComponents {
         }
 
         /**
-         * Contributes TP-004's identity-reading REST listener, writing into
+         * Contributes the identity-reading REST listener, writing into
          * {@link OperationRouteIdentityIT#IDENTITY_READS}.
          *
          * @return the listener
@@ -211,7 +210,7 @@ final class OperationRouteIdentityComponents {
         }
 
         /**
-         * Contributes TP-002's 429 rejecter.
+         * Contributes the 429 rejecter.
          *
          * @return the middleware
          */
@@ -222,7 +221,7 @@ final class OperationRouteIdentityComponents {
         }
 
         /**
-         * Contributes TP-003's holder remover, writing into
+         * Contributes the holder remover, writing into
          * {@link OperationRouteIdentityIT#HOLDER_REMOVALS}.
          *
          * @return the middleware
@@ -234,7 +233,7 @@ final class OperationRouteIdentityComponents {
         }
 
         /**
-         * Contributes TP-015's short circuit.
+         * Contributes the short circuit.
          *
          * @return the middleware
          */

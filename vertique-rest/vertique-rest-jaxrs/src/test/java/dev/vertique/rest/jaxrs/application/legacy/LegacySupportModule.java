@@ -14,11 +14,10 @@ import jakarta.annotation.Nullable;
 /**
  * Support bindings every characterization component needs: the real {@link DefaultConfigParser}
  * (over the lenient default config mapper), since {@code RestApplications}'s provider calls
- * {@link ConfigParser#parseKeyedObject} on the zero-registration branch too (E1/E3), which a
+ * {@link ConfigParser#parseKeyedObject} on the zero-registration branch too, which a
  * throwing stub cannot serve; and the unsecured {@link SecurityPolicyValidator} stand-in {@code
- * JaxRsRouterMount.Factory} requires. Mirrors the OQ-001 prototype's {@code SupportModule}
- * (evidence/oq001-prototype.patch), which proved the security-validator binding shape compiles and
- * resolves on {@code 104b8c2f}.
+ * JaxRsRouterMount.Factory} requires. The security-validator binding shape compiles and
+ * resolves with a full {@code HttpVerticle} graph.
  */
 @Module
 final class LegacySupportModule {

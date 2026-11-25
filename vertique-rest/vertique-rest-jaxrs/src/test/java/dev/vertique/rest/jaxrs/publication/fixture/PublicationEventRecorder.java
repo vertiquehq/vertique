@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * T006 TP-001's per-mount event correlator: joins {@code RouterLifecycleHook.afterRouterCreated}
+ * Per-mount event correlator: joins {@code RouterLifecycleHook.afterRouterCreated}
  * (which receives only the {@link Router}), {@code MountPublicationHook.mountBuilt} (which
  * receives only the mount path, via the {@link io.vertx.core.json.JsonObject}-free
  * {@code MountPublication.mountPath()}), and {@code MountCustomizer.customize} (which receives
@@ -21,7 +21,7 @@ import java.util.Map;
  * next mount's {@code createRouter} starts), at most one mount's events are ever "in flight": a
  * single pending slot, finalized by {@link #customize}, is enough to build one ordered list per
  * mount. {@link #customize} also asserts that the {@link Router} instance it receives is the exact
- * same instance {@link #afterRouterCreated} recorded for the mount now being finalized (E13).
+ * same instance {@link #afterRouterCreated} recorded for the mount now being finalized.
  */
 public final class PublicationEventRecorder {
 

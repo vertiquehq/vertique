@@ -9,7 +9,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
-/** TP-006's sole manual resource for {@link ViewAppA}. */
+/** Sole manual resource for {@link ViewAppA}. */
 @Path("/view/a")
 public class ViewResourceA {
 

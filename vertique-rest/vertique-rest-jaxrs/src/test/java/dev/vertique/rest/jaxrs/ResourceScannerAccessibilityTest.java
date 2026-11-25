@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression test for closed issue #29: {@link ResourceMethodInvoker#invokeMethod} historically
+ * Regression test: {@link ResourceMethodInvoker#invokeMethod} historically
  * called {@code Method.invoke(...)} without {@link java.lang.reflect.Method#setAccessible(boolean)
  * setAccessible(true)}, so non-public resource methods discovered via {@code getDeclaredMethods()}
  * threw {@code IllegalAccessException} at request time.
@@ -59,8 +59,7 @@ class ResourceScannerAccessibilityTest {
         for (ResourceMethodMeta meta : result) {
             assertTrue(
                     meta.method().canAccess(meta.resourceInstance()),
-                    "Method " + meta.method().getName()
-                            + " should be accessible after ResourceScanner.scanResource (closed #29)");
+                    "Method " + meta.method().getName() + " should be accessible after ResourceScanner.scanResource");
         }
     }
 }

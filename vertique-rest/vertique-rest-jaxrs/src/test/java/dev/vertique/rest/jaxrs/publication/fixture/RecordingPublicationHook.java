@@ -13,8 +13,7 @@ import java.util.function.Predicate;
 
 /**
  * Test {@link MountPublicationHook} that always succeeds and records, in call order, every
- * {@link #wantsDetail} argument it was asked and every {@link MountPublication} it was handed
- * (T006 TP-002, TP-003, TP-004, TP-005).
+ * {@link #wantsDetail} argument it was asked and every {@link MountPublication} it was handed.
  *
  * <p>Whether an application wants detail is decided by a caller-supplied predicate, applied to the
  * (possibly {@code null}) application name {@link #wantsDetail} receives.

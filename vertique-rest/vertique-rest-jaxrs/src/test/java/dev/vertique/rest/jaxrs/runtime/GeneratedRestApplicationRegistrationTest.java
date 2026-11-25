@@ -24,7 +24,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * Proves {@link GeneratedRestApplicationRegistration#of}'s fail-closed re-checks (name grammar,
  * reserved names, normalized path form, and exactly-one-of membership), and pins the factory's
- * signature and the class's shape for generated code (AR3-005).
+ * signature and the class's shape for generated code.
  *
  * <p>{@code of(...)} is the runtime backstop for a registration a well-behaved annotation
  * processor never produces: every row here calls it directly, bypassing the compile-time checks
@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class GeneratedRestApplicationRegistrationTest {
 
-    /** {@code [a-z0-9][a-z0-9_-]{0,63}} — the application name grammar (also FR-022, TP-002). */
+    /** {@code [a-z0-9][a-z0-9_-]{0,63}} — the application name grammar. */
     private static final String GRAMMAR_PHRASE = "[a-z0-9][a-z0-9_-]{0,63}";
 
     private static final String RESERVED_PHRASE = "is reserved";
@@ -46,10 +46,10 @@ class GeneratedRestApplicationRegistrationTest {
     private static final class R {}
 
     // -----------------------------------------------------------------------------------------
-    // TP-009 — the registration factory re-checks name, path, and membership, failing closed
+    // The registration factory re-checks name, path, and membership, failing closed
     // -----------------------------------------------------------------------------------------
 
-    /** One TP-009 row: a display name and the full verification it runs. */
+    /** One row: a display name and the full verification it runs. */
     private record FactoryCase(String name, Runnable verification) {
         @Override
         public String toString() {
@@ -195,10 +195,10 @@ class GeneratedRestApplicationRegistrationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-011 — the registration factory's signature is pinned for generated code
+    // The registration factory's signature is pinned for generated code
     // -----------------------------------------------------------------------------------------
 
-    /** The expected {@code of(...)} parameter types, in order (AR3-005: pinned for generated code). */
+    /** The expected {@code of(...)} parameter types, in order (pinned for generated code). */
     private static final Class<?>[] OF_PARAMETER_TYPES = {
         Class.class, String.class, String.class, List.class, boolean.class, String.class, boolean.class
     };

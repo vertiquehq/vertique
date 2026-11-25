@@ -11,7 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Compile-time contract test for {@link ResourceExecutionPlan}: after slice 4 the generated-runtime
+ * Compile-time contract test for {@link ResourceExecutionPlan}: the generated-runtime
  * SPI's {@code extractArguments} takes a {@link BoundRequest}, not a Vert.x {@code ValidatedRequest}.
  *
  * <p>The test is primarily a <em>type</em> assertion: the lambda below only compiles if the second

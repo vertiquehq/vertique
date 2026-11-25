@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies that {@link ResourceScanner} treats an annotated interface {@code default} method as a
  * resource method of every class that implements the interface, whether or not the class
- * overrides it (issue #630).
+ * overrides it.
  *
  * <p>Selection follows the Java rules for inherited methods: a method declared by a class in the
  * resource's superclass chain wins over an interface default, and a default in a more specific

@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that {@link ResourceMethodMeta} correctly carries (or defaults) the optional
- * {@link ResourceExecutionPlan} field added in CG-010 slice 2.
+ * {@link ResourceExecutionPlan} field.
  *
  * <p>Two facets are pinned:
  * <ol>

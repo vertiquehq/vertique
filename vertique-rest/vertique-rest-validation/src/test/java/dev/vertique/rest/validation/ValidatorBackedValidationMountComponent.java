@@ -15,7 +15,7 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * BG1: the validator-present counterpart of {@link ValidationMountComponent}. The identical graph
+ * The validator-present counterpart of {@link ValidationMountComponent}. The identical graph
  * plus {@link RestTestValidatorModule}, which supplies a concrete {@link jakarta.validation.Validator}
  * so {@link RestValidationModule}'s {@code @BindsOptionalOf Validator} resolves present for every
  * mount this component builds: {@link AnnotationSchemaSource} then generates body schemas through

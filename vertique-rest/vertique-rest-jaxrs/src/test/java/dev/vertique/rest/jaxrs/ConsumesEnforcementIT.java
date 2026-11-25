@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for per-route {@code @Consumes} enforcement (REST-017 Slice 10).
+ * Integration tests for per-route {@code @Consumes} enforcement.
  *
  * <p>Verifies that {@link JaxRsRouteRegistrar} installs a 415-check handler as the first handler
  * on each route whose operation declares a non-empty {@code @Consumes} list, and that routes with
@@ -71,8 +71,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient} deliberately:
  * a raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
- * so under load {@code body()} can succeed with zero bytes while the status code is correct (issue
- * #167). Every 415 case here asserts on the {@code problem+json} body the error pipeline produced — a
+ * so under load {@code body()} can succeed with zero bytes while the status code is correct. Every 415 case here asserts on the {@code problem+json} body the error pipeline produced — a
  * silently emptied body would fail them for a reason unrelated to {@code @Consumes} enforcement. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  *

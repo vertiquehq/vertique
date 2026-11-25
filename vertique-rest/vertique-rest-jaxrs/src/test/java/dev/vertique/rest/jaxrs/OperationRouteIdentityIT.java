@@ -91,36 +91,36 @@ import org.slf4j.LoggerFactory;
  * registered descriptor, whatever the outcome; that a request no transport claimed produces exactly
  * one {@link HttpRequestCompletedEvent} instead; and that the emitter's placement keeps both true.
  *
- * <p><strong>The tests.</strong> T002's two tests keep T002's hand-built harness:
+ * <p><strong>The tests.</strong> Two tests use the hand-built harness:
  *
  * <ul>
- *   <li>{@link #matchedOperationCarriesItsIdentityOnEveryOutcome(Case)} (T002 TP-001): one
+ *   <li>{@link #matchedOperationCarriesItsIdentityOnEveryOutcome(Case)}: one
  *       {@code POST /identity/items} per outcome, 200, 401, 403, 415 and 400. The rejections come
  *       from, in route order, the authentication handler, the {@code @Consumes} 415 gate, the
  *       validation gate and an authorization stand-in contributor. Each event must carry the
  *       {@code createItem} descriptor itself, so the identity must be recorded before
  *       authentication.</li>
- *   <li>{@link #keepAliveRequestsEachCarryTheirOwnOperation()} (T002 TP-002): {@code GET
+ *   <li>{@link #keepAliveRequestsEachCarryTheirOwnOperation()}: {@code GET
  *       /identity/catalog} and then {@code POST /identity/items} on one pinned keep-alive
  *       connection. Each event carries its own operation, so no identity leaks across requests on
  *       the same connection.</li>
  * </ul>
  *
- * <p>T003's six tests run on the Dagger component harness:
+ * <p>Six more tests run on the Dagger component harness:
  *
  * <ul>
- *   <li>{@link #claimedRequestEmitsOneRestEventCarryingRegisteredDescriptor(ClaimedRow)} (TP-001):
+ *   <li>{@link #claimedRequestEmitsOneRestEventCarryingRegisteredDescriptor(ClaimedRow)}:
  *       200, 401, 403, per-route 415 and validation 400 on operation routes each emit one REST event
  *       whose {@code operation()} is {@code assertSame} the descriptor {@link DescriptorCapture}
  *       captured at router build, and no HTTP event. This pins the documented identity guarantee of
  *       {@code operation()}.</li>
- *   <li>{@link #unclaimedRequestEmitsOneHttpEvent(UnclaimedRow)} (TP-002): a ROOT 429, a correlation
+ *   <li>{@link #unclaimedRequestEmitsOneHttpEvent(UnclaimedRow)}: a ROOT 429, a correlation
  *       REJECT 400, a 404, a 405, a body 413 and an API-scope 415 each emit one HTTP event and no REST
  *       event.</li>
- *   <li>{@link #holderRemovedBeforeMatchLeavesRequestUnclaimedWithOriginalStartTime()} (TP-003).</li>
- *   <li>{@link #listenerReadsOperationIdAndRouteTemplateFromEvent()} (TP-004).</li>
- *   <li>{@link #applicationRootMiddlewareEndingResponseFirstYieldsOneHttpEvent()} (TP-015).</li>
- *   <li>{@link #emitterReadsBindingsBeforeLifecycleCleanup()} (TP-016).</li>
+ *   <li>{@link #holderRemovedBeforeMatchLeavesRequestUnclaimedWithOriginalStartTime()}.</li>
+ *   <li>{@link #listenerReadsOperationIdAndRouteTemplateFromEvent()}.</li>
+ *   <li>{@link #applicationRootMiddlewareEndingResponseFirstYieldsOneHttpEvent()}.</li>
+ *   <li>{@link #emitterReadsBindingsBeforeLifecycleCleanup()}.</li>
  * </ul>
  *
  * <p><strong>Two harnesses, one per test.</strong> No shared deployment runs before the tests. Each
@@ -130,7 +130,7 @@ import org.slf4j.LoggerFactory;
  * as {@code JaxRsApplicationMountConflictIT} does.
  *
  * <ul>
- *   <li><strong>Hand-built (T002).</strong> An {@link HttpVerticle} built with its public
+ *   <li><strong>Hand-built.</strong> An {@link HttpVerticle} built with its public
  *       five-argument constructor. Its ROOT middlewares are the real {@link RequestContextLifecycle},
  *       a real {@link RestRequestCompletionEmitter} whose listener appends to {@link #EVENTS}, the
  *       {@link CaseBarrier} and the {@link ConnectionRecorder}. Its one mount is a
@@ -140,7 +140,7 @@ import org.slf4j.LoggerFactory;
  *       at priority 100. At router build, {@code DenyingAuthorization} records each operation's
  *       descriptor into {@link #RECORDED}, the same instance the registrar hands to every
  *       contributor.</li>
- *   <li><strong>Component (T003).</strong> The {@link HttpVerticle} of
+ *   <li><strong>Component.</strong> The {@link HttpVerticle} of
  *       {@link OperationRouteIdentityComponents.RouteIdentityComponent}: {@link RestModule}, and so the
  *       production ROOT middlewares of {@code RestCoreModule} including the emitter, which
  *       {@code HttpVerticle} sorts itself, plus the component's support module. That module
@@ -165,7 +165,7 @@ import org.slf4j.LoggerFactory;
  * are reset before every test, so the events captured when a test's barrier fires are that test's.
  *
  * <p><strong>Clients.</strong> Every test uses {@link WebClient}, with no raw-client exemption: one
- * client per test, created in {@link #setUp()} and closed in {@link #tearDown()}. T002 TP-002 binds
+ * client per test, created in {@link #setUp()} and closed in {@link #tearDown()}. The keep-alive test binds
  * a dedicated client to {@link #keepAliveClient}, with keep-alive and an HTTP/1 pool of at most one
  * connection ({@link PoolOptions#setHttp1MaxSize}). Its two requests must therefore share one
  * connection, which {@link ConnectionRecorder} records as a precondition. The class uses the
@@ -250,10 +250,10 @@ public class OperationRouteIdentityIT {
     /** The component harness's {@code http.maxBodySize}, in bytes. */
     private static final int MAX_BODY_SIZE = 1024;
 
-    /** A JSON body four times larger than {@value #MAX_BODY_SIZE} bytes, for TP-002's 413 row. */
+    /** A JSON body four times larger than {@value #MAX_BODY_SIZE} bytes, for the 413 row. */
     private static final String OVERSIZED_ITEM_JSON = "{\"name\":\"" + "x".repeat(4 * MAX_BODY_SIZE) + "\"}";
 
-    /** A media type outside the API scope's accepted set, for TP-002's API-scope 415 row. */
+    /** A media type outside the API scope's accepted set, for the API-scope 415 row. */
     private static final String IMAGE_PNG = "image/png";
 
     /** A small non-empty body sent as {@value #IMAGE_PNG}. */
@@ -280,16 +280,16 @@ public class OperationRouteIdentityIT {
     /** The delay after which {@link HolderRemover} calls {@code next()}. */
     private static final long HOLDER_REMOVAL_DELAY_MS = 50;
 
-    /** TP-004's expected identity: the declared operation id, the route template with its placeholder, GET. */
+    /** The expected identity: the declared operation id, the route template with its placeholder, GET. */
     private static final OperationIdentity GET_USER_IDENTITY =
             new OperationIdentity(GET_USER, USER_ROUTE_TEMPLATE, "GET");
 
-    /** T002 TP-002's case names: the two requests sent on the keep-alive connection, in order. */
+    /** The keep-alive test's case names: the two requests sent on the keep-alive connection, in order. */
     private static final String CATALOG_CASE = "keep-alive catalog";
 
     private static final String ITEM_CASE = "keep-alive item";
 
-    /** The case names of T003's single-request tests. */
+    /** The case names of the component harness's single-request tests. */
     private static final String HOLDER_REMOVED_CASE = "holder removed";
 
     private static final String IDENTITY_READ_CASE = "identity read";
@@ -339,7 +339,7 @@ public class OperationRouteIdentityIT {
     private String deploymentId;
     private int port;
 
-    /** T002 TP-002's dedicated keep-alive client; {@code null} in every other test. */
+    /** The keep-alive test's dedicated client; {@code null} in every other test. */
     private WebClient keepAliveClient;
 
     /**
@@ -373,7 +373,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * Closes T002 TP-002's dedicated client and the test's client, then undeploys the verticle and
+     * Closes the keep-alive test's dedicated client and the test's client, then undeploys the verticle and
      * clears {@code http.port}. Each step runs even when an earlier one fails.
      *
      * @throws Exception if the undeploy does not complete within the async bound
@@ -404,14 +404,14 @@ public class OperationRouteIdentityIT {
         }
     }
 
-    // --- T002 TP-001 (hand-built harness) ---
+    // --- Outcomes (hand-built harness) ---
 
     /**
-     * T002 TP-001's named cases, one per outcome. Every row posts the same JSON payload; the headers
+     * The named cases, one per outcome. Every row posts the same JSON payload; the headers
      * alone select the outcome, so each rejection differs from the 200 row by the one input that
      * triggers it.
      *
-     * @return the five cases, in the contract's order
+     * @return the five cases, in declaration order
      */
     static Stream<Case> outcomeCases() {
         return Stream.of(
@@ -441,7 +441,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * T002 TP-001 (FR-002; the identity half of AC-002.1), on the hand-built harness: whatever the
+     * On the hand-built harness: whatever the
      * outcome, the one completion event of a request that matched {@code POST /identity/items}
      * carries the {@code createItem} descriptor itself as {@code operation()}. The 401, 415 and 400
      * rows are rejected before any contributor runs, so an identity recorded only at the contributor
@@ -478,10 +478,10 @@ public class OperationRouteIdentityIT {
                                 + "), but was " + describe(event.operation())));
     }
 
-    // --- T002 TP-002 (hand-built harness) ---
+    // --- Keep-alive (hand-built harness) ---
 
     /**
-     * T002 TP-002 (AC-003.2), on the hand-built harness: two requests sent in sequence on one
+     * On the hand-built harness: two requests sent in sequence on one
      * keep-alive connection each carry their own operation's descriptor, the first
      * {@code listCatalog}'s and the second {@code createItem}'s. That both requests travelled on the
      * same connection is a precondition, checked by {@link #sameConnection(String, String)}.
@@ -538,19 +538,19 @@ public class OperationRouteIdentityIT {
                                 + describe(events.get(1).operation())));
     }
 
-    // --- TP-001 (component harness) ---
+    // --- Claimed requests (component harness) ---
 
     /**
-     * TP-001's rows.
+     * The claimed-request rows.
      *
-     * @return every {@link ClaimedRow}, in the contract's order
+     * @return every {@link ClaimedRow}, in declaration order
      */
     static Stream<ClaimedRow> claimedRows() {
         return Stream.of(ClaimedRow.values());
     }
 
     /**
-     * TP-001 (FR-007, FR-021; the identity guarantee of {@code operation()}): a request a JAX-RS
+     * The identity guarantee of {@code operation()}: a request a JAX-RS
      * operation route claimed, whether it succeeds or is denied on that route, emits exactly one
      * {@link RestRequestCompletedEvent}. Its {@code operation()} is the very descriptor
      * {@link DescriptorCapture} received as {@code OperationRegistrationContext.operation()} at router
@@ -596,19 +596,19 @@ public class OperationRouteIdentityIT {
                         () -> "no HttpRequestCompletedEvent may exist; captured: " + describeHttp(httpEvents)));
     }
 
-    // --- TP-002 (component harness) ---
+    // --- Unclaimed requests (component harness) ---
 
     /**
-     * TP-002's rows.
+     * The unclaimed-request rows.
      *
-     * @return every {@link UnclaimedRow}, in the contract's order
+     * @return every {@link UnclaimedRow}, in declaration order
      */
     static Stream<UnclaimedRow> unclaimedRows() {
         return Stream.of(UnclaimedRow.values());
     }
 
     /**
-     * TP-002 (FR-008, AC-001.2): a request that a rejection stops before any operation route claimed
+     * A request that a rejection stops before any operation route claimed
      * it emits exactly one {@link HttpRequestCompletedEvent} carrying the request's method, path and
      * status, with {@code startTime() ≤ endTime()} and a {@code null} {@code safeFailureMessage()},
      * and no {@link RestRequestCompletedEvent}. Every row but the 404 and the 405 targets a JAX-RS
@@ -641,10 +641,10 @@ public class OperationRouteIdentityIT {
                 () -> assertNull(event.safeFailureMessage(), "safeFailureMessage()"));
     }
 
-    // --- TP-003 (component harness) ---
+    // --- Holder removal (component harness) ---
 
     /**
-     * TP-003 (AC-006.2): a ROOT middleware ordered after the emitter removes the request's
+     * A ROOT middleware ordered after the emitter removes the request's
      * completion-state holder, then continues after {@value #HOLDER_REMOVAL_DELAY_MS} ms. The
      * operation route still answers 200, but its identity handler finds no holder, so the request
      * is unclaimed: exactly one {@link HttpRequestCompletedEvent}, no {@link RestRequestCompletedEvent},
@@ -672,10 +672,10 @@ public class OperationRouteIdentityIT {
                 () -> assertFalse(event.endTime().isBefore(earliestEnd), "endTime() >= removedAt + 50 ms"));
     }
 
-    // --- TP-004 (component harness) ---
+    // --- Listener reads identity (component harness) ---
 
     /**
-     * TP-004 (FR-007): a listener that reads {@code event.operation().operationId()},
+     * A listener that reads {@code event.operation().operationId()},
      * {@code .routeTemplate()} and {@code .httpMethod()} inside {@code onCompleted}, as
      * {@link OperationIdentityReader} does, records exactly one identity for a {@code GET} with a
      * concrete path value: the declared operation id, the route template with its placeholder (not
@@ -697,10 +697,10 @@ public class OperationRouteIdentityIT {
                 "exactly one identity, read from operation() inside onCompleted");
     }
 
-    // --- TP-015 (component harness) ---
+    // --- Short circuit (component harness) ---
 
     /**
-     * TP-015 (FR-001, AC-001.2; Codex CX-F-001): {@link ShortCircuit}, an application-phase ROOT
+     * {@link ShortCircuit}, an application-phase ROOT
      * middleware at {@code Integer.MIN_VALUE}, ends a marked request with {@value #SHORT_CIRCUIT_STATUS}
      * without calling {@code next()}. The emitter still registered its end handler first, so the
      * request, which no operation route could claim, emits exactly one
@@ -732,10 +732,10 @@ public class OperationRouteIdentityIT {
                         () -> "startTime() " + event.startTime() + " must not be after endTime() " + event.endTime()));
     }
 
-    // --- TP-016 (component harness) ---
+    // --- Bindings read before cleanup (component harness) ---
 
     /**
-     * TP-016 (preservation): the emitter's end handler still fires before the lifecycle's cleanup, so
+     * The emitter's end handler still fires before the lifecycle's cleanup, so
      * the event carries the request's correlation snapshot, whose request id is the one correlation
      * ingress echoed on the response. Correlation ingress closes its binding through the lifecycle
      * handle, so a present snapshot shows the order.
@@ -767,7 +767,7 @@ public class OperationRouteIdentityIT {
     // --- Exchange helpers: the hand-built harness ---
 
     /**
-     * Sends T002 TP-001's {@code POST /identity/items} for {@code testCase} on the test's client, with
+     * Sends the outcomes test's {@code POST /identity/items} for {@code testCase} on the test's client, with
      * the case's headers and the JSON payload.
      *
      * @param testCase the case to send
@@ -857,7 +857,7 @@ public class OperationRouteIdentityIT {
     // --- Exchange helpers: the component harness ---
 
     /**
-     * Sends a TP-001 row.
+     * Sends a claimed-request row.
      *
      * @param row the row to send
      * @return the response, after the request's barrier fired
@@ -868,7 +868,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * Sends a TP-002 row.
+     * Sends an unclaimed-request row.
      *
      * @param row the row to send
      * @return the response, after the request's barrier fired
@@ -917,7 +917,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * Sends TP-003's {@code GET} to the unsecured operation with {@value #REMOVE_HOLDER_HEADER}, and
+     * Sends the holder-removal {@code GET} to the unsecured operation with {@value #REMOVE_HOLDER_HEADER}, and
      * returns the status with the instants and count around the holder's removal.
      *
      * @return the status, {@code sentAt}, {@code removedAt} and the removed count
@@ -1079,7 +1079,7 @@ public class OperationRouteIdentityIT {
     // --- Deployment helpers ---
 
     /**
-     * Deploys T002's hand-built harness (see the class Javadoc).
+     * Deploys the hand-built harness (see the class Javadoc).
      *
      * @throws Exception if the deployment does not complete within the async bound
      */
@@ -1195,7 +1195,7 @@ public class OperationRouteIdentityIT {
     // --- Test-local types ---
 
     /**
-     * A T002 TP-001 row.
+     * A row of the outcomes test.
      *
      * @param name              the case name, also sent as {@value #CASE_HEADER}
      * @param requestCustomizer sets the case's headers on the {@code POST /identity/items} request
@@ -1218,7 +1218,7 @@ public class OperationRouteIdentityIT {
     private record Exchange(HttpResponse<Buffer> response, RestRequestCompletedEvent event) {}
 
     /**
-     * TP-001's rows: each names the request and its expected status. Every row targets a JAX-RS
+     * The claimed-request rows: each names the request and its expected status. Every row targets a JAX-RS
      * operation route, so the identity handler claims it before any rejection.
      */
     enum ClaimedRow {
@@ -1284,7 +1284,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * TP-002's rows, each named after the rejection and stating its request-builder customizer and
+     * The unclaimed-request rows, each named after the rejection and stating its request-builder customizer and
      * expected status. Every row but {@link #NO_ROUTE_404} and {@link #METHOD_NOT_ALLOWED_405}
      * targets a JAX-RS operation path, so only the rejection prevents the claim.
      */
@@ -1356,7 +1356,7 @@ public class OperationRouteIdentityIT {
     record OperationIdentity(String operationId, String routeTemplate, String httpMethod) {}
 
     /**
-     * TP-003's observations around the holder's removal.
+     * The holder-removal observations around the holder's removal.
      *
      * @param status       the response status
      * @param sentAt       taken on the test thread before the request was sent
@@ -1539,7 +1539,7 @@ public class OperationRouteIdentityIT {
     /**
      * The component harness's descriptor-capturing {@link OperationHandlerContributor}: at router
      * build it captures each operation's {@code OperationRegistrationContext.operation()}, keyed by
-     * operation id, and adds no handler. TP-001 compares the event's {@code operation()} with these
+     * operation id, and adds no handler. The claimed-request test compares the event's {@code operation()} with these
      * by identity.
      */
     static final class DescriptorCapture implements OperationHandlerContributor {
@@ -1590,7 +1590,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * TP-004's listener: inside {@code onCompleted} it reads the operation id, route template and
+     * The listener: inside {@code onCompleted} it reads the operation id, route template and
      * HTTP method from {@code event.operation()} and records them. A {@code null} operation makes the
      * read throw, and the emitter isolates that, so nothing is recorded.
      */
@@ -1717,7 +1717,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * TP-002's stand-in for the ROOT rate limiter (rest-jaxrs has no rate-limit dependency): an
+     * Stand-in for the ROOT rate limiter (rest-jaxrs has no rate-limit dependency): an
      * application-phase ROOT middleware, ordered after correlation ingress, that fails a request
      * carrying {@value #ROOT_REJECT_HEADER} with 429 and passes every other. The failure reaches the
      * JAX-RS mount's failure handler, which answers 429.
@@ -1742,7 +1742,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * TP-003's holder remover: an application-phase ROOT middleware ordered after the emitter and the
+     * The holder remover: an application-phase ROOT middleware ordered after the emitter and the
      * {@link CaseBarrier}. For a request carrying {@value #REMOVE_HOLDER_HEADER} it records
      * {@code removedAt}, removes every routing-context data entry whose value's class is in the
      * emitter's package (the holder's type is package-private there, so it cannot be named), records
@@ -1805,7 +1805,7 @@ public class OperationRouteIdentityIT {
     }
 
     /**
-     * TP-015's short circuit: an ordinary application-phase ROOT middleware (no {@code phase()}
+     * The short circuit: an ordinary application-phase ROOT middleware (no {@code phase()}
      * override) at priority {@code Integer.MIN_VALUE}. For a request carrying
      * {@value #SHORT_CIRCUIT_HEADER} it registers the request's barrier as a lifecycle
      * {@code afterClose} task itself, because {@link CaseBarrier} never runs for that request, then

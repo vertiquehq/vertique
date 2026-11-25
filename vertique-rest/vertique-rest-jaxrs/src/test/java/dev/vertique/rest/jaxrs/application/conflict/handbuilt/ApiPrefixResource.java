@@ -9,11 +9,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-004 (T004) fixture: the sole resource of {@link ApiPrefixMountModule}'s hand-built
+ * Conflict fixture: the sole resource of {@link ApiPrefixMountModule}'s hand-built
  * {@code /api/*} mount (case (a)), which conflicts with {@code unitb.ManagementApi}'s
  * {@code /api/mgmt/*} mount, since {@code /api/} is a prefix of {@code /api/mgmt/}. Its resource
- * method's name is unique across every T004 conflict fixture, so it can never contribute an
- * unintended cross-mount operationId collision (FR-014).
+ * method's name is unique across every conflict fixture, so it can never contribute an
+ * unintended cross-mount operationId collision.
  */
 @Path("/api-prefix-probe")
 public class ApiPrefixResource {

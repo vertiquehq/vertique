@@ -10,7 +10,7 @@ import jakarta.ws.rs.core.MediaType;
 
 /**
  * Case (e)'s placeholder listed class for {@code OpidApis.OpidInactiveApi}: never resolved, since
- * an inactive registration's membership is never evaluated (AC-026.2).
+ * an inactive registration's membership is never evaluated.
  */
 @Path("/opid-inactive")
 public class OpidInactiveResource {

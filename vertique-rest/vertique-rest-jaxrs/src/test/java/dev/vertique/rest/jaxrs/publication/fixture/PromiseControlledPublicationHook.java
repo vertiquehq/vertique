@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * Test {@link MountPublicationHook} that never wants detail and, on every {@link #mountBuilt}
  * call, records the given {@link MountPublication} and returns the future of a fresh {@link Promise}
- * the test completes later, one call at a time (T006 TP-008).
+ * the test completes later, one call at a time.
  */
 public final class PromiseControlledPublicationHook implements MountPublicationHook {
 

@@ -59,9 +59,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * RED integration test for Phase 3 Slice 3.2 (FR-JSON-058 / FR-JSON-058A / FR-JSON-059): JAX-RS
- * <em>error</em> / {@code ProblemDetail} response bodies must serialize through the effective profile —
- * the per-method resolved mapper for a matched method, and the boundary+global default
+ * Integration test that JAX-RS <em>error</em> / {@code ProblemDetail} response bodies serialize
+ * through the effective profile — the per-method resolved mapper for a matched method, and the boundary+global default
  * ({@code jaxrs.jsonProfile} &rarr; {@code json.jsonProfile} &rarr; the {@code vertique} floor) for
  * errors raised <em>before</em> any method matched. A profile-mapper throw while serializing an error
  * body must <strong>fail open</strong> to the process JSON codec ({@code Json.encode}), preserving the
@@ -69,8 +68,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * 500 that drops the mapped status.
  *
  * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, reached through
- * {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture), so the RED&rarr;green
- * transition is genuinely driven by the production error-serialization path — not a re-implemented stub.
+ * {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture), so the result
+ * is genuinely driven by the production error-serialization path — not a re-implemented stub.
  *
  * <p><strong>Observable technique (probe-safe, mirrors {@code ProfiledResponseSerializationIT}).</strong>
  * Each error body is a plain {@link ErrorEntity} POJO carrying a present {@code name} and a {@code null}
@@ -87,9 +86,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p><strong>What each test pins:</strong>
  * <ul>
  *   <li><em>error in profiled method</em> — the matched route stashes the profile mapper before dispatch
- *       (slice 3.1) and the error body reads it.</li>
+ *       and the error body reads it.</li>
  *   <li><em>no-method error uses boundary+global default</em> — the no-method failure path resolves and
- *       stashes the boundary default before serializing (slice 3.2).</li>
+ *       stashes the boundary default before serializing.</li>
  *   <li><em>fail-open on profile-mapper throw</em> — the throwing profile mapper's serialization failure
  *       is caught and the response completed through the process codec, mapped status and media type
  *       preserved, instead of leaving the client hanging on a never-completed response.</li>
@@ -103,7 +102,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p><strong>Why a {@link WebClient} and not a raw {@code HttpClient}.</strong> A raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
  * Every assertion in this class is about the <em>bytes of the error body</em> — whether the null field
  * is present or omitted, and in two tests a byte-for-byte comparison against the process codec's own
  * rendering — so
@@ -248,7 +247,7 @@ public class ProfiledErrorResponseIT {
 
     /**
      * Resource selecting the opinionated {@code error-profile} at the class level whose GET throws
-     * {@link MappedFailure}. The matched route stashes the profile mapper before dispatch (slice 3.1), so
+     * {@link MappedFailure}. The matched route stashes the profile mapper before dispatch, so
      * the mapped {@link ErrorEntity} error body must serialize via the profile (null field omitted).
      */
     @Path("/profiled-error")
@@ -469,7 +468,7 @@ public class ProfiledErrorResponseIT {
         }
     }
 
-    // --- Test 1: error in a profiled method uses the profile (PASSES via slice 3.1) ---
+    // --- error in a profiled method uses the profile ---
 
     @Test
     @DisplayName(
@@ -478,7 +477,7 @@ public class ProfiledErrorResponseIT {
         // The class-level @JsonProfile resolves the opinionated mapper, stashed under
         // KEY_RESOLVED_BODY_MAPPER ahead of dispatch. The method throws MappedFailure -> mapped to a 422
         // ErrorEntity body (application/problem+json). The error body reads the stash and OMITS the null
-        // "missing" field. Status (422) and media type must be unchanged. PASSES today (slice 3.1).
+        // "missing" field. Status (422) and media type must be unchanged.
         deploy(vertx, ctx, Set.of(new ProfiledErrorResource()), Set.of(), (port, c) -> c.get(
                         port, "127.0.0.1", "/profiled-error")
                 .send()
@@ -498,7 +497,7 @@ public class ProfiledErrorResponseIT {
                 })));
     }
 
-    // --- Test 2: no-method error uses the boundary+global default (FAILS today) ---
+    // --- no-method error uses the boundary+global default ---
 
     @Test
     @DisplayName(
@@ -536,7 +535,7 @@ public class ProfiledErrorResponseIT {
                         })));
     }
 
-    // --- Test 3: fail-open on a profile-mapper throw (FAILS today) ---
+    // --- fail-open on a profile-mapper throw ---
 
     @Test
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
@@ -571,7 +570,7 @@ public class ProfiledErrorResponseIT {
                 })));
     }
 
-    // --- Test 4: an unannotated error path serializes through the vertique floor ---
+    // --- an unannotated error path serializes through the vertique floor ---
 
     @Test
     @DisplayName(
@@ -597,7 +596,7 @@ public class ProfiledErrorResponseIT {
                 })));
     }
 
-    // --- Test 5: 415 on an EXPLICIT-system route under another boundary default ⇒ process-codec body ---
+    // --- 415 on an EXPLICIT-system route under another boundary default ⇒ process-codec body ---
 
     @Test
     @DisplayName(
@@ -638,7 +637,7 @@ public class ProfiledErrorResponseIT {
                         })));
     }
 
-    // --- Test 6: 415 on a PROFILED route (415 fires before request-side stash) ⇒ profile error body ---
+    // --- 415 on a PROFILED route (415 fires before request-side stash) ⇒ profile error body ---
 
     @Test
     @DisplayName(
@@ -671,7 +670,7 @@ public class ProfiledErrorResponseIT {
                 })));
     }
 
-    // --- Test 7: overlapping explicit-system static route + profiled param route ⇒ process-codec body ---
+    // --- overlapping explicit-system static route + profiled param route ⇒ process-codec body ---
 
     @Test
     @DisplayName(

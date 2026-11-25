@@ -21,14 +21,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 3.1 RED test proving the runtime {@link ResourceScanner} path builds a
+ * Test proving the runtime {@link ResourceScanner} path builds a
  * {@link ResourceMethodMeta.ParamMeta} whose composed {@link dev.vertique.core.codegen.ParameterMetadata}
  * view supplies the parameter's annotations through the {@code annotationsLazy()} bridge, backed by the
  * reflective {@code Annotation[]} the scanner captures (the scanner path stays reflective by nature).
  *
- * <p><strong>Expected RED behavior:</strong> <em>compile-RED</em> today — {@code ParamMeta} has no
- * {@code annotationsLazy()} accessor. After the slice-3.1 migration, the scanner-built {@code ParamMeta}
- * exposes the merged parameter annotations via {@code annotationsLazy().get()}.
+ * <p>The scanner-built {@code ParamMeta} exposes the merged parameter annotations via
+ * {@code annotationsLazy().get()}.
  */
 class ResourceScannerParamMetaAnnotationsLazyTest {
 
@@ -72,11 +71,11 @@ class ResourceScannerParamMetaAnnotationsLazyTest {
     }
 
     /**
-     * GitHub issue #162 slice 5 RED test: the scanner-built {@code ParamMeta}'s composed
+     * The scanner-built {@code ParamMeta}'s composed
      * {@link dev.vertique.core.codegen.ParameterMetadata} view must be
      * {@code dev.vertique.core.codegen.ReflectiveParameterMetadata} (the shared reflective impl
      * rest-client's {@code ClientInterfaceScanner} already uses), not the jaxrs-local duplicate
-     * {@code dev.vertique.rest.jaxrs.ReflectiveParameterMetadata} — which this slice deletes.
+     * {@code dev.vertique.rest.jaxrs.ReflectiveParameterMetadata}.
      */
     @Test
     @DisplayName(

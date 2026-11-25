@@ -318,7 +318,7 @@ class RequestBodyProfileResolverTest {
                         .stashMapper());
     }
 
-    // --- Tests: new tiers (jaxrs.jsonProfile + json.jsonProfile) — slice 2.2 ---
+    // --- Tests: new tiers (jaxrs.jsonProfile + json.jsonProfile) ---
 
     @Test
     @DisplayName("method @JsonProfile wins over both jaxrs.jsonProfile and json.jsonProfile defaults")
@@ -397,7 +397,7 @@ class RequestBodyProfileResolverTest {
                         meta, configWith(null), globalWith("global-profile"), registry)
                 .stashMapper();
 
-        // then the json.jsonProfile id "global-profile" applies (RED: resolver ignores the global tier)
+        // then the json.jsonProfile id "global-profile" applies (the resolver must not ignore the global tier)
         assertSame(registry.mapper(JsonProfileId.of("global-profile")), resolved, "json.jsonProfile must apply");
     }
 
@@ -421,7 +421,7 @@ class RequestBodyProfileResolverTest {
                 "the vertique floor must resolve the vertique profile's mapper");
     }
 
-    // --- Tests: the vertique floor and the process-mapper identity sentinel (T011/TP-001) ---
+    // --- Tests: the vertique floor and the process-mapper identity sentinel ---
 
     /**
      * The tail of the precedence is {@code jsonConfig.effectiveProfile()} — the {@code vertique} floor —
@@ -492,12 +492,12 @@ class RequestBodyProfileResolverTest {
                 });
     }
 
-    // --- Tests: the resolver result carries the profile and the process-codec verdict (TP-002) ---
+    // --- Tests: the resolver result carries the profile and the process-codec verdict ---
 
     /**
      * The resolver's result carries both the registry profile it selected and the process-codec verdict
      * — {@code profile.mapper() == VertiqueJson.mapper()} — which the registrar turns into the nullable
-     * stash mapper (AC-001.2).
+     * stash mapper.
      *
      * <p>The verdict is an identity read, not an id comparison, so the same two routes invert their
      * verdicts when the process codec is reinstalled on another profile's mapper: with the registry's

@@ -14,9 +14,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for slice 4: after the generated-runtime SPI migrates off the Vert.x
- * OpenAPI router, the {@code KEY_META_DATA_VALIDATED_REQUEST} stash key must no longer appear
- * anywhere in the rest-jaxrs production source tree. The generated and reflective dispatch paths now
+ * Mechanical completeness check: the generated-runtime SPI no longer goes through the Vert.x OpenAPI
+ * router, so the {@code KEY_META_DATA_VALIDATED_REQUEST} stash key must not appear anywhere in the
+ * rest-jaxrs production source tree. The generated and reflective dispatch paths now
  * stash and read a {@link dev.vertique.rest.jaxrs.request.BoundRequest} instead.
  *
  * <p>The test walks {@code src/main/java} and asserts zero occurrences of the retired key. It is a

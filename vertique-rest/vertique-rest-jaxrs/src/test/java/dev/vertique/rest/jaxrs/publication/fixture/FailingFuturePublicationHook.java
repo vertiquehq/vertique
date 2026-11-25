@@ -12,7 +12,7 @@ import java.util.List;
 /**
  * Test {@link MountPublicationHook} that returns a configured failed {@link Future} from
  * {@link #mountBuilt} for one configured mount path and otherwise records the publication and
- * succeeds (T006 TP-006, a failed hook future fails the enclosing mount's {@code createRouter}).
+ * succeeds (a failed hook future fails the enclosing mount's {@code createRouter}).
  */
 public final class FailingFuturePublicationHook implements MountPublicationHook {
 

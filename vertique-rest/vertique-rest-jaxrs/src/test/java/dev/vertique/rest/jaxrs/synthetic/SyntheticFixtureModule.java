@@ -31,7 +31,7 @@ import java.util.Set;
  * the installer's own priority sorting, and the installer unit proof's insertion-ordered set is the
  * deterministic proof of that sorting. Every collaborator
  * {@code JaxRsRouterMount.Factory} requires but the real security module supplies is stood in for
- * here, mirroring {@code application.ApplicationTestSupportModule} (T002).
+ * here, mirroring {@code application.ApplicationTestSupportModule}.
  */
 @Module
 final class SyntheticFixtureModule {

@@ -6,10 +6,10 @@ package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 import dev.vertique.rest.core.application.RestApplication;
 
 /**
- * TP-009's two named registrations (T023 contract): {@code public} and {@code partner}, each
- * listing one unrelated resource whose sole method's default operationId is {@code "list"}. Each of
- * TP-009's three rows (strategy {@code web-validation}; strategy {@code openapi-contract} with
- * distinct contract locations; strategy {@code openapi-contract} with one shared global location)
+ * Two named registrations: {@code public} and {@code partner}, each listing one unrelated
+ * resource whose sole method's default operationId is {@code "list"}. Each of the three rows
+ * (strategy {@code web-validation}; strategy {@code openapi-contract} with distinct contract
+ * locations; strategy {@code openapi-contract} with one shared global location)
  * registers both interfaces through its own dedicated module, so the effective
  * {@code openapiPath} differs per row without changing the declaring interfaces. Never implemented:
  * native composition reads each interface's registration directly.

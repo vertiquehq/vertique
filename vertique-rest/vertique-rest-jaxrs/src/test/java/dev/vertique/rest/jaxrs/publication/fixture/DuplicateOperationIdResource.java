@@ -9,10 +9,10 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T006 TP-006(b)'s IT-only fixture: a second resource, at a distinct path but sharing
+ * IT-only fixture: a second resource, at a distinct path but sharing
  * {@link MgmtResource#echo()}'s method name (and so its default operation id, {@code "echo"}),
  * added to the hand-built {@code /api/mgmt/*} mount's resource set to trigger the registrar's
- * existing cross-resource duplicate-operationId detection (guard: this detection predates T006).
+ * existing cross-resource duplicate-operationId detection (this detection predates the publication hooks).
  */
 @Path("/echo-duplicate")
 public class DuplicateOperationIdResource {

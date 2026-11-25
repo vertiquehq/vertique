@@ -493,7 +493,7 @@ class ResponsePipelineTest {
      * before the bare-metal 500 is written.  This ensures observe-only consumers (metrics,
      * tracing, audit) never miss a fallback-500 outcome.
      *
-     * <p>This test is the primary RED/GREEN driver for the span-status regression fix.
+     * <p>This test guards the span-status regression fix.
      */
     @Nested
     @DisplayName("afterResponse fired on sendFallback500 path")

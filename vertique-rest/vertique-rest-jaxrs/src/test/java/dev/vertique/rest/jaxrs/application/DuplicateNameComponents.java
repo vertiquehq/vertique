@@ -16,7 +16,7 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
-/** Dagger components for {@link JaxRsApplicationCompositionTest}'s TP-008. */
+/** Dagger components for {@link JaxRsApplicationCompositionTest}'s duplicate-name rows. */
 public final class DuplicateNameComponents {
 
     private DuplicateNameComponents() {}
@@ -33,7 +33,7 @@ public final class DuplicateNameComponents {
     }
 
     /**
-     * TP-008 rows (a) to (c): both {@code UnitOneApi} and {@code UnitTwoApi} registered, each
+     * Duplicate-name rows (a) to (c): both {@code UnitOneApi} and {@code UnitTwoApi} registered, each
      * naming {@code api}; only their active flags vary per row.
      */
     @Singleton
@@ -61,7 +61,7 @@ public final class DuplicateNameComponents {
     }
 
     /**
-     * TP-008's control row: {@code UnitOneApi} (naming {@code api}) beside
+     * The control row: {@code UnitOneApi} (naming {@code api}) beside
      * {@code UnitTwoRenamedApi} (naming {@code api-two}), so the names no longer collide. Each
      * listed resource is manually bound ({@link DupnameResourcesModule}), so this row composes
      * instead of failing on an unbound class.

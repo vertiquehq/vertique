@@ -29,25 +29,23 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Characterization tests for the {@code transformResponse} chain and {@code afterResponse} sync
- * loops inside {@link ResponsePipeline}, pinning observable behavior against the current
- * implementation before the Combinators migration.
+ * loops inside {@link ResponsePipeline}, pinning its observable behavior.
  *
- * <p>These tests must be GREEN against the pre-migration code and must remain GREEN after migration
- * to {@link dev.vertique.core.async.Combinators}. A test failure after migration indicates a
- * behavior regression.
+ * <p>These tests pin behavior that {@link dev.vertique.core.async.Combinators} provides to the
+ * pipeline. A test failure indicates a behavior regression.
  *
  * <p>Behaviors pinned:
  * <ol>
- *   <li>FR-CORE-001.1 — {@code transformResponse} runs interceptors in list order, threading the
+ *   <li>{@code transformResponse} runs interceptors in list order, threading the
  *       {@link Response} value from one interceptor to the next.</li>
- *   <li>FR-CORE-001.2 — A failed {@code transformResponse} short-circuits the chain: no subsequent
+ *   <li>A failed {@code transformResponse} short-circuits the chain: no subsequent
  *       interceptors are invoked and the returned future fails with that cause.</li>
- *   <li>FR-CORE-001.3 — {@code afterResponse} (normal path) invokes every interceptor in list
+ *   <li>{@code afterResponse} (normal path) invokes every interceptor in list
  *       order; a thrown exception is swallowed and iteration continues with the next interceptor.</li>
- *   <li>FR-CORE-001.4 — {@code afterResponse} (fallback-500 path) follows the same swallowing
+ *   <li>{@code afterResponse} (fallback-500 path) follows the same swallowing
  *       rule: every interceptor is invoked in order; a thrown exception does not prevent later
  *       interceptors from running or the bare-metal 500 from being written.</li>
- *   <li>Wire handoff (OTel SP-4) — {@code afterResponse} fires as soon as the response is handed
+ *   <li>Wire handoff — {@code afterResponse} fires as soon as the response is handed
  *       off to the wire, while the serializer's wire-completion future may still be pending. A
  *       later failure of that future is recorded on the {@link RoutingContext} and never re-fires
  *       the hook.</li>
@@ -152,13 +150,13 @@ class ResponsePipelineCharacterizationTest {
         return new ResponsePipeline(Set.of(), hooks, serializer);
     }
 
-    // --- FR-CORE-001.1: transformResponse runs in list order threading Response ---
+    // --- transformResponse runs in list order threading Response ---
 
     /**
-     * Tests for the {@code transformResponse} chain ordering contract (FR-CORE-001.1).
+     * Tests for the {@code transformResponse} chain ordering contract.
      */
     @Nested
-    @DisplayName("FR-CORE-001.1 — transformResponse runs interceptors in list order threading Response")
+    @DisplayName("transformResponse runs interceptors in list order threading Response")
     class TransformOrder {
 
         @Test
@@ -210,14 +208,13 @@ class ResponsePipelineCharacterizationTest {
         }
     }
 
-    // --- FR-CORE-001.2: failed transformResponse short-circuits the chain ---
+    // --- failed transformResponse short-circuits the chain ---
 
     /**
-     * Tests for the fail-fast short-circuit contract of the {@code transformResponse} chain
-     * (FR-CORE-001.2).
+     * Tests for the fail-fast short-circuit contract of the {@code transformResponse} chain.
      */
     @Nested
-    @DisplayName("FR-CORE-001.2 — failed transformResponse short-circuits; no subsequent interceptors invoked")
+    @DisplayName("failed transformResponse short-circuits; no subsequent interceptors invoked")
     class TransformShortCircuit {
 
         @Test
@@ -273,15 +270,14 @@ class ResponsePipelineCharacterizationTest {
         }
     }
 
-    // --- FR-CORE-001.3: afterResponse (normal path) swallows exceptions and continues ---
+    // --- afterResponse (normal path) swallows exceptions and continues ---
 
     /**
-     * Tests for the swallowing contract of the {@code afterResponse} normal-path sync loop
-     * (FR-CORE-001.3).
+     * Tests for the swallowing contract of the {@code afterResponse} normal-path sync loop.
      */
     @Nested
     @DisplayName(
-            "FR-CORE-001.3 — afterResponse (normal path): every interceptor invoked in order; exception swallowed, iteration continues")
+            "afterResponse (normal path): every interceptor invoked in order; exception swallowed, iteration continues")
     class AfterResponseNormalSwallow {
 
         @Test
@@ -404,7 +400,7 @@ class ResponsePipelineCharacterizationTest {
             // when the response is handed off to the wire
             p.sendResponse(ctx, Response.ok("v").build());
 
-            // then afterResponse has already fired, with the wire still in flight (OTel SP-4 pin)
+            // then afterResponse has already fired, with the wire still in flight (the wire-handoff pin)
             assertEquals(
                     List.of("after:pending"),
                     events,
@@ -423,11 +419,10 @@ class ResponsePipelineCharacterizationTest {
         }
     }
 
-    // --- FR-CORE-001.4: afterResponse (fallback-500 path) swallows exceptions and continues ---
+    // --- afterResponse (fallback-500 path) swallows exceptions and continues ---
 
     /**
-     * Tests for the swallowing contract of the {@code afterResponse} fallback-500-path sync loop
-     * (FR-CORE-001.4).
+     * Tests for the swallowing contract of the {@code afterResponse} fallback-500-path sync loop.
      *
      * <p>Note: both the loop and {@link dev.vertique.core.async.Combinators#forEachSwallowSync}
      * catch {@link Exception} (including checked exceptions) and route each per-hook failure to the
@@ -436,7 +431,7 @@ class ResponsePipelineCharacterizationTest {
      */
     @Nested
     @DisplayName(
-            "FR-CORE-001.4 — afterResponse (fallback-500 path): every hook invoked; exception swallowed, bare-metal 500 still written")
+            "afterResponse (fallback-500 path): every hook invoked; exception swallowed, bare-metal 500 still written")
     class AfterResponseFallbackSwallow {
 
         @Test
@@ -523,7 +518,7 @@ class ResponsePipelineCharacterizationTest {
         }
     }
 
-    // --- Success-entity serialization failure routes to fallback-500 (sync-throw, CORE-001) ---
+    // --- Success-entity serialization failure routes to fallback-500 (sync-throw) ---
 
     /**
      * Tests that a SYNCHRONOUS serialization failure of a <em>success</em> entity — thrown by the
@@ -531,7 +526,7 @@ class ResponsePipelineCharacterizationTest {
      * — is routed to {@link ResponsePipeline#sendFallback500} rather than escaping uncaught and
      * leaving the HTTP response unfinished (a hung client).
      *
-     * <p>This is the CORE-001 sync-throw characterization: {@code .onFailure(...)} only catches the
+     * <p>This is the sync-throw characterization: {@code .onFailure(...)} only catches the
      * transform-chain future's failure, not a throw inside {@code .onSuccess(...)}.
      */
     @Nested

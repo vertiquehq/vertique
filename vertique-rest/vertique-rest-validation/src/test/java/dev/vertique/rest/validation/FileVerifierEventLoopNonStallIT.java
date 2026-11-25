@@ -51,13 +51,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent} (the {@code
  * vertique-rest-test} fixture), so the mount carries the real injected {@link WebValidationStrategy}
  * and the full set of production middlewares. Neither request exercised here throws, so the richer
- * rule set on the production {@code DefaultExceptionMapper} (versus this file's previous bare {@code
+ * rule set on the production {@code DefaultExceptionMapper} (versus a bare {@code
  * new DefaultExceptionMapper()}) has no observable effect on the assertions below.
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). Both requests here assert on their body text ({@code "uploaded"} and
+ * is correct. Both requests here assert on their body text ({@code "uploaded"} and
  * {@code "pong"}), and the {@code /ping} leg is what proves the event loop was never stalled — a
  * silently emptied body would break it for a reason unrelated to the seam under test. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.

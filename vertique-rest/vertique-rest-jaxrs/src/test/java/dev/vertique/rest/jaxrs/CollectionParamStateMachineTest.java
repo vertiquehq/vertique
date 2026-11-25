@@ -75,8 +75,8 @@ import org.slf4j.LoggerFactory;
  * {@link ResourceMethodMeta.ParamMeta}/{@link BoundRequest} fixtures, mirroring
  * {@link SetAndArrayQueryParamBindTest}'s style, over the three bindable sources that support
  * multi-value collections at this layer: {@code QUERY}, {@code HEADER}, and {@code COOKIE}
- * ({@code FORM} collection binding is covered separately in {@code FormParamCollectionBindTest},
- * slice S5; {@code PATH} is never multi-valued).
+ * ({@code FORM} collection binding is covered separately in {@code FormParamCollectionBindTest};
+ * {@code PATH} is never multi-valued).
  *
  * <p>The stub fixtures pin the <em>state machine</em>; the {@link RealBinderSeam} nested group pins
  * that the production {@link dev.vertique.rest.jaxrs.request.DefaultBoundRequest} actually feeds it the
@@ -505,7 +505,7 @@ class CollectionParamStateMachineTest {
                 List.of("x"),
                 list,
                 "a @DefaultValue must not traverse the input-policy chain — it is framework-supplied, not "
-                        + "client-supplied, mirroring the scalar @DefaultValue rule (§4 decision 5)");
+                        + "client-supplied, mirroring the scalar @DefaultValue rule");
     }
 
     // --- 3. Presence ignores default (regression guard) ---
@@ -650,7 +650,7 @@ class CollectionParamStateMachineTest {
 
     @ParameterizedTest(name = "declaredType={1}")
     @MethodSource("materializationShapes")
-    @DisplayName("Each declared collection/array shape materializes per the §4 decision 3 cascade")
+    @DisplayName("Each declared collection/array shape materializes per the collection cascade")
     void boundCollection_declaredTypeMaterialized(String methodName, Class<?> declaredType) throws Exception {
         Method method = CollectionResource.class.getMethod(methodName, declaredType);
         ResourceMethodMeta.ParamMeta param = paramMeta("tags", QUERY, declaredType, String.class, null);

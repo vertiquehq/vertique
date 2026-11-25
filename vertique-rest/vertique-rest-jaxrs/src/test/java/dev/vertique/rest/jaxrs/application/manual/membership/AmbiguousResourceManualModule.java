@@ -10,10 +10,10 @@ import dev.vertique.rest.core.dagger.JaxRsResources;
 import dev.vertique.rest.jaxrs.application.unita.membership.AmbiguousResource;
 
 /**
- * TP-005 case 6's manual side: contributes a manual {@link AmbiguousResource} instance — the shape
+ * Manual side of the ambiguous-resource case: contributes a manual {@link AmbiguousResource} instance — the shape
  * sibling framework modules use — so a listed {@link AmbiguousResource} has both a catalog match
  * (via {@code unita.membership.AmbiguousResourceCatalogModule}) and this manual match, tripping
- * C-COMPOSE step 6.7's ambiguity check.
+ * the composer's ambiguity check.
  */
 @Module
 public final class AmbiguousResourceManualModule {

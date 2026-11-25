@@ -58,7 +58,7 @@ final class MountFixtures {
     }
 
     /**
-     * Builds a mount handle from {@link ValidatorBackedValidationMountComponent} — BG1's
+     * Builds a mount handle from {@link ValidatorBackedValidationMountComponent} — the
      * validator-present graph — with an empty configuration, so every {@code jaxrs}/{@code http}
      * setting stays at its framework default. {@link AnnotationSchemaSource} generates body schemas
      * through Bean Validation metadata on this mount, unlike {@link #mount(Vertx, RestTestContributions)}.

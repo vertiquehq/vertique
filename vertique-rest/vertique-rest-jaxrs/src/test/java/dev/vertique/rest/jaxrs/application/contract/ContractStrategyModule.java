@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import jakarta.inject.Singleton;
 
 /**
- * TP-007's strategy module: binds one {@code @Singleton} {@link OpenApiContractPassThroughStrategy}
+ * The strategy module: binds one {@code @Singleton} {@link OpenApiContractPassThroughStrategy}
  * instance both into {@code Set<RequestValidationStrategy>} and as its own provision, so the test
  * can read the same instance's recorded locations after deployment.
  */

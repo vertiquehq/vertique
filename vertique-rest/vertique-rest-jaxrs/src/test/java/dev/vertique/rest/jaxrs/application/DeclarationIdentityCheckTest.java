@@ -29,19 +29,19 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-018 and TP-019: the view checks every declaring interface's runtime identity against its
- * registration before any resource resolves (AR3-005, S3-010).
+ * The view checks every declaring interface's runtime identity against its registration before any
+ * resource resolves.
  *
- * <p>TP-018 uses the real {@link GeneratedRestApplicationRegistration#of} factory: {@code "other"}
+ * <p>The name-equality rows use the real {@link GeneratedRestApplicationRegistration#of} factory: {@code "other"}
  * and a missing name are not reserved, so the factory accepts them, isolating the name-equality
- * check. TP-019 needs registrations the factory itself would refuse ({@code "none"}, {@code
+ * check. The reserved-name rows need registrations the factory itself would refuse ({@code "none"}, {@code
  * "null"}), so it simulates them with a Mockito mock of the final registration class, every
  * accessor stubbed, with a declaring interface annotated with the SAME reserved name — isolating
  * the reserved-name check from the (passing) name-equality check.
  */
 class DeclarationIdentityCheckTest {
 
-    // --- TP-018 ---
+    // --- Name equality ---
 
     @Test
     @DisplayName("A declaring interface whose runtime @RestApplication.name() differs from its registration's"
@@ -91,7 +91,7 @@ class DeclarationIdentityCheckTest {
         assertDoesNotThrow(control::routerMounts, "the control's declared name matches its registration's name");
     }
 
-    // --- TP-019 ---
+    // --- Reserved names ---
 
     @Test
     @DisplayName("The reserved names 'none' and 'null' are refused when the view is built, whether the"
@@ -148,7 +148,7 @@ class DeclarationIdentityCheckTest {
         return mock;
     }
 
-    // --- TP-018 fixtures ---
+    // --- Name-equality fixtures ---
 
     /** Its runtime {@code @RestApplication.name()} ("other") differs from its registration's name ("api"). */
     @RestApplication(name = "other", path = "/api", discover = true)
@@ -263,7 +263,7 @@ class DeclarationIdentityCheckTest {
         }
     }
 
-    // --- TP-019 fixtures ---
+    // --- Reserved-name fixtures ---
 
     /** Its runtime {@code @RestApplication.name()} is the reserved {@code "none"}. */
     @RestApplication(name = "none", path = "/none", discover = true)
@@ -277,7 +277,7 @@ class DeclarationIdentityCheckTest {
     @RestApplication(name = "nonesuch", path = "/nonesuch", discover = true)
     interface NonesuchApi {}
 
-    /** Contributes a single, test-supplied mock registration — TP-019's rows need one the real factory refuses. */
+    /** Contributes a single, test-supplied mock registration — the reserved-name rows need one the real factory refuses. */
     @Module
     static final class MockRegistrationModule {
 

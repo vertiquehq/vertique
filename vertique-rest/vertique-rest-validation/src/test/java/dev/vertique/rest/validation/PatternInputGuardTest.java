@@ -90,20 +90,21 @@ import org.mockito.invocation.Invocation;
  * {@code propertyNames} position and every bounded format, and the vertx-json-schema behaviors
  * that bound relies on.
  *
- * <p>Each proof is one top-level method named after its contract entry, its cases being the rows of
- * a {@code @ParameterizedTest} labelled with the contract's case letters.
+ * <p>Each proof is one top-level method, its cases being the rows of a {@code @ParameterizedTest}
+ * labelled with case letters.
  *
- * <p>TP-002 to TP-007 and TP-014 drive the guard's rewrite, compilation, and format validator directly,
+ * <p>The rewrite, shared-schema, in-bound, per-string, key, per-request total, and bounded-format
+ * proofs drive the guard's rewrite, compilation, and format validator directly,
  * and the gate through {@link WebValidationStrategy#gateFor} with mocked routing contexts, as {@code
  * WebValidationGateTest} does. A row whose input reaches {@link #CATASTROPHIC} or {@link #SLOW_IDN}
  * completes only when the gate answers without evaluating it, inside a preemptive timeout; timing is
  * never asserted. Every rejection is checked field by field and for the absence of the value, the key,
  * and the pattern, never by status alone.
  *
- * <p>{@link #engineBehaviorsTheGuardReliesOnHold} (TP-015) characterizes the engine itself. Its engine
+ * <p>{@link #engineBehaviorsTheGuardReliesOnHold} characterizes the engine itself. Its engine
  * rows (i) to (viii) compile the schemas with the gate's own options through {@link
  * Validator#create(JsonSchema, JsonSchemaOptions, JsonFormatValidator)} and a {@link
- * RecordingFormatValidator}, and use no code of the guard, so they hold at the baseline: rows (i) to (v)
+ * RecordingFormatValidator}, and use no code of the guard, so they hold without it: rows (i) to (v)
  * pin the five "upgrade invariants" the guard's ordering and escape rely on, and rows (vi) to (viii) two
  * further engine facts its rewrite relies on, so an engine upgrade that breaks one fails here rather than
  * silently letting a pattern or a bounded format run on unbounded input.
@@ -122,7 +123,7 @@ class PatternInputGuardTest {
 
     /**
      * The gate's compile options, copied literally from {@code WebValidationStrategy.SCHEMA_OPTIONS}
-     * (coordinator ruling D8), so the engine rows characterize the engine exactly as the gate
+     * so the engine rows characterize the engine exactly as the gate
      * configures it.
      */
     private static final JsonSchemaOptions GATE_OPTIONS = new JsonSchemaOptions()
@@ -136,19 +137,19 @@ class PatternInputGuardTest {
     /** The recorder's sentinel format: a call for it throws the recorder's sentinel exception. */
     private static final String PROBE = "probe";
 
-    /** A format name the engine does not know, shaped as T021's renamed formats. */
+    /** A format name the engine does not know, shaped like the renamed formats. */
     private static final String RENAMED_URI = "x-vertique-format-uri";
 
     /**
      * A 5,000-character URI, a length at which the engine's own {@code uri} expression overflows a
-     * 1 MB stack (security design review S-001).
+     * 1 MB stack.
      */
     private static final String LONG_URI = "https://example.com/" + "a".repeat(4980);
 
     /** The stack size of the thread rows (iv) and (v) validate on. */
     private static final long ONE_MEGABYTE_STACK = 1 << 20;
 
-    // --- The bound's fixtures (TP-002 to TP-007, TP-014) ---
+    // --- The bound's fixtures ---
 
     /** The bound's default per-string limit, in UTF-16 code units. */
     private static final int MAX_CHARS = 4096;
@@ -156,7 +157,7 @@ class PatternInputGuardTest {
     /** The bound's default per-request limit, in UTF-16 code units. */
     private static final int MAX_TOTAL_CHARS = 262_144;
 
-    /** The bound entry's format name, spelled as the contract fixes it. */
+    /** The bound entry's format name, as the guard spells it. */
     private static final String BOUND = "x-vertique-pattern-input-bound";
 
     /** The bound entry, as JSON text. */
@@ -184,22 +185,22 @@ class PatternInputGuardTest {
     private static final String ALL_A = "^a*$";
 
     /**
-     * {@code SLOW_IDN}: 131,072 {@code a} characters, which the baseline engine's own {@code idn-hostname}
-     * check takes about 32 seconds to judge (invalid) on a default-stack thread (step 3's probe, recorded
-     * in the task evidence): far beyond TP-014 (h)'s timeout.
+     * {@code SLOW_IDN}: 131,072 {@code a} characters, which the engine's own {@code idn-hostname}
+     * check takes about 32 seconds to judge (invalid) on a default-stack thread: far beyond the
+     * timeout of the slow-format row.
      */
     private static final String SLOW_IDN = "a".repeat(131_072);
 
-    /** TP-014 (h)'s timeout: only the engine's own evaluation of {@link #SLOW_IDN} can exhaust it. */
+    /** The slow-format row's timeout: only the engine's own evaluation of {@link #SLOW_IDN} can exhaust it. */
     private static final Duration SLOW_IDN_TIMEOUT = Duration.ofSeconds(10);
 
     /** The operation id every gate row builds its descriptor with. */
     private static final String OPERATION_ID = "patternInputBound";
 
-    // --- TP-002: the rewrite ---
+    // --- the rewrite ---
 
     /**
-     * TP-002. The guard's rewrite returns a copy in which every node with a string {@code pattern} and every
+     * The guard's rewrite returns a copy in which every node with a string {@code pattern} and every
      * node whose {@code format} is {@code idn-hostname}, {@code idn-email}, or {@code regex} gains one bound
      * entry per position, appended to its {@code allOf} (created when absent), and every node with a
      * non-empty {@code patternProperties} gains the {@code propertyNames} entry after them. A node whose
@@ -210,7 +211,7 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("rewriteShapes")
-    @DisplayName("TP-002: the rewrite appends the bound at every pattern and bounded-format position")
+    @DisplayName("the rewrite appends the bound at every pattern and bounded-format position")
     void rewriteAppendsTheBoundAtEveryBoundPosition(Shape shape) {
         JsonObject input = shape.input().copy();
         JsonObject untouched = input.copy();
@@ -229,7 +230,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-002's shape matrix, which TP-004 reuses with the in-bound instances each row carries. In the
+     * The rewrite's shape matrix, which the in-bound preservation proof reuses with the in-bound instances each row carries. In the
      * JSON literals {@code '} stands for {@code "}, {@code <B>} for the bound entry {@code {"format":
      * "x-vertique-pattern-input-bound"}}, and {@code <P>} for {@code {"propertyNames": <B>}}.
      *
@@ -482,10 +483,10 @@ class PatternInputGuardTest {
                         unjudgeable("'aa'")));
     }
 
-    // --- TP-003: the shared schemas ---
+    // --- the shared schemas ---
 
     /**
-     * TP-003. Building the gate compiles and rewrites private copies only: every schema object {@link
+     * Building the gate compiles and rewrites private copies only: every schema object {@link
      * OperationSchemas} holds equals its pre-call copy and carries neither {@code __absolute_uri__} (the key
      * {@link JsonSchema#of(JsonObject)} writes into the object it compiles) nor a bound entry, and the
      * rewrite of a pattern-free schema equals its input.
@@ -494,7 +495,7 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("sharedSchemaOperations")
-    @DisplayName("TP-003: shared schemas are never compiled or mutated; pattern-free ones compile unchanged")
+    @DisplayName("shared schemas are never compiled or mutated; pattern-free ones compile unchanged")
     void sharedSchemasAreNeverCompiledOrMutated(SharedSchemas row) {
         Map<String, JsonObject> held = row.held();
         Map<String, JsonObject> snapshot = new LinkedHashMap<>();
@@ -523,7 +524,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-003's operations: one whose body and path-parameter schemas carry {@code pattern}, one whose body
+     * The operations: one whose body and path-parameter schemas carry {@code pattern}, one whose body
      * and query-parameter schemas carry none, and one per pattern-free document of the pinned
      * {@code schema-corpus} (as the body, beside the same pattern-free query parameter).
      *
@@ -562,11 +563,11 @@ class PatternInputGuardTest {
         return Stream.concat(handBuilt, corpus);
     }
 
-    // --- TP-004: in-bound preservation ---
+    // --- in-bound preservation ---
 
     /**
-     * TP-004. For every corpus document and every shape of the TP-002 matrix (with the format rows TP-004
-     * adds), each in-bound instance gets the same verdict and the same errors, element by element in
+     * For every corpus document and every shape of the rewrite matrix (with the format rows the
+     * preservation proof adds), each in-bound instance gets the same verdict and the same errors, element by element in
      * {@code keywordLocation}, {@code instanceLocation}, and {@code error}, from the gate's guarded
      * compilation (the guard's format validator, inside a counting window) as from {@code
      * Validator.create(JsonSchema.of(copy), options)} over an untouched copy, both with the gate's options.
@@ -575,7 +576,7 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("inBoundInstances")
-    @DisplayName("TP-004: in-bound verdicts and violation lists are unchanged")
+    @DisplayName("in-bound verdicts and violation lists are unchanged")
     void inBoundVerdictsAndViolationListsAreUnchanged(PreservationCase row) {
         Object instance = row.instance().value();
         assertInBound(instance);
@@ -593,8 +594,8 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-004's rows: every instance of every TP-002 shape and of the TP-004-only format shapes, then every
-     * instance of every corpus document.
+     * The rows: every instance of every rewrite shape and of the preservation-only format shapes, then
+     * every instance of every corpus document.
      *
      * @return the rows
      */
@@ -613,8 +614,8 @@ class PatternInputGuardTest {
     }
 
     /**
-     * The shapes TP-004 adds to the TP-002 matrix: the measured-linear formats {@code email} and {@code
-     * uuid}, C-FORMAT's formats the matrix does not already carry (values of at most 64 characters, still
+     * The shapes the preservation proof adds to the rewrite matrix: the measured-linear formats {@code
+     * email} and {@code uuid}, the reused formats the matrix does not already carry (values of at most 64 characters, still
      * the engine's own checks), a numeric instance at a {@code pattern} node and at a {@code format}
      * node, and a non-empty {@code patternProperties} beside {@code "unevaluatedProperties": false}, whose
      * verdicts hold only while the appended {@code propertyNames} entry marks no key evaluated.
@@ -636,16 +637,16 @@ class PatternInputGuardTest {
                         "a numeric instance at a format node", "{'format':'idn-hostname'}", ok("5"), bad("'exa mple'")),
                 preserved(
                         "a non-empty patternProperties beside unevaluatedProperties false: the propertyNames entry"
-                                + " evaluates no key (engine fact c)",
+                                + " evaluates no key",
                         "{'type':'object','patternProperties':{'^x-':{}},'unevaluatedProperties':false}",
                         ok("{'x-a':1}"),
                         bad("{'y':1}")));
     }
 
-    // --- TP-005: the per-string bound at every location ---
+    // --- the per-string bound at every location ---
 
     /**
-     * TP-005. A 4,097-character string at a pattern position is rejected at every location with exactly one
+     * A 4,097-character string at a pattern position is rejected at every location with exactly one
      * value-free {@code patternInputLength} detail, and validation of the request stops there in both modes;
      * called directly, the guard's format validator throws both exceptions stack-trace-free and value-free.
      *
@@ -654,13 +655,13 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("overLongStringRows")
-    @DisplayName("TP-005: an over-long string is rejected at every location, value-free, and validation stops")
+    @DisplayName("an over-long string is rejected at every location, value-free, and validation stops")
     void overLongStringIsRejectedAtEveryLocation(Executable row) throws Throwable {
         row.execute();
     }
 
     /**
-     * TP-005's rows.
+     * The rows.
      *
      * @return the rows
      */
@@ -703,7 +704,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * A TP-005 row: one parameter at {@code location} whose schema carries {@link #CATASTROPHIC}, sent the
+     * A per-string row: one parameter at {@code location} whose schema carries {@link #CATASTROPHIC}, sent the
      * 4,097-character value.
      *
      * @param location the parameter location
@@ -732,7 +733,7 @@ class PatternInputGuardTest {
         };
     }
 
-    /** TP-005 (body): a body property carrying {@link #CATASTROPHIC}, sent the 4,097-character value. */
+    /** Body: a body property carrying {@link #CATASTROPHIC}, sent the 4,097-character value. */
     private static void overLongBodyValue() {
         JsonObject schema = new JsonObject()
                 .put("type", "object")
@@ -750,7 +751,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005 (query collection): a {@code List<String>} query parameter whose item schema carries {@link
+     * Query collection: a {@code List<String>} query parameter whose item schema carries {@link
      * #CATASTROPHIC}, sent a short first value and the 4,097-character second value.
      */
     private static void overLongCollectionValue() {
@@ -775,7 +776,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005 (aggregate): parameters {@code z} (a {@code minLength} violation), {@code a} (the over-long
+     * Aggregate: parameters {@code z} (a {@code minLength} violation), {@code a} (the over-long
      * value), and {@code b} (a {@code minLength} violation), an invalid body, a violating named upload, and
      * a counting file-content verifier. Exactly {@code z}'s detail and then {@code a}'s: {@code b}, the
      * body, the file part, and the verifier are never reached.
@@ -804,7 +805,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005 (failFast): the same operation with {@code z} conforming, in {@code failFast} mode. Exactly
+     * FailFast: the same operation with {@code z} conforming, in {@code failFast} mode. Exactly
      * {@code a}'s detail; nothing after it runs.
      */
     private static void failFastModeStopsAtTheRejection() {
@@ -832,7 +833,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005 (collection stop): the {@code List<String>} query parameter {@code tags}, whose item schema
+     * Collection stop: the {@code List<String>} query parameter {@code tags}, whose item schema
      * carries {@link #CATASTROPHIC}, sent a short first value and the 4,097-character second value, followed by
      * {@code b} (a {@code minLength} violation), an invalid body, a violating named upload, and a counting
      * file-content verifier. Exactly {@code tags}' detail: {@code b}, the body, the file part, and the verifier
@@ -888,7 +889,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005 (body stop): a body property carrying {@link #CATASTROPHIC}, sent the 4,097-character value, with a
+     * Body stop: a body property carrying {@link #CATASTROPHIC}, sent the 4,097-character value, with a
      * violating named upload and a counting file-content verifier. Exactly the body's detail: the file part and
      * the verifier are never reached. The Given: with a short value, the gate reports the upload, so it is a
      * violation the gate reports once reached.
@@ -929,7 +930,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005 (format validator): at the bound entry, with the default limits and inside one counting window,
+     * Format validator: at the bound entry, with the default limits and inside one counting window,
      * a 4,097-character string throws {@code PatternInputTooLong} (and is not counted), 64 strings of 4,096
      * characters pass (262,144, the limit), and one more character throws {@code
      * PatternInputTotalExceeded}. Both exceptions have empty stack traces and messages free of the value.
@@ -963,12 +964,12 @@ class PatternInputGuardTest {
                         "the message must not carry the value"));
     }
 
-    // --- TP-006: the per-string bound on keys ---
+    // --- the per-string bound on keys ---
 
     /**
-     * TP-006. A 4,097-character key is rejected before a {@code patternProperties} or {@code propertyNames}
-     * regex runs; a 4,096-character key reaches the key regex and keeps the unguarded verdict (ruling E1:
-     * on {@code ^a*$}, since no all-{@code a} key over 900 characters finishes against {@link
+     * A 4,097-character key is rejected before a {@code patternProperties} or {@code propertyNames}
+     * regex runs; a 4,096-character key reaches the key regex and keeps the unguarded verdict (on {@code ^a*$},
+     * since no all-{@code a} key over 900 characters finishes against {@link
      * #CATASTROPHIC}).
      *
      * @param row the row's proof
@@ -976,13 +977,13 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("overLongKeyRows")
-    @DisplayName("TP-006: an over-long key is rejected before patternProperties or propertyNames regexes run")
+    @DisplayName("an over-long key is rejected before patternProperties or propertyNames regexes run")
     void overLongKeyIsRejectedBeforeKeyRegexesRun(Executable row) throws Throwable {
         row.execute();
     }
 
     /**
-     * TP-006's rows.
+     * The rows.
      *
      * @return the rows
      */
@@ -999,12 +1000,12 @@ class PatternInputGuardTest {
                                 .put("type", "object")
                                 .put("propertyNames", new JsonObject().put("pattern", CATASTROPHIC)))),
                 Named.of(
-                        "(in bound, ruling E1) a 4,096-character key reaches the key regex with the unguarded verdict",
+                        "(in bound) a 4,096-character key reaches the key regex with the unguarded verdict",
                         PatternInputGuardTest::inBoundKeyReachesTheKeyRegex));
     }
 
     /**
-     * A TP-006 over-long row: a body object with one 4,097-character key.
+     * An over-long key row: a body object with one 4,097-character key.
      *
      * @param schema the body schema whose key regex is {@link #CATASTROPHIC}
      */
@@ -1022,7 +1023,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-006 (in bound): {@code {"type":"object","patternProperties":{"^a*$":{"type":"integer"}}}} with a
+     * In bound: {@code {"type":"object","patternProperties":{"^a*$":{"type":"integer"}}}} with a
      * 4,096-character key and a string value: no bound detail, the unguarded verdict and violations, and a
      * {@code type} violation, which only the key regex matching can produce.
      */
@@ -1042,10 +1043,10 @@ class PatternInputGuardTest {
                                 + detailTypes(outcome)));
     }
 
-    // --- TP-007: the per-request total ---
+    // --- the per-request total ---
 
     /**
-     * TP-007. The request total rejects at the crossing with one value-free {@code patternInputTotalLength}
+     * The request total rejects at the crossing with one value-free {@code patternInputTotalLength}
      * detail and no pattern evaluated after it, counts a string once per checking node, and is reset for every
      * request, including one that ended in a per-string rejection.
      *
@@ -1054,13 +1055,13 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("requestTotalRows")
-    @DisplayName("TP-007: the request total rejects at the crossing, counts every check, and resets per request")
+    @DisplayName("the request total rejects at the crossing, counts every check, and resets per request")
     void requestTotalIsBoundedPerRequest(Executable row) throws Throwable {
         row.execute();
     }
 
     /**
-     * TP-007's rows.
+     * The rows.
      *
      * @return the rows
      */
@@ -1085,7 +1086,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-007 (a): 65 strings of 4,000 {@code b} characters, which {@link #CATASTROPHIC} rejects in
+     * Case (a): 65 strings of 4,000 {@code b} characters, which {@link #CATASTROPHIC} rejects in
      * microseconds, then 35 catastrophic strings of 4,000 characters: the 66th string crosses 262,144
      * (264,000) and is rejected before its pattern runs.
      */
@@ -1105,7 +1106,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-007 (b): items checked by two pattern nodes; 32 strings of 4,096 count 262,144 (accepted), and one
+     * Case (b): items checked by two pattern nodes; 32 strings of 4,096 count 262,144 (accepted), and one
      * more {@code a} counts 262,146 (rejected with the total detail).
      */
     private static void stringCheckedTwiceCountsTwice() {
@@ -1125,7 +1126,7 @@ class PatternInputGuardTest {
         });
     }
 
-    /** TP-007 (c): two requests of 50 strings of 4,000 characters (200,000 each), on one thread. */
+    /** Case (c): two requests of 50 strings of 4,000 characters (200,000 each), on one thread. */
     private static void totalResetsBetweenRequests() {
         Handler<RoutingContext> gate = bodyGate(defaults(), patternedStrings());
         RoutingContext first =
@@ -1143,7 +1144,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-007 (d): 65 strings of 4,000 characters (260,000 counted) then one of 4,097, which the per-string
+     * Case (d): 65 strings of 4,000 characters (260,000 counted) then one of 4,097, which the per-string
      * bound rejects; then, on the same thread, a request with one string of 4,000 characters, accepted only
      * if the first request's tally did not survive it (260,000 + 4,000 would cross).
      */
@@ -1171,8 +1172,8 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-007 (e): with limits of 16 and 32, a body array whose first item is an array of strings at {@link
-     * #ALL_A} and whose second item is ruling D-1's node, {@code {"type":"string","format":["idn-hostname"]}},
+     * Case (e): with limits of 16 and 32, a body array whose first item is an array of strings at {@link
+     * #ALL_A} and whose second item is the node {@code {"type":"string","format":["idn-hostname"]}},
      * at which the engine throws {@link ClassCastException}. The first request counts one 16-character string
      * and then throws that exception, which propagates out of the gate unchanged; then, on the same thread, a
      * request with two 16-character strings (counted at exactly the total, 32) is accepted only if the first
@@ -1235,10 +1236,10 @@ class PatternInputGuardTest {
                         .assertAccepted("the request after an escaping exception, counted at exactly the total"));
     }
 
-    // --- TP-014: exactly the three bounded formats ---
+    // --- exactly the three bounded formats ---
 
     /**
-     * TP-014. Exactly {@code idn-hostname}, {@code idn-email}, and {@code regex} are bounded and counted, at
+     * Exactly {@code idn-hostname}, {@code idn-email}, and {@code regex} are bounded and counted, at
      * a bound entry evaluated before the engine's own check; every other format keeps the unguarded verdict
      * and violations and is neither bounded nor counted.
      *
@@ -1247,13 +1248,13 @@ class PatternInputGuardTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("boundedFormatRows")
-    @DisplayName("TP-014: exactly the three bounded formats are bounded and counted, before their checks run")
+    @DisplayName("exactly the three bounded formats are bounded and counted, before their checks run")
     void onlyBoundedFormatsAreBoundedAndCounted(Executable row) throws Throwable {
         row.execute();
     }
 
     /**
-     * TP-014's rows, labelled with the contract's case letters.
+     * The rows, labelled with case letters.
      *
      * @return the rows
      */
@@ -1292,11 +1293,11 @@ class PatternInputGuardTest {
                 .map(format -> Named.<Executable>of(
                         "(f) format " + format + ": 5,000 characters are neither bounded nor counted",
                         () -> unboundedFormatIsNotBounded(format)));
-        Stream<Named<Executable>> cFormats = cFormatValues().entrySet().stream()
+        Stream<Named<Executable>> reusedFormats = reusedFormatValues().entrySet().stream()
                 .map(entry -> Named.<Executable>of(
                         "(f2) format " + entry.getKey() + ": three valid values over limits of 16 and 32 are"
                                 + " neither bounded nor counted",
-                        () -> cFormatValuesAreNotCounted(entry.getKey(), entry.getValue())));
+                        () -> reusedFormatValuesAreNotCounted(entry.getKey(), entry.getValue())));
         Stream<Named<Executable>> tail = Stream.of(
                 Named.of(
                         "(g) 280,000 date-time and 280,000 iri characters are not counted",
@@ -1304,12 +1305,12 @@ class PatternInputGuardTest {
                 Named.of(
                         "(h) SLOW_IDN at idn-hostname is rejected at the bound before the engine's own check",
                         PatternInputGuardTest::boundedFormatIsRejectedBeforeItsCheck));
-        return Stream.of(boundedFormats, single, unboundedFormats, cFormats, tail)
+        return Stream.of(boundedFormats, single, unboundedFormats, reusedFormats, tail)
                 .flatMap(rows -> rows);
     }
 
     /**
-     * TP-014 (a): {@code {"type":"string","format":F}} with a 4,097-character body string.
+     * Case (a): {@code {"type":"string","format":F}} with a 4,097-character body string.
      *
      * @param format the bounded format
      */
@@ -1324,7 +1325,7 @@ class PatternInputGuardTest {
         assertValueFree(details, A_RUN);
     }
 
-    /** TP-014 (b): an {@code idn-hostname} query parameter with a 4,097-character value. */
+    /** Case (b): an {@code idn-hostname} query parameter with a 4,097-character value. */
     private static void boundedFormatQueryParameterIsRejected() {
         Handler<RoutingContext> gate = gate(
                 defaults(),
@@ -1345,7 +1346,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (c): 65 {@code items} values of 4,000 characters at a pattern (260,000) and an {@code idn-email}
+     * Case (c): 65 {@code items} values of 4,000 characters at a pattern (260,000) and an {@code idn-email}
      * {@code tail} of 4,000: the total crosses only if the bounded-format string is counted.
      */
     private static void boundedFormatStringIsCounted() {
@@ -1366,10 +1367,10 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (d): 63 {@code items} values of 4,096 characters (258,048) and a {@code both} value at a {@code
+     * Case (d): 63 {@code items} values of 4,096 characters (258,048) and a {@code both} value at a {@code
      * pattern} and a {@code regex} format, counted at both entries: 2,048 characters make 262,144 (accepted)
      * and 2,049 make 262,146 (rejected). Both {@code both} values pass the default {@code regex} check (the
-     * Given, recorded at step 3).
+     * precondition).
      */
     private static void patternAndBoundedFormatCountTwice() {
         JsonObject schema = schema("{'type':'object','properties':{'items':{'type':'array','items':{'type':'string',"
@@ -1397,7 +1398,7 @@ class PatternInputGuardTest {
         });
     }
 
-    /** TP-014 (e): {@code {"type":["string","integer"],"format":"idn-email"}} with the integer 5. */
+    /** Case (e): {@code {"type":["string","integer"],"format":"idn-email"}} with the integer 5. */
     private static void nonStringAtABoundedFormatPasses() {
         JsonObject schema = schema("{'type':['string','integer'],'format':'idn-email'}");
         assertEquals(Boolean.TRUE, unguarded(schema).validate(5).getValid(), "the unguarded compilation accepts 5");
@@ -1409,9 +1410,9 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (f): {@code {"type":"string","format":F}} with 5,000 {@code a} characters: no bound detail and
+     * Case (f): {@code {"type":"string","format":F}} with 5,000 {@code a} characters: no bound detail and
      * exactly the unguarded verdict and violations. Proves only that the format is neither bounded nor
-     * counted; its linearity rests on the security recheck's measurements (SP2-001).
+     * counted; its linearity is not asserted here.
      *
      * @param format the unbounded format
      */
@@ -1429,14 +1430,14 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (f2): with limits of 16 and 32, an array of three valid values of 40 to 64 characters at one of
-     * C-FORMAT's seven formats: no bound detail and exactly the unguarded verdict, so the format is neither
+     * Case (f2): with limits of 16 and 32, an array of three valid values of 40 to 64 characters at one of
+     * the seven reused formats: no bound detail and exactly the unguarded verdict, so the format is neither
      * bounded nor counted.
      *
-     * @param format the C-FORMAT format
-     * @param values the three valid values chosen at step 3
+     * @param format the reused format
+     * @param values the three valid values
      */
-    private static void cFormatValuesAreNotCounted(String format, List<String> values) {
+    private static void reusedFormatValuesAreNotCounted(String format, List<String> values) {
         JsonObject schema = new JsonObject().put("type", "array").put("items", formatString(format));
         JsonArray body = new JsonArray(new ArrayList<>(values));
         assertAll(
@@ -1459,12 +1460,12 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (f2)'s values, chosen at step 3 and recorded with the engine's verdict (valid): three per
+     * Case (f2)'s values, recorded with the engine's verdict (valid): three per
      * format, each 40 to 64 characters.
      *
-     * @return the values by format, in C-FORMAT's order
+     * @return the values by format, in the reused formats' order
      */
-    private static Map<String, List<String>> cFormatValues() {
+    private static Map<String, List<String>> reusedFormatValues() {
         Map<String, List<String>> values = new LinkedHashMap<>();
         values.put(
                 "uri",
@@ -1512,7 +1513,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (g): 14,000 {@code date-time} values (280,000 characters), 70 {@code iri} values of 4,000
+     * Case (g): 14,000 {@code date-time} values (280,000 characters), 70 {@code iri} values of 4,000
      * (280,000), and a patterned {@code note} of 4,000: accepted, so neither unbounded format was counted.
      */
     private static void unboundedFormatsAreNotCounted() {
@@ -1527,7 +1528,7 @@ class PatternInputGuardTest {
         assertEquals(
                 Boolean.TRUE,
                 unguarded(schema).validate(body).getValid(),
-                "the Given: the unguarded compilation accepts the body (recorded at step 3)");
+                "the Given: the unguarded compilation accepts the body");
 
         GateOutcome outcome = handle(
                 bodyGate(defaults(), schema), new GateRequest().body(body).context(), ROW_TIMEOUT);
@@ -1536,9 +1537,9 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-014 (h): {@code {"type":"string","format":"idn-hostname"}} with {@link #SLOW_IDN}, answered within
+     * Case (h): {@code {"type":"string","format":"idn-hostname"}} with {@link #SLOW_IDN}, answered within
      * {@link #SLOW_IDN_TIMEOUT} with the per-string detail: the bound entry ran before the engine's own
-     * {@code idn-hostname} check (upgrade invariant 4 through the real gate).
+     * {@code idn-hostname} check (row (iv)'s invariant, through the real gate).
      */
     private static void boundedFormatIsRejectedBeforeItsCheck() {
         RoutingContext ctx = new GateRequest().body(SLOW_IDN).context();
@@ -1552,10 +1553,10 @@ class PatternInputGuardTest {
         assertValueFree(details, A_RUN);
     }
 
-    // --- TP-015: the engine behaviors the guard relies on ---
+    // --- the engine behaviors the guard relies on ---
 
     /**
-     * TP-015. The five vertx-json-schema behaviors the guard relies on hold: (1) a node's
+     * The five vertx-json-schema behaviors the guard relies on hold: (1) a node's
      * {@code allOf} runs before its {@code pattern} and key regexes; (2) the custom format validator is
      * called for every format; (3) its exception escapes {@code validate()} unwrapped; (4) a node's
      * {@code allOf} runs before the engine's own check for the node's {@code format}; (5) a format name
@@ -1564,21 +1565,21 @@ class PatternInputGuardTest {
      * is present but not an array fails at the {@code allOf} step before its other keywords run, which is
      * why the rewrite leaves such a node without an entry; (b) {@code allOf} evaluates every branch, so an
      * appended entry runs even when an earlier branch fails. The third, (c) {@code propertyNames} marks no
-     * key evaluated, is pinned by TP-004's {@code unevaluatedProperties} row. The conversion row pins that a
-     * guard exception still produces the 400 detail when it arrives wrapped.
+     * key evaluated, is pinned by the in-bound proof's {@code unevaluatedProperties} row. The
+     * conversion row pins that a guard exception still produces the 400 detail when it arrives wrapped.
      *
      * @param row the row's proof
      * @throws Throwable when the row's assertion fails
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource({"engineBehaviorsTheGuardReliesOnHoldRows", "patternInputBoundConversionRows"})
-    @DisplayName("TP-015: the engine behaviors the guard relies on hold")
+    @DisplayName("the engine behaviors the guard relies on hold")
     void engineBehaviorsTheGuardReliesOnHold(Executable row) throws Throwable {
         row.execute();
     }
 
     /**
-     * TP-015's rows, labelled with the contract's case letters.
+     * The rows, labelled with case letters.
      *
      * @return the rows
      */
@@ -1618,7 +1619,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (i): {@code {"allOf": [{"format": "probe"}], "pattern": CATASTROPHIC}} on a catastrophic
+     * Case (i): {@code {"allOf": [{"format": "probe"}], "pattern": CATASTROPHIC}} on a catastrophic
      * string throws the recorder's sentinel itself within the timeout.
      */
     private static void allOfRunsBeforePattern() {
@@ -1642,7 +1643,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (ii): {@code {"allOf": [{"propertyNames": {"format": "probe"}}], "patternProperties":
+     * Case (ii): {@code {"allOf": [{"propertyNames": {"format": "probe"}}], "patternProperties":
      * {CATASTROPHIC: {}}}} on an object with a catastrophic key throws the recorder's sentinel itself
      * within the timeout.
      */
@@ -1668,7 +1669,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (iii): an object whose properties carry {@code date-time}, {@code email},
+     * Case (iii): an object whose properties carry {@code date-time}, {@code email},
      * {@code idn-hostname}, {@code uri}, {@code uri-reference}, {@code url}, {@code uuid} and
      * {@code x-app-format}, each with a short string: the recorder sees exactly one call per format.
      * Calls without a format (the engine calls the validator per node, passing {@code null} where the
@@ -1704,7 +1705,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (iv): {@code {"allOf": [{"format": "probe"}], "format": "uri"}} on a 5,000-character URI,
+     * Case (iv): {@code {"allOf": [{"format": "probe"}], "format": "uri"}} on a 5,000-character URI,
      * validated on a thread with a 1 MB stack, throws the recorder's sentinel and no {@link
      * StackOverflowError}: the {@code allOf} entry ran before the engine's own {@code uri} expression.
      */
@@ -1732,7 +1733,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (v): {@code {"format": "x-vertique-format-uri"}}, a name the engine does not know and for
+     * Case (v): {@code {"format": "x-vertique-format-uri"}}, a name the engine does not know and for
      * which the recorder returns normally, is valid for {@code "not a uri at all"} and for the
      * 5,000-character URI, with no {@link StackOverflowError} on a 1 MB stack, and the recorder sees one
      * call per value under that name.
@@ -1762,7 +1763,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (vi) and (vii): {@code {"allOf": <allOf>, "pattern": CATASTROPHIC}}, whose {@code allOf} is not an
+     * Cases (vi) and (vii): {@code {"allOf": <allOf>, "pattern": CATASTROPHIC}}, whose {@code allOf} is not an
      * array, on a catastrophic string throws {@code expected} within the timeout: the engine fails at the
      * node's {@code allOf} step before its {@code pattern} runs, which is why the rewrite leaves such a node
      * without an entry.
@@ -1786,7 +1787,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (viii): {@code {"allOf": [{"minLength": 99999}, {"format": "probe"}], "pattern": CATASTROPHIC}}
+     * Case (viii): {@code {"allOf": [{"minLength": 99999}, {"format": "probe"}], "pattern": CATASTROPHIC}}
      * on a catastrophic string throws the recorder's sentinel itself within the timeout: the engine evaluates
      * the second branch after the first has failed, so an appended entry runs even when an earlier branch
      * fails.
@@ -1816,7 +1817,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015's conversion row, after the engine rows.
+     * The conversion row, after the engine rows.
      *
      * @return the row
      */
@@ -1828,7 +1829,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-015 (conversion): the gate's conversion helper yields the same single {@code patternInputLength}
+     * Conversion: the gate's conversion helper yields the same single {@code patternInputLength}
      * detail for {@code PatternInputTooLong} thrown bare and as the cause of another {@link
      * RuntimeException}, and nothing for an unrelated {@link RuntimeException}.
      */
@@ -1893,7 +1894,7 @@ class PatternInputGuardTest {
         AtomicReference<OutputUnit> result = new AtomicReference<>();
         AtomicReference<Throwable> uncaught = new AtomicReference<>();
         Thread thread =
-                new Thread(null, () -> result.set(validator.validate(instance)), "tp015-1mb-stack", ONE_MEGABYTE_STACK);
+                new Thread(null, () -> result.set(validator.validate(instance)), "one-mb-stack", ONE_MEGABYTE_STACK);
         thread.setDaemon(true);
         thread.setUncaughtExceptionHandler((failed, throwable) -> uncaught.set(throwable));
         assertTimeoutPreemptively(ROW_TIMEOUT, () -> {
@@ -1948,7 +1949,7 @@ class PatternInputGuardTest {
     private static final class RecordingFormatValidator implements JsonFormatValidator {
 
         /** The exception thrown for the format {@code probe}. */
-        final RuntimeException sentinel = new RuntimeException("TP-015 probe sentinel");
+        final RuntimeException sentinel = new RuntimeException("probe sentinel");
 
         private final List<Call> calls = new CopyOnWriteArrayList<>();
 
@@ -1971,16 +1972,16 @@ class PatternInputGuardTest {
         }
     }
 
-    // --- Rewrite and preservation helpers (TP-002 to TP-004) ---
+    // --- Rewrite and preservation helpers ---
 
     /**
-     * Builds a TP-002 row whose shape gains entries.
+     * Builds a rewrite row whose shape gains entries.
      *
      * @param label     the row label
      * @param input     the input schema, as a JSON literal
      * @param expected  the expected rewritten schema, as a JSON literal
      * @param positions the number of pattern and bounded-format positions
-     * @param instances TP-004's in-bound instances of the shape
+     * @param instances the in-bound instances of the shape
      * @return the row
      */
     private static Named<Shape> shape(
@@ -1989,11 +1990,11 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Builds a TP-002 row whose shape the rewrite leaves unchanged.
+     * Builds a rewrite row whose shape the rewrite leaves unchanged.
      *
      * @param label     the row label
      * @param input     the schema, as a JSON literal
-     * @param instances TP-004's in-bound instances of the shape
+     * @param instances the in-bound instances of the shape
      * @return the row
      */
     private static Named<Shape> unchanged(String label, String input, Instance... instances) {
@@ -2001,7 +2002,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Builds a TP-004-only shape, which TP-002 does not rewrite-check.
+     * Builds a preservation-only shape, which the rewrite proof does not check.
      *
      * @param label     the row label
      * @param input     the schema, as a JSON literal
@@ -2013,7 +2014,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Builds a TP-004-only {@code {"type":"string","format":F}} shape.
+     * Builds a preservation-only {@code {"type":"string","format":F}} shape.
      *
      * @param format     the format
      * @param conforming a conforming instance, as a JSON literal
@@ -2049,7 +2050,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * An instance the baseline engine cannot judge: its validation throws.
+     * An instance the engine cannot judge: its validation throws.
      *
      * @param json the instance, as a JSON literal
      * @return the instance
@@ -2111,7 +2112,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Compiles the pre-change way, {@code Validator.create(JsonSchema.of(copy), options)} over an untouched
+     * Compiles without the guard, {@code Validator.create(JsonSchema.of(copy), options)} over an untouched
      * copy, with the gate's options and the engine's default format validator.
      *
      * @param schema the schema
@@ -2143,7 +2144,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Asserts TP-004's Given: the unguarded compilation judges the instance as the row declares.
+     * Asserts the precondition that the unguarded compilation judges the instance as the row declares.
      *
      * @param instance  the instance and its declared verdict
      * @param unguarded the unguarded judgement
@@ -2157,15 +2158,14 @@ class PatternInputGuardTest {
                 assertEquals(
                         Boolean.FALSE, unguarded.valid(), "the Given: the unguarded compilation rejects the instance");
             case UNJUDGEABLE ->
-                assertNotNull(
-                        unguarded.thrown(), "the Given: the baseline engine cannot judge any instance of the shape");
+                assertNotNull(unguarded.thrown(), "the Given: the engine cannot judge any instance of the shape");
         }
     }
 
     /**
      * Asserts two judgements are equal, reporting the first differing error.
      *
-     * @param unguarded the pre-change judgement
+     * @param unguarded the unguarded judgement
      * @param guarded   the guarded compilation's judgement
      */
     private static void assertSameJudgement(Judgement unguarded, Judgement guarded) {
@@ -2187,7 +2187,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Asserts TP-004's Given that every string and key of the instance is at most 4,096 code units and that
+     * Asserts the precondition that every string and key of the instance is at most 4,096 code units and that
      * they total under 262,144.
      *
      * @param instance the instance
@@ -2254,7 +2254,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-004's conforming and violating instances of each corpus fixture, shared by its three profile
+     * The conforming and violating instances of each corpus fixture, shared by its three profile
      * documents.
      *
      * @param fixtureName the fixture name
@@ -2285,12 +2285,12 @@ class PatternInputGuardTest {
             case "GetterOnlyMapDto" -> List.of(ok("{'labels':{'k':'v'}}"), bad("{'labels':['k']}"));
             case "NestedPrivateDateDto" ->
                 List.of(ok("{'detail':{'due':'2026-09-27'}}"), bad("{'detail':{'due':'yesterday'}}"));
-            default -> throw new IllegalStateException("no TP-004 instances for corpus fixture " + fixtureName);
+            default -> throw new IllegalStateException("no in-bound instances for corpus fixture " + fixtureName);
         };
     }
 
     /**
-     * Builds a TP-003 operation: a body and one parameter, wrapped in {@link OperationSchemas} built through
+     * Builds a shared-schema operation: a body and one parameter, wrapped in {@link OperationSchemas} built through
      * its public builder, which holds the very objects passed in.
      *
      * @param body        the body schema
@@ -2311,7 +2311,7 @@ class PatternInputGuardTest {
         return new SharedSchemas(operation, schemas, location, name, patternFree);
     }
 
-    // --- Gate helpers (TP-005 to TP-007, TP-014) ---
+    // --- Gate helpers ---
 
     /**
      * Returns the default configuration: the default limits and {@code aggregate} mode.
@@ -2437,7 +2437,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005's stop-rule operation: query parameters {@code z}, {@code a}, and {@code b} in that order, a
+     * The stop-rule operation: query parameters {@code z}, {@code a}, and {@code b} in that order, a
      * body, and a file part {@code avatar} allowing only {@code image/png}.
      *
      * @return the descriptor
@@ -2453,7 +2453,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * TP-005's stop-rule schemas: {@code z} and {@code b} at {@code minLength: 5}, {@code a} at {@link
+     * The stop-rule schemas: {@code z} and {@code b} at {@code minLength: 5}, {@code a} at {@link
      * #CATASTROPHIC}, and a body requiring {@code name}.
      *
      * @return the schemas
@@ -2530,7 +2530,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Asserts the C-BOUND per-string detail.
+     * Asserts the per-string bound detail.
      *
      * @param detail   the detail
      * @param path     the expected path: {@code ""} for the body, else the parameter name
@@ -2550,7 +2550,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * Asserts the C-BOUND per-request detail.
+     * Asserts the per-request bound detail.
      *
      * @param detail        the detail
      * @param path          the expected path: {@code ""} for the body, else the parameter name
@@ -2739,12 +2739,12 @@ class PatternInputGuardTest {
     // --- Test types ---
 
     /**
-     * One TP-002 shape.
+     * One rewrite shape.
      *
      * @param input     the input schema
-     * @param expected  the expected rewritten schema, or {@code null} for a TP-004-only shape
-     * @param positions the number of pattern and bounded-format positions, or -1 for a TP-004-only shape
-     * @param instances TP-004's in-bound instances of the shape
+     * @param expected  the expected rewritten schema, or {@code null} for a preservation-only shape
+     * @param positions the number of pattern and bounded-format positions, or -1 for a preservation-only shape
+     * @param instances the in-bound instances of the shape
      */
     private record Shape(JsonObject input, JsonObject expected, int positions, List<Instance> instances) {}
 
@@ -2773,7 +2773,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * One TP-004 row.
+     * One preservation row.
      *
      * @param schema   the schema
      * @param instance the instance
@@ -2781,7 +2781,7 @@ class PatternInputGuardTest {
     private record PreservationCase(JsonObject schema, Instance instance) {}
 
     /**
-     * One validation's result as TP-004 compares it.
+     * One validation's result as the preservation proof compares it.
      *
      * @param valid  the verdict, or {@code null} when the validation threw
      * @param errors the errors, in order
@@ -2790,7 +2790,7 @@ class PatternInputGuardTest {
     private record Judgement(Boolean valid, List<ErrorLine> errors, Class<?> thrown) {}
 
     /**
-     * One reported error, as TP-004 compares it.
+     * One reported error, as the preservation proof compares it.
      *
      * @param keywordLocation  the keyword location
      * @param instanceLocation the instance location
@@ -2824,7 +2824,7 @@ class PatternInputGuardTest {
     }
 
     /**
-     * One TP-003 operation.
+     * One shared-schema operation.
      *
      * @param operation   the descriptor
      * @param schemas     the schemas, holding the very objects checked

@@ -16,10 +16,10 @@ import jakarta.inject.Provider;
 import java.util.Set;
 
 /**
- * Hand-written module in the exact C-GEN shape for the single-proof (TP-003) compilation unit
+ * Hand-written module in the generated-module shape for the single-proof compilation unit
  * {@code unita.scoped}: a resources-only unit contributing only {@link ScopedResource}, kept apart
  * from {@code unita}'s own module so that {@link ScopedResource}'s catalog entry is included only
- * in TP-003's component (C-GEN's package-resolution rule keeps this module's name and package
+ * in the single-proof component (the generated-module package-resolution rule keeps this module's name and package
  * distinct from {@code unita}'s).
  */
 @Module
@@ -30,7 +30,7 @@ public final class GeneratedJaxRsResourcesModule {
      * zero-declaration mode only.
      *
      * @param config       the application configuration (unused; present for parameter-shape
-     *                     parity with the conditional bindings in sibling C-GEN modules)
+     *                     parity with the conditional bindings in sibling generated-shape modules)
      * @param applications the generated application registration set; a non-empty set means
      *                     explicit mode, so this binding contributes nothing
      * @param provider     lazily constructs {@link ScopedResource}

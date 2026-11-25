@@ -13,7 +13,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * TP-008's control registration module for {@link UnitTwoRenamedApi}, whose name no longer
+ * The control registration module for {@link UnitTwoRenamedApi}, whose name no longer
  * collides with {@link UnitOneApi}'s. Included only in
  * {@code DuplicateNameComponents.RenamedControlComponent}, never alongside
  * {@link UnitTwoRegistrationModule}.

@@ -20,11 +20,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Characterization tests for {@link OperationInterceptorChain}, pinning the observable behavior of
- * each public invocation mode against the CURRENT (pre-migration) implementation.
+ * each public invocation mode.
  *
- * <p>These tests constitute a behavioral net: they must be GREEN before any refactoring of the
- * production class and must remain GREEN after. A test failure after migration indicates a
- * behavior change.
+ * <p>These tests constitute a behavioral net around the production class: a failure after a
+ * refactoring indicates a behavior change.
  *
  * <p>Behaviors pinned:
  * <ol>

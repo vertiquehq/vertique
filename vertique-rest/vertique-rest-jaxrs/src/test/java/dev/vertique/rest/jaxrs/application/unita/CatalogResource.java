@@ -13,8 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Unconditional JAX-RS resource fixture, contributed by {@code unita}'s
  * {@link GeneratedJaxRsResourcesModule#catalogResourceBinding} and cataloged by
- * {@link GeneratedJaxRsResourcesModule#catalogResourceEntry}, in the C-GEN shape T002's
- * hand-written modules copy exactly. Its resource method is named after this class (PP-001):
+ * {@link GeneratedJaxRsResourcesModule#catalogResourceEntry}, in the generated-module shape that the other
+ * hand-written modules copy exactly. Its resource method is named after this class:
  * deployed together with {@link ExtraResource} and {@link DisabledResource}, every method name in
  * this fixture set is distinct.
  */

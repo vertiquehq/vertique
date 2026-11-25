@@ -9,7 +9,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (d) fixture: the base class {@link OpidInheritedFirstResource} and
+ * Operation-id conflict case (d) fixture: the base class {@link OpidInheritedFirstResource} and
  * {@link OpidInheritedSecondResource} both extend, inheriting {@link #list()} unchanged. Neither
  * subclass is ever itself instantiated as this exact type — each is a distinct, cataloged
  * resource class with its own {@code @Path} — so this class is never directly listed by an

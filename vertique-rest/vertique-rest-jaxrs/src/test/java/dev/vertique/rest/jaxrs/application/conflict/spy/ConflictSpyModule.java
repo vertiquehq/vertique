@@ -10,7 +10,7 @@ import dev.vertique.rest.core.lifecycle.RouterLifecycleHook;
 import dev.vertique.rest.core.router.RouterMount;
 
 /**
- * TP-004 (T004) fixture module: contributes {@link CountingRouterMount} and
+ * Conflict fixture module: contributes {@link CountingRouterMount} and
  * {@link CountingRouterLifecycleHook} into every {@code JaxRsApplicationMountConflictIT}
  * composition, through {@code RestCoreModule}'s existing {@code @Multibinds Set<RouterMount>} and
  * {@code Set<RouterLifecycleHook>} declarations, so both spies are available without any

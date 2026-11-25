@@ -10,7 +10,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (c) fixture: contributed manually via {@link OpidZeroDeclarationResourcesModule}
+ * Operation-id conflict case (c) fixture: contributed manually via {@link OpidZeroDeclarationResourcesModule}
  * into {@code @JaxRsResources}, so it becomes the default mount's sole resource at
  * {@code jaxrs.basePath} ({@code /api/*}) in this case's zero-declaration composition (no
  * {@code GeneratedRestApplicationRegistration} module is included at all). Its {@link #list()}

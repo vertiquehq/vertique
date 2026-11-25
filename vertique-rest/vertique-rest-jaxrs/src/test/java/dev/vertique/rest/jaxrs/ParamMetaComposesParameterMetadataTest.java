@@ -22,11 +22,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 3.1 RED tests proving that {@link ResourceMethodMeta.ParamMeta} composes the neutral
+ * Tests proving that {@link ResourceMethodMeta.ParamMeta} composes the neutral
  * {@link dev.vertique.core.codegen.ParameterMetadata} SPI (compose-not-replace) and exposes the
  * parameter's annotations through that view instead of an eager {@code Annotation[]} field.
  *
- * <p>The intended end-state is:
+ * <p>The expected shape is:
  * <ul>
  *   <li>{@code ParamMeta} exposes a {@link ParameterMetadata} view via {@code parameterMetadata()};
  *   <li>{@code ParamMeta} delegates the reflection-free accessors
@@ -36,10 +36,9 @@ import org.junit.jupiter.api.Test;
  *       the annotation array.
  * </ul>
  *
- * <p><strong>Expected RED behavior:</strong> these tests are <em>compile-RED</em> today —
- * {@code ParamMeta} has no {@code parameterMetadata()}, {@code index()}, {@code findAnnotation(...)},
- * {@code hasAnnotation(...)}, or {@code annotationsLazy()} method, and still carries the eager
- * {@code annotations()} component. They compile and pass only after the slice-3.1 migration lands.
+ * <p>The tests cover {@code parameterMetadata()}, {@code index()}, {@code findAnnotation(...)},
+ * {@code hasAnnotation(...)} and {@code annotationsLazy()}, and check that {@code ParamMeta} no
+ * longer carries the eager {@code annotations()} component.
  */
 class ParamMetaComposesParameterMetadataTest {
 

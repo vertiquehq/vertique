@@ -12,7 +12,7 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-005 (T004) case (c) fixture module: contributes zero-declaration mode's two resources —
+ * Operation-id conflict case (c) fixture module: contributes zero-declaration mode's two resources —
  * {@link OpidZeroDeclarationManualResource} into the {@code @JaxRsResources} multibinding (so it
  * becomes the default mount's sole resource), and {@link OpidZeroDeclarationOtherResource} as a
  * hand-built {@code /other/*} mount ({@link #MOUNT_PATH}), built directly through

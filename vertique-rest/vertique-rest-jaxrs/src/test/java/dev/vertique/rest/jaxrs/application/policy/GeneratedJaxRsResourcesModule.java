@@ -17,16 +17,17 @@ import jakarta.inject.Provider;
 import java.util.Set;
 
 /**
- * Hand-written module in the exact C-GEN shape for compilation unit {@code policy} (T005): a
+ * Hand-written module in the generated-module shape for compilation unit {@code policy}: a
  * resources-only unit contributing {@link UnannotatedResource}, {@link PermitAllResource},
  * {@link ScopelessRequirementResource}, {@link RequiresActionResource},
- * {@link PermitAllScopedResource}, and {@link OrderMismatchResource} — TP-002's cases (a) to (f)
- * and TP-004's zero-declaration fixture. Mirrors {@code application.unita.GeneratedJaxRsResourcesModule} (T002) exactly: every
- * resource binding first checks {@code applications.isEmpty()} (D001 — with any application
- * registration present, {@code @JaxRsResources} contributes nothing), gated by its own
+ * {@link PermitAllScopedResource}, and {@link OrderMismatchResource} — cases (a) to (f) of the
+ * explicit-mode policy classification and the zero-declaration fixture. Mirrors {@code
+ * application.unita.GeneratedJaxRsResourcesModule} exactly: every resource binding first checks
+ * {@code applications.isEmpty()} (with any application registration present,
+ * {@code @JaxRsResources} contributes nothing), gated by its own
  * {@code policy.<variant>.enabled} condition, and every resource also gets a
  * {@link GeneratedJaxRsResourceEntry} so {@code JaxRsApplicationComposer} can select it from
- * {@code policy.app}'s matching declaring interface (T023 L22: one native registration per variant,
+ * {@code policy.app}'s matching declaring interface (one native registration per variant,
  * gated on the same {@code policy.<variant>.enabled} property, in place of the removed
  * {@code jakarta.ws.rs.core.Application} subclass's config-selected shape).
  */
@@ -55,7 +56,7 @@ public final class GeneratedJaxRsResourcesModule {
 
     /**
      * Conditionally contributes {@link UnannotatedResource} to {@code @JaxRsResources} in
-     * zero-declaration mode only (TP-004), mirroring
+     * zero-declaration mode only, mirroring
      * {@code @ConditionalOnProperty(name = "policy.unannotated.enabled")}.
      *
      * @param config       the application configuration the condition is evaluated against
@@ -78,7 +79,7 @@ public final class GeneratedJaxRsResourcesModule {
     }
 
     /**
-     * Catalogs {@link UnannotatedResource} for explicit-mode selection (TP-002 (a)), {@code enabled}
+     * Catalogs {@link UnannotatedResource} for explicit-mode selection (case (a)), {@code enabled}
      * reflecting {@code policy.unannotated.enabled}.
      *
      * @param config   the application configuration the condition is evaluated against
@@ -121,7 +122,7 @@ public final class GeneratedJaxRsResourcesModule {
     }
 
     /**
-     * Catalogs {@link PermitAllResource} for explicit-mode selection (TP-002 (b)), {@code enabled}
+     * Catalogs {@link PermitAllResource} for explicit-mode selection (case (b)), {@code enabled}
      * reflecting {@code policy.permitAll.enabled}.
      *
      * @param config   the application configuration the condition is evaluated against
@@ -165,7 +166,7 @@ public final class GeneratedJaxRsResourcesModule {
     }
 
     /**
-     * Catalogs {@link ScopelessRequirementResource} for explicit-mode selection (TP-002 (c)),
+     * Catalogs {@link ScopelessRequirementResource} for explicit-mode selection (case (c)),
      * {@code enabled} reflecting {@code policy.scopeless.enabled}.
      *
      * @param config   the application configuration the condition is evaluated against
@@ -209,7 +210,7 @@ public final class GeneratedJaxRsResourcesModule {
     }
 
     /**
-     * Catalogs {@link RequiresActionResource} for explicit-mode selection (TP-002 (d)),
+     * Catalogs {@link RequiresActionResource} for explicit-mode selection (case (d)),
      * {@code enabled} reflecting {@code policy.requiresAction.enabled}.
      *
      * @param config   the application configuration the condition is evaluated against
@@ -253,7 +254,7 @@ public final class GeneratedJaxRsResourcesModule {
     }
 
     /**
-     * Catalogs {@link PermitAllScopedResource} for explicit-mode selection (TP-002 (e)),
+     * Catalogs {@link PermitAllScopedResource} for explicit-mode selection (case (e)),
      * {@code enabled} reflecting {@code policy.permitAllScoped.enabled}.
      *
      * @param config   the application configuration the condition is evaluated against
@@ -270,7 +271,7 @@ public final class GeneratedJaxRsResourcesModule {
                 provider);
     }
 
-    // --- (f) OrderMismatchResource (G2-10) ---
+    // --- (f) OrderMismatchResource ---
 
     /**
      * Conditionally contributes {@link OrderMismatchResource} to {@code @JaxRsResources} in
@@ -297,7 +298,7 @@ public final class GeneratedJaxRsResourcesModule {
     }
 
     /**
-     * Catalogs {@link OrderMismatchResource} for explicit-mode selection (TP-002 (f)), {@code
+     * Catalogs {@link OrderMismatchResource} for explicit-mode selection (case (f)), {@code
      * enabled} reflecting {@code policy.orderMismatch.enabled}.
      *
      * @param config   the application configuration the condition is evaluated against

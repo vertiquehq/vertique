@@ -11,9 +11,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T005 TP-002 case (b): a class-level {@link PermitAll} resource with no security requirement, so
- * its sole operation is declared public under C-POLICY (does not restrict callers, effective
- * policy {@code PermitAll}) rather than implicit — no FR-013 warning.
+ * Case (b): a class-level {@link PermitAll} resource with no security requirement, so
+ * its sole operation is declared public under the policy classification (does not restrict callers, effective
+ * policy {@code PermitAll}) rather than implicit — no implicit-policy warning.
  */
 @Path("/permitted")
 @PermitAll

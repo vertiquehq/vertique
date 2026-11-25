@@ -7,16 +7,16 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case22Resource;
+import dev.vertique.rest.jaxrs.application.unita.membership.HandWrittenEntryResource;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * T023 L22 restoration (TP-003 case 22): registers {@link MembershipCaseApis.UnrelatedCatalogInstanceApi},
+ * Unrelated-catalog-instance check: registers {@link MembershipCaseApis.UnrelatedCatalogInstanceApi},
  * unconditionally active. Paired, in its own dedicated Dagger component, with the hand-written
- * (not C-GEN-shaped) {@code Case22HandWrittenEntryModule}, whose catalog entry provider returns an
- * unrelated-type instance for every {@link Case22Resource} catalog resolution in that component —
+ * (not generated-module-shaped) {@code HandWrittenCatalogEntryModule}, whose catalog entry provider returns an
+ * unrelated-type instance for every {@link HandWrittenEntryResource} catalog resolution in that component —
  * never combined with {@code NullCatalogEntryModule}'s catalog entry for the same type.
  */
 @Module
@@ -38,7 +38,7 @@ public final class UnrelatedCatalogInstanceRegistrationModule {
                 MembershipCaseApis.UnrelatedCatalogInstanceApi.class,
                 "membership-unrelated-catalog-instance",
                 "/membership/unrelated-catalog-instance",
-                List.of(Case22Resource.class),
+                List.of(HandWrittenEntryResource.class),
                 false,
                 "",
                 true);

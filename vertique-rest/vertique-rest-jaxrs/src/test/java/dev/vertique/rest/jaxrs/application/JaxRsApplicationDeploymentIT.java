@@ -41,8 +41,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Proves native application composition under a real, loopback-bound {@link HttpVerticle}
- * deployment: per-instance evaluation and serving (TP-001's deployment half), the unselected-report
- * logging cadence, and TP-007, each application's gates using its own resolved contract location.
+ * deployment: per-instance evaluation and serving, the unselected-report
+ * logging cadence, and each application's gates using its own resolved contract location.
  * Built from {@link DeploymentComponents}.
  *
  * <p>The composer's logger is captured by its fully qualified name, {@link #COMPOSER_LOGGER_NAME},
@@ -144,7 +144,7 @@ public class JaxRsApplicationDeploymentIT {
     }
 
     /**
-     * TP-007 — Gates use each application's own contract location (AC-028.1, AC-029.1).
+     * Gates use each application's own contract location.
      *
      * <p>Given: {@code jaxrs.validationStrategy} {@code openapi-contract}, served by the test-source
      * pass-through strategy, which records every {@code bindToMount} location and, for each gate,
@@ -192,7 +192,7 @@ public class JaxRsApplicationDeploymentIT {
 
         OpenApiContractPassThroughStrategy strategy = component.openApiContractPassThroughStrategy();
         List<Map.Entry<String, String>> requestTimeLocations = strategy.requestTimeLocations();
-        LOG.info("TP-007 per-request locations: {}", requestTimeLocations);
+        LOG.info("per-request locations: {}", requestTimeLocations);
         assertEquals(
                 List.of(Map.entry("opA", "a.yaml"), Map.entry("opB", "global.yaml"), Map.entry("opC", "c-config.yaml")),
                 requestTimeLocations,
@@ -255,7 +255,7 @@ public class JaxRsApplicationDeploymentIT {
 
     /**
      * Bounds {@code vertx.deployVerticle(supplier, options)} against a synchronously escaping
-     * {@link Throwable} (R10).
+     * {@link Throwable}.
      *
      * @param vertx    the test's {@link Vertx} instance
      * @param supplier creates a fresh {@link Verticle} instance per deployed instance

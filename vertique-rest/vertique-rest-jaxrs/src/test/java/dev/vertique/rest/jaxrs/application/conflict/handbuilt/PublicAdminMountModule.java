@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
+ * Conflict fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}. Used by case (e): {@code unitb.PublicApi} at {@code /api/public} beside
  * this hand-built mount, which {@code unitb.PublicApi}'s {@code /api/public/*} contains — the
  * direction a one-direction-only bug (checking only whether the hand-built prefix contains the

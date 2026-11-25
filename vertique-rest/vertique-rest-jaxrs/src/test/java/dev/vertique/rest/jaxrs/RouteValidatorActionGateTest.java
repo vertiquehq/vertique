@@ -30,8 +30,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Fail-closed startup validation for the {@code @RequiresAction} action gate on JAX-RS routes
- * (Phase-3 review finding C1).
+ * Fail-closed startup validation for the {@code @RequiresAction} action gate on JAX-RS routes.
  *
  * <p>An action-only route ({@link dev.vertique.rest.core.security.SecurityPolicy.None} carrying
  * {@code @RequiresAction}) is enforced at runtime by the REST authorization pipeline
@@ -145,7 +144,7 @@ class RouteValidatorActionGateTest {
         // Engine present (registry contains the action) AND auth enforcement present (authEnabled),
         // but the core Authorizer that evaluates the action gate is absent — a non-default graph where
         // ActionRegistry and Authorizer are bound through separate optional seams. The gate would NPE
-        // and fail closed per request rather than being rejected at boot; startup must fail-closed (W2).
+        // and fail closed per request rather than being rejected at boot; startup must fail-closed.
         Optional<AuthEnforcementCapability> capability = Optional.of(AuthEnforcementCapability.INSTANCE);
 
         RouteRegistrationException ex = assertThrows(

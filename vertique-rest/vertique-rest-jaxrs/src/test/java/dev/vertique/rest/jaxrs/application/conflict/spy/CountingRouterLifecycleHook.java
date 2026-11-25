@@ -8,12 +8,11 @@ import dev.vertique.rest.core.routing.RouterSetup;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-004 (T004) spy: a {@link RouterLifecycleHook} that counts every JAX-RS router creation in a
+ * Conflict spy: a {@link RouterLifecycleHook} that counts every JAX-RS router creation in a
  * composition, using an existing extension seam so no production change is needed.
  * {@code JaxRsRouterMount.createRouter} calls {@link #beforeAuthSetup(RouterSetup)} once per
  * non-empty mount it builds, on every hook shared by the composition's
- * {@code JaxRsRouterMount.Factory} — the OQ-001 prototype's precedent for counting JAX-RS router
- * creation. Because a composition validator rejection fails {@code HttpVerticle.start} before any
+ * {@code JaxRsRouterMount.Factory}. Because a composition validator rejection fails {@code HttpVerticle.start} before any
  * mount's {@code createRouter} runs, {@link #CREATIONS} staying {@code 0} proves no JAX-RS router
  * — hand-built or application — was ever built.
  */

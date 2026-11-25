@@ -9,7 +9,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
- * T023 L28 restoration: manually contributes every {@code conflict.paths} fixture resource —
+ * Manually contributes every {@code conflict.paths} fixture resource —
  * {@link AlphaResource}, {@link BetaResource}, {@link GammaResource}, {@link DeltaResource},
  * {@link RootResource}, {@link PublicProbeResource}, and {@link PublicityProbeResource} — into
  * {@code @JaxRsResources Set<Object>} — the manual shape
@@ -17,10 +17,10 @@ import dev.vertique.rest.core.dagger.JaxRsResources;
  * {@link PathConflictApis} application has exactly one manual candidate matching its listed class.
  * Included by {@link GeneratedJaxRsResourcesModule} ({@code @Module(includes = ...)}), so every
  * component that already wires that registration module gets these bindings too, without this
- * package's Dagger components needing their own module list changed. The port left these classes
- * unbound by any catalog or manual module, so composition failed naming the unbound class before
- * TP-016's path-conflict rule (case 4's control) or the deliberate conflict (case (f)'s active
- * {@code RootApi}) was ever reached (AC-024.2).
+ * package's Dagger components needing their own module list changed. Without it, these classes
+ * would be unbound by any catalog or manual module, so composition would fail naming the unbound class before
+ * the path-conflict rule (the control) or the deliberate conflict (the active
+ * {@code RootApi}) was ever reached.
  */
 @Module
 public final class PathConflictResourcesModule {

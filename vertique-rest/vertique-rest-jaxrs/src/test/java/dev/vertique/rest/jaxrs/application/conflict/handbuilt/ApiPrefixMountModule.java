@@ -11,9 +11,9 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
+ * Conflict fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}, built directly through {@link JaxRsRouterMount.Factory#create}, the way an
- * application never built through the declared-application composer would (C-CONFLICT). Used by
+ * application never built through the declared-application composer would. Used by
  * case (a): {@code unitb.ManagementApi} at {@code /api/mgmt} beside this hand-built
  * {@code /api/*} mount, a conflicting pair because {@code /api/} is a prefix of {@code /api/mgmt/}.
  */

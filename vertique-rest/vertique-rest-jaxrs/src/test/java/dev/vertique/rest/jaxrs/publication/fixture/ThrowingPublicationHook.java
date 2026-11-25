@@ -12,7 +12,7 @@ import java.util.List;
 /**
  * Test {@link MountPublicationHook} that throws a configured {@link RuntimeException} from
  * {@link #mountBuilt} for one configured mount path and records every other mount's publication
- * (T006 TP-006, a hook exception fails the enclosing mount's {@code createRouter}).
+ * (a hook exception fails the enclosing mount's {@code createRouter}).
  */
 public final class ThrowingPublicationHook implements MountPublicationHook {
 

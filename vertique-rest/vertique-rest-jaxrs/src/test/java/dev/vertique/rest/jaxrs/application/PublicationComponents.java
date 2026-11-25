@@ -42,9 +42,9 @@ import java.util.Set;
 /**
  * Dagger components for {@link OperationPublicationDeploymentIT}: composition (a) (zero
  * declarations: the default legacy mount, a hand-built {@code /api/mgmt/*} mount, a hand-built
- * empty {@code /api/empty/*} mount, and one non-JAX-RS mount) and composition (b) (T023's ported
+ * empty {@code /api/empty/*} mount, and one non-JAX-RS mount) and composition (b) (the
  * {@code unitb} applications, exactly the module set {@link DeploymentComponents.StandardComponent}
- * uses), each built several ways for TP-001, TP-006, and TP-007 by swapping in one of the small
+ * uses), each built several ways for the event-recording, hook-failure, and unchanged-behavior checks by swapping in one of the small
  * nested hook/strategy modules below.
  */
 public final class PublicationComponents {
@@ -97,7 +97,7 @@ public final class PublicationComponents {
     }
 
     /**
-     * TP-006(b)'s variant of {@link HandBuiltMountsModule}: the {@code /api/mgmt/*} resource set
+     * The duplicate-operationId variant of {@link HandBuiltMountsModule}: the {@code /api/mgmt/*} resource set
      * also contains {@link DuplicateOperationIdResource}, which shares {@link MgmtResource#echo()}'s
      * operation id.
      */
@@ -128,7 +128,7 @@ public final class PublicationComponents {
 
     /**
      * Composition (a)'s one non-JAX-RS {@link RouterMount}: two fixed-body {@code GET} endpoints,
-     * used by TP-007's "success on every mount" requests.
+     * used by the "success on every mount" requests.
      */
     private static final class PlainRouterMount implements RouterMount {
 
@@ -153,10 +153,10 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Nested modules: TP-001's event-recording fixtures ---
+    // --- Nested modules: event-recording fixtures ---
 
     /**
-     * TP-001's recording hook, counting {@link RouterLifecycleHook}, and counting
+     * The recording hook, counting {@link RouterLifecycleHook}, and counting
      * {@link MountCustomizer}, all sharing one {@link PublicationEventRecorder}.
      */
     @Module
@@ -194,9 +194,9 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Nested modules: TP-006's hooks and counting customizer ---
+    // --- Nested modules: failing hooks and counting customizer ---
 
-    /** TP-006(a)'s hook: throws for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
+    /** The throwing hook: throws for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
     @Module
     static final class ThrowingPublicationHookModule {
 
@@ -213,7 +213,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-006(c)'s hook: fails its future for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
+    /** The failing-future hook: fails its future for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
     @Module
     static final class FailingFuturePublicationHookModule {
 
@@ -230,7 +230,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-006's counting {@link MountCustomizer}. */
+    /** The counting {@link MountCustomizer}. */
     @Module
     static final class MountPathCustomizerModule {
 
@@ -247,7 +247,7 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Nested modules: plain recording hooks (TP-006(b) guard, TP-007) ---
+    // --- Nested modules: plain recording hooks (duplicate-operationId guard, unchanged-behavior builds) ---
 
     /** A {@link RecordingPublicationHook} that never wants detail. */
     @Module
@@ -283,11 +283,11 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Nested module: TP-007's counting schema source and recording strategy ---
+    // --- Nested module: counting schema source and recording strategy ---
 
     /**
-     * TP-007's counting {@link OperationSchemaSource} (schema content is irrelevant to TP-007,
-     * which compares only call counts and response tables) and the {@link RecordingValidationStrategy}
+     * The counting {@link OperationSchemaSource} (schema content is irrelevant here,
+     * since the test compares only call counts and response tables) and the {@link RecordingValidationStrategy}
      * selected by {@code jaxrs.validationStrategy=recording-strategy}.
      */
     @Module
@@ -318,9 +318,9 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Components: TP-001 ---
+    // --- Components: event recording ---
 
-    /** TP-001 composition (a): zero declarations, plus the event-recording fixtures. */
+    /** Event-recording composition (a): zero declarations, plus the event-recording fixtures. */
     @Singleton
     @Component(
             modules = {
@@ -362,7 +362,7 @@ public final class PublicationComponents {
     }
 
     /**
-     * TP-001 composition (b): the same module set {@link DeploymentComponents.StandardComponent}
+     * Event-recording composition (b): the same module set {@link DeploymentComponents.StandardComponent}
      * uses, plus the event-recording fixtures.
      */
     @Singleton
@@ -406,9 +406,9 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Components: TP-006 ---
+    // --- Components: hook failures ---
 
-    /** TP-006(a): composition (a) with a hook that throws for the mgmt mount. */
+    /** Throwing hook: composition (a) with a hook that throws for the mgmt mount. */
     @Singleton
     @Component(
             modules = {
@@ -453,7 +453,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-006(b) guard: composition (a) with a duplicate operationId on the mgmt mount. */
+    /** Duplicate-operationId guard: composition (a) with a duplicate operationId on the mgmt mount. */
     @Singleton
     @Component(
             modules = {
@@ -488,7 +488,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-006(c): composition (a) with a hook whose future fails for the mgmt mount. */
+    /** Failing-future hook: composition (a) with a hook whose future fails for the mgmt mount. */
     @Singleton
     @Component(
             modules = {
@@ -533,9 +533,9 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Components: TP-007 ---
+    // --- Components: unchanged behavior ---
 
-    /** TP-007 build 1: composition (a) with the {@code @Multibinds} hook set empty. */
+    /** Unchanged-behavior build 1: composition (a) with the {@code @Multibinds} hook set empty. */
     @Singleton
     @Component(
             modules = {
@@ -569,7 +569,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-007 build 2: composition (a) with a hook that wants no detail. */
+    /** Unchanged-behavior build 2: composition (a) with a hook that wants no detail. */
     @Singleton
     @Component(
             modules = {
@@ -604,7 +604,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-007 build 3: composition (a) with a hook that wants detail for every mount. */
+    /** Unchanged-behavior build 3: composition (a) with a hook that wants detail for every mount. */
     @Singleton
     @Component(
             modules = {

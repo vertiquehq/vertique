@@ -13,7 +13,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * TP-008's registration module for {@link UnitTwoApi}, the second simulated compilation unit,
+ * The registration module for {@link UnitTwoApi}, the second simulated compilation unit,
  * which registers the same name {@code api} as {@link UnitOneApi}. Included only in
  * {@code DuplicateNameComponents.DuplicateNameComponent}, never alongside
  * {@link UnitTwoRenamedRegistrationModule}.

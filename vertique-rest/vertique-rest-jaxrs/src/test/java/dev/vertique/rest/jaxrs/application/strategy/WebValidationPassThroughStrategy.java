@@ -12,7 +12,7 @@ import java.util.Optional;
 
 /**
  * Test-source pass-through strategy carrying the built-in {@code "web-validation"} id, so
- * TP-009's and TP-010's rows can select it through {@code jaxrs.validationStrategy} without
+ * tests can select it through {@code jaxrs.validationStrategy} without
  * requiring the real vertx-json-schema strategy. Installs no gate for any operation and reports
  * {@code resolvesOperationsFromMountContract()} {@code false} (the interface default): the
  * validator's location parse never runs under this strategy.

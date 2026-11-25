@@ -8,7 +8,7 @@ import dev.vertique.rest.core.router.MountMeta;
 import io.vertx.ext.web.Router;
 
 /**
- * T006 TP-001's {@link MountCustomizer}: forwards every {@code customize} call to a shared
+ * {@link MountCustomizer} that forwards every {@code customize} call to a shared
  * {@link PublicationEventRecorder}, finalizing that mount's event group.
  */
 public final class PublicationEventRecordingCustomizer implements MountCustomizer {

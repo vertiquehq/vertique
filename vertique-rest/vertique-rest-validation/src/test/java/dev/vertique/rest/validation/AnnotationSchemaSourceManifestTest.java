@@ -46,7 +46,7 @@ import org.junit.jupiter.api.TestFactory;
 
 /**
  * Proves that {@link AnnotationSchemaSource} attaches the {@code vertique-json-schema} generator's
- * {@link RedactionManifest} to every body schema it produces (C-CARRIER, FR-014, AC-014.3), that the
+ * {@link RedactionManifest} to every body schema it produces, that the
  * attached manifest still matches the body after every {@link JsonObject} round trip and the
  * {@code ##default} sentinel strip, and that a source which replaces or edits the body — including a
  * decorator using {@link OperationSchemas#toBuilder()} or the one-argument builder form — carries no
@@ -54,7 +54,7 @@ import org.junit.jupiter.api.TestFactory;
  */
 class AnnotationSchemaSourceManifestTest {
 
-    // --- Shared fixtures (TP-002 to TP-004) ---
+    // --- shared fixtures ---
 
     /**
      * Case-sensitively bound, with a published member and a hidden member that is therefore reserved,
@@ -159,7 +159,7 @@ class AnnotationSchemaSourceManifestTest {
         return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
-    // --- TP-002 ---
+    // --- every body schema carries the manifest ---
 
     @TestFactory
     @DisplayName("Each body schema carries the generator's manifest")
@@ -220,7 +220,7 @@ class AnnotationSchemaSourceManifestTest {
                         }));
     }
 
-    // --- TP-003 ---
+    // --- the manifest survives round trips ---
 
     /**
      * Runs {@code source.schemasFor(op, profile)} and asserts the body's manifest matches every
@@ -285,7 +285,7 @@ class AnnotationSchemaSourceManifestTest {
         return Stream.concat(Stream.concat(corpusCases, numberBodyCases), Stream.of(sentinelStripCase));
     }
 
-    // --- TP-004 ---
+    // --- replaced or edited bodies lose the match ---
 
     @TestFactory
     @DisplayName("A replaced, edited, or unbound body no longer matches a manifest")

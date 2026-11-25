@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-005 (T004) case (e) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
+ * Operation-id conflict case (e) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}, built directly through {@link JaxRsRouterMount.Factory#create}. Non-
  * conflicting with {@link OpidHandBuiltTwoMountModule}'s mount.
  */
