@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -1182,7 +1183,8 @@ public class AnnotationDrivenRoutingIT {
                 RestConfigurationException.class,
                 () -> mount.createRouter(vertx),
                 "selecting an unregistered strategy id must fail fast");
-        assertTrue(ex.getMessage().contains("does-not-exist"));
+        assertTrue(ex.getMessage().contains("jaxrs.validationStrategy"), "message must name the setting");
+        assertFalse(ex.getMessage().contains("does-not-exist"), "message must not echo the configured id");
         ctx.completeNow();
     }
 
