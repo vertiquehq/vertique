@@ -18,7 +18,7 @@ import java.util.Objects;
 /** Framework wiring for {@link McpSchemaHardeningDifferentialTest}: committed corpus loading only. */
 final class McpSchemaHardeningDifferentialTestFixture {
 
-    private static final String CORPUS_RESOURCE = "/mcp/schema/differential-corpus/json005-golden.jsonl";
+    private static final String CORPUS_RESOURCE = "/mcp/schema/differential-corpus/canonical-golden.jsonl";
 
     private static final ObjectMapper LINE_MAPPER = new ObjectMapper();
 
@@ -57,7 +57,7 @@ final class McpSchemaHardeningDifferentialTestFixture {
      * One committed input/expected-bytes pair.
      *
      * @param name the entry's descriptive name
-     * @param input the JSON-005 canonical document text
+     * @param input the generator-produced canonical document text
      * @param expected the committed expected canonical bytes, as a string
      */
     record CorpusEntry(String name, String input, String expected) {}

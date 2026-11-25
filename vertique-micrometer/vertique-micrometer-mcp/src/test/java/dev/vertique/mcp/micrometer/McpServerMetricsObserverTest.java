@@ -38,7 +38,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T021 Micrometer MCP observer contract: the frozen request timer,
+ * Exercises the Micrometer MCP observer contract: the frozen request timer,
  * active gauge, validation-failures counter, and tool-call timer, with bounded low-cardinality
  * dimensions and no payload, identity, or trace-id label.
  *
@@ -75,14 +75,14 @@ class McpServerMetricsObserverTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
-    @DisplayName("T021 observer matrix: every outcome, bounded dimensions, no identity/trace tags, symmetric gauge")
-    void shouldEnforceT021ContractMatrix(String row) {
+    @DisplayName("observer matrix: every outcome, bounded dimensions, no identity/trace tags, symmetric gauge")
+    void shouldEnforceObserverContractMatrix(String row) {
         switch (row) {
             case EVERY_OUTCOME_ROW -> shouldRecordEveryTerminalOutcome();
             case DIMENSIONS_BOUNDED_ROW -> shouldKeepDimensionsBounded();
             case NO_IDENTITY_ROW -> shouldNeverTagPayloadIdentityOrTraceIds();
             case ACTIVE_GAUGE_ROW -> shouldTrackTheActiveRequestGaugeSymmetrically();
-            default -> fail("unknown T021 observer row: " + row);
+            default -> fail("unknown observer row: " + row);
         }
     }
 
@@ -106,7 +106,7 @@ class McpServerMetricsObserverTest {
         openAndComplete(observer, failedEvent, McpRequestCompletedEvent.reset(failedEvent, COMPLETED_AT, false));
         openAndComplete(observer, cancelled, McpRequestCompletedEvent.writeFailed(cancelled, COMPLETED_AT, false));
 
-        // Given (FR-MCP-203): a successful non-tool request whose recognized method class is
+        // Given: a successful non-tool request whose recognized method class is
         // McpMethod.OTHER — the unrecognized-client-method case the `_OTHER` remap exists for.
         McpRequestTerminalEvent otherMethod = McpRequestTerminalEvent.success(
                 STARTED_AT,
@@ -174,7 +174,7 @@ class McpServerMetricsObserverTest {
                         McpServerMetricsObserver.TAG_TRANSPORT_OUTCOME, "WRITE_FAILED"),
                 1);
 
-        // DECISIVE (FR-MCP-203): an unrecognized client-provided method must be tagged with the
+        // DECISIVE: an unrecognized client-provided method must be tagged with the
         // bounded `_OTHER` literal, never the raw McpMethod.OTHER enum name or a client string.
         assertExactTimer(
                 registry,

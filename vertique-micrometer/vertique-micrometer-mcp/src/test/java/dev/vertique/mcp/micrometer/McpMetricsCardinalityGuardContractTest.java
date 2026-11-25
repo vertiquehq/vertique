@@ -24,10 +24,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Repair R06 (issue #430): {@code vertique-micrometer-core}'s {@link CardinalityGuard#GUARDED_TAG_KEYS}
- * froze {@code method}, {@code outcome}, and {@code error.type} — carried over from earlier adapter
- * phases — but never gained {@link McpServerMetricsObserver}'s own {@code tool}, {@code result.type},
- * or {@code transport.outcome}. Today's only defence for those three is structural bounding at the
+ * {@code vertique-micrometer-core}'s {@link CardinalityGuard#GUARDED_TAG_KEYS} must cover every
+ * tag key the MCP observer emits, not just {@code method}, {@code outcome}, and {@code error.type}:
+ * it also has to include {@link McpServerMetricsObserver}'s own {@code tool}, {@code result.type},
+ * and {@code transport.outcome}. The only other defence for those three is structural bounding at the
  * source ({@link McpRequestTerminalEvent}'s compact constructor); a future producer that bypasses that
  * bound would reach the registry with no cardinality guard at all.
  *
@@ -91,8 +91,9 @@ class McpMetricsCardinalityGuardContractTest {
             }
         }
 
-        // Sanity: the fixture must actually exercise every frozen MCP tag key, including the three
-        // issue #430 names — a derivation that trivially finds nothing would prove nothing.
+        // Sanity: the fixture must actually exercise every frozen MCP tag key, including the
+        // tool, result.type and transport.outcome names — a derivation that trivially finds nothing
+        // would prove nothing.
         assertThat(emittedKeys)
                 .as("fixture must exercise every frozen MCP tag key so the derivation is non-vacuous")
                 .containsExactlyInAnyOrder(
@@ -108,8 +109,8 @@ class McpMetricsCardinalityGuardContractTest {
         List<String> guardedTagKeys = readGuardedTagKeys();
 
         // Then (DECISIVE): every key the adapter actually emitted must be in the guarded union. This
-        // fails the moment an emitted key is unguarded, whether that gap is one of today's three or a
-        // dimension added later and left off this list.
+        // fails the moment an emitted key is unguarded, whether that gap is one of the three
+        // observer-specific keys or a dimension added later and left off this list.
         assertThat(guardedTagKeys)
                 .as("DECISIVE: CardinalityGuard.GUARDED_TAG_KEYS must cover every key the MCP adapter emits")
                 .containsAll(emittedKeys);
@@ -121,8 +122,7 @@ class McpMetricsCardinalityGuardContractTest {
      * <p>{@code vertique-micrometer-core} has no dependency on {@code vertique-micrometer-mcp} (the
      * compile dependency runs the other way), so this module cannot import the package-private field.
      * Reflection reaches the real field on the classpath instead of maintaining a second, hand-typed
-     * copy of its contents that could silently drift the moment either list changed alone — which is
-     * exactly how issue #430 happened.
+     * copy of its contents that could silently drift the moment either list changed alone.
      *
      * @return the frozen guarded-tag-key list, read live from {@link CardinalityGuard}
      * @throws ReflectiveOperationException if the field cannot be located or read — a signal the

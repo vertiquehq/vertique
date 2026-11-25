@@ -40,10 +40,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-003 — the frozen T002 contract matrix for effective JSON profile binding.
+ * The frozen contract matrix for effective JSON profile binding.
  *
  * <p>Profiles {@code type}, {@code method}, {@code mcp-default}, {@code global-default}, the
- * reserved {@code vertx}, and {@code vertique} (the final fallback, issue #440) are registered (plus
+ * reserved {@code vertx}, and {@code vertique} (the final fallback) are registered (plus
  * {@code strict}, the registered control the sensitivity proof swaps in for the unknown {@code
  * missing} id). Each row composes the resolver once and captures the effective profile or the
  * startup failure.
@@ -52,11 +52,11 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <ol>
  *   <li>{@link #shouldResolveMethodTypeBoundaryGlobalAndVertxPrecedenceOnceAtComposition()} — the
- *       five-tier precedence method → type → MCP boundary → global → {@code vertique} (issue #440).
+ *       five-tier precedence method → type → MCP boundary → global → {@code vertique}.
  *       The annotation
  *       processor collapses the method-over-type selection into the one nullable declared literal
- *       this resolver receives (TP-001 row {@code shouldResolveMethodJsonProfileOverTypeAndRejectBlankValues}
- *       proves that half at compile time), so the row feeds the exact literal each tier emits.</li>
+ *       this resolver receives (the {@code shouldResolveMethodJsonProfileOverTypeAndRejectBlankValues}
+ *       row proves that half at compile time), so the row feeds the exact literal each tier emits.</li>
  *   <li>{@link #shouldFailUnknownAnnotationSelectedProfileBeforeMount()} — an unknown annotation-selected
  *       id fails composition before any mount, and a blank id cannot even be constructed.</li>
  *   <li>{@link #shouldGenerateSchemaWithAndRetainTheSameEffectiveProfileMapper()} — resolution happens
@@ -64,7 +64,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       profile-aware schema generator is constructed from.</li>
  * </ol>
  */
-@DisplayName("MCP JSON profile binding — T002 contract matrix")
+@DisplayName("MCP JSON profile binding — contract matrix")
 class McpJsonProfileBindingTest {
 
     // --- Frozen fixture identities ---
@@ -75,11 +75,11 @@ class McpJsonProfileBindingTest {
     // --- Matrix ---
 
     /**
-     * The three named rows of the T002 profile-binding matrix.
+     * The three named rows of the profile-binding matrix.
      *
      * @return one row per boundary, named exactly as the proof contract lists it
      */
-    static Stream<MatrixRow> t002ContractMatrix() {
+    static Stream<MatrixRow> contractMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldResolveMethodTypeBoundaryGlobalAndVertxPrecedenceOnceAtComposition",
@@ -94,9 +94,9 @@ class McpJsonProfileBindingTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t002ContractMatrix")
-    @DisplayName("enforces the T002 contract matrix")
-    void shouldEnforceT002ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("contractMatrix")
+    @DisplayName("enforces the contract matrix")
+    void shouldEnforceContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
@@ -106,7 +106,7 @@ class McpJsonProfileBindingTest {
      * Each tier resolves to its exact profile id, and a lower tier never shadows a higher one: a
      * declared id wins over both configured defaults, the MCP boundary default wins over the global
      * one, and {@code vertique} — never the reserved {@code vertx} profile, which cannot materialize
-     * an {@code Optional<T>} tool argument (issue #440) — is the tail.
+     * an {@code Optional<T>} tool argument — is the tail.
      */
     private static void shouldResolveMethodTypeBoundaryGlobalAndVertxPrecedenceOnceAtComposition() {
         McpJsonProfileResolver bothDefaultsConfigured =
@@ -127,7 +127,7 @@ class McpJsonProfileBindingTest {
                 .as("the global default applies when the MCP boundary declares none")
                 .isEqualTo(JsonProfileId.of("global-default"));
         assertThat(globalDefaultOnly.resolve(null).id())
-                .as("issue #440 scoping (DECISIVE): an application that sets json.jsonProfile must get "
+                .as("scoping (DECISIVE): an application that sets json.jsonProfile must get "
                         + "its own configured profile, never the vertique fallback — the fallback must never "
                         + "outrank an explicit global choice")
                 .isNotEqualTo(JsonProfileId.of("vertique"));
@@ -139,7 +139,7 @@ class McpJsonProfileBindingTest {
 
         McpJsonProfileResolver noDefaults = McpJsonProfileBindingTestFixture.resolver(null, null);
         assertThat(noDefaults.resolve(null).id())
-                .as("issue #440: the vertique profile is the tail, never the reserved vertx profile")
+                .as("the vertique profile is the tail, never the reserved vertx profile")
                 .isEqualTo(JsonProfileId.of("vertique"));
     }
 
@@ -214,14 +214,14 @@ class McpJsonProfileBindingTest {
         return destination.toString(StandardCharsets.UTF_8);
     }
 
-    // --- TP-001 (T014): MCP default equals JsonConfig.effectiveProfile() ---
+    // --- MCP default equals JsonConfig.effectiveProfile() ---
 
     /**
-     * TP-001 — with {@code mcp.jsonProfile} unset and no per-tool declaration, the configured tail
+     * With {@code mcp.jsonProfile} unset and no per-tool declaration, the configured tail
      * must equal {@link JsonConfig#effectiveProfile()} for the shared authority, not a
      * resolver-private literal. Two rows isolate the floor ({@code vertique}) and a global override
      * ({@code system}); the {@code system} row is decisive against a hard-coded {@code vertique}
-     * fallback (evidence T014.md &sect; L00).
+     * fallback.
      */
     @Test
     @DisplayName("MCP default equals JsonConfig.effectiveProfile()")
@@ -231,7 +231,7 @@ class McpJsonProfileBindingTest {
     }
 
     /**
-     * One row of the TP-001 matrix: builds the resolver with {@code mcp.jsonProfile} unset and the
+     * One row of the matrix: builds the resolver with {@code mcp.jsonProfile} unset and the
      * given {@link JsonConfig}, resolves a tool with no {@code @JsonProfile}, and asserts the
      * selected id equals both {@link JsonConfig#effectiveProfile()} and the literal expected id, so
      * the row cannot pass vacuously against a resolver returning some other constant id.
@@ -256,9 +256,9 @@ class McpJsonProfileBindingTest {
     }
 
     /**
-     * Structural check (T014): once the resolver delegates to {@link JsonConfig#effectiveProfile()},
-     * no private {@code vertique} literal or {@code VERTIQUE_FALLBACK} constant may remain in the
-     * resolver source. Expected RED at baseline (mirrors {@code
+     * Structural check: since the resolver delegates to {@link JsonConfig#effectiveProfile()}, no
+     * private {@code vertique} literal or {@code VERTIQUE_FALLBACK} constant may remain in the
+     * resolver source (mirrors {@code
      * RestClientMapperPrecedenceTest#restClientBuilderSource_hasNoDatabindCodecToken}).
      */
     @Test
@@ -279,7 +279,7 @@ class McpJsonProfileBindingTest {
         String contents = Files.readString(source);
 
         assertThat(contents)
-                .as("McpJsonProfileResolver.java must not hard-code the vertique fallback once it delegates to"
+                .as("McpJsonProfileResolver.java must not hard-code the vertique fallback since it delegates to"
                         + " JsonConfig.effectiveProfile()")
                 .doesNotContain("JsonProfileId.of(\"vertique\")")
                 .doesNotContain("VERTIQUE_FALLBACK");

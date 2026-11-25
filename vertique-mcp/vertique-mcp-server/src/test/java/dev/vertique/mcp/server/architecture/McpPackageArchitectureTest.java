@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 /**
- * Guards the role-based package layout of both open-core MCP modules (T006, TP-003).
+ * Guards the role-based package layout of both open-core MCP modules.
  *
  * <p>MCP packages name a role, never a visibility tier, so no package may carry an {@code internal}
  * or {@code impl} segment. The recorded-package half of this rule lives in each module's own

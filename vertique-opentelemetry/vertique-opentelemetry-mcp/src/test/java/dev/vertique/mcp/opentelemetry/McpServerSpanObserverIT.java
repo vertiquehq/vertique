@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T022 TP-002 — proves the observer against a real Vert.x HTTP server with the Vert.x OpenTelemetry
+ * Proves the observer against a real Vert.x HTTP server with the Vert.x OpenTelemetry
  * tracing provider installed: exactly one server span is exported for one authenticated {@code
  * tools/call} carrying a W3C {@code traceparent}, it carries the bounded MCP attributes, and no
  * MCP-created child span exists.
@@ -46,7 +46,7 @@ class McpServerSpanObserverIT {
     private static final String PROTOCOL_VERSION = "2026-07-28";
     private static final String SSE_PREFIX = "event: message\ndata: ";
 
-    // --- R39 fixture values: HTTP-header trace identity vs. body _meta trace identity ---
+    // --- Fixture values: HTTP-header trace identity vs. body _meta trace identity ---
 
     /** The RFC-example trace/span id pair carried on the HTTP {@code traceparent} header. */
     private static final String HTTP_TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -139,15 +139,13 @@ class McpServerSpanObserverIT {
                 .isEqualTo(McpServerSpanObserverITFixture.TOOL_NAME);
     }
 
-    // --- R39: the body trace-context producer, resolved extraction key ---
+    // --- The body trace-context producer and its extraction key ---
     //
-    // The frozen contract (protocol-and-server-configuration.md §4.9 tracing bullet) fixes only the
-    // policy — "HTTP traceparent is the sole parent; a valid distinct body trace reference becomes an
-    // OTel link" — never the exact body key. R39's own task file defers the key resolution to the
-    // implementer, reading T022's malformed-data rows and this observer's expectations. Resolved here
-    // (recorded in evidence/module.md by the producer slice that follows): the JSON-RPC request's
-    // params._meta` carries plain, unprefixed `traceparent`/`tracestate` string keys, mirroring the W3C
-    // HTTP header names verbatim — deliberately *not* namespaced under the reserved
+    // The contract fixes only the policy — "HTTP traceparent is the sole parent; a valid distinct
+    // body trace reference becomes an OTel link" — not the exact body key. The key is resolved as
+    // follows: the JSON-RPC request's `params._meta` carries plain, unprefixed
+    // `traceparent`/`tracestate` string keys, mirroring the W3C HTTP header names verbatim —
+    // deliberately *not* namespaced under the reserved
     // `io.modelcontextprotocol/` prefix this same `_meta` object already uses for
     // `protocolVersion`/`clientCapabilities`, since W3C trace propagation is a Vertique-owned extension,
     // not an official MCP protocol field. `traceparent`'s value is the ordinary W3C wire format
@@ -155,8 +153,7 @@ class McpServerSpanObserverIT {
     // ordinary W3C tracestate string, bounded by `TraceReference`'s own bounds constants.
 
     @Test
-    @DisplayName("R39: a body _meta traceparent distinct from the HTTP header becomes exactly one span link "
-            + "(RED today — producer missing)")
+    @DisplayName("a body _meta traceparent distinct from the HTTP header becomes exactly one span link")
     void shouldAddOneLinkForABodyTraceReferenceDistinctFromTheHttpHeader() throws Exception {
         // Given: a port-0 MCP server, and one authenticated tool call whose HTTP traceparent header and
         // body `_meta.traceparent` carry two distinct, individually valid W3C trace references.
@@ -198,10 +195,10 @@ class McpServerSpanObserverIT {
         assertThat(linkContext.getSpanId()).isEqualTo(BODY_SPAN_ID);
     }
 
-    // --- R51: the default McpBodyTracePolicy.IGNORE never extracts or links the body reference ---
+    // --- The default McpBodyTracePolicy.IGNORE never extracts or links the body reference ---
 
     @Test
-    @DisplayName("R51: under the default mcp.bodyTracePolicy=IGNORE, a valid distinct body traceparent "
+    @DisplayName("under the default mcp.bodyTracePolicy=IGNORE, a valid distinct body traceparent "
             + "produces no link and no extraction side effect")
     void shouldAddNoLinkAndNoExtractionUnderTheDefaultIgnorePolicy() throws Exception {
         // Given: a port-0 MCP server started WITHOUT the LINK opt-in — i.e. McpServerConfig's own
@@ -234,18 +231,17 @@ class McpServerSpanObserverIT {
                 .isEmpty();
 
         // Then: every other enrichment attribute still lands — IGNORE only suppresses the body-trace
-        // extraction/link, never the rest of T022 enrichment. This fixture wires no log-capturing test
+        // extraction/link, never the rest of the enrichment. This fixture wires no log-capturing test
         // appender (mirroring shouldSucceedWithNoLinkForMalformedBodyTraceparentSyntax's own admission
         // above), so "no extraction cost" is not independently observable here beyond "no link
         // resulted"; that absence is this test's decisive, fixture-observable proof.
         assertThat(mcpAttributeCount(serverSpan))
-                .as("the rest of T022 enrichment must still happen under the default policy")
+                .as("the rest of the enrichment must still happen under the default policy")
                 .isEqualTo(5);
     }
 
     @Test
-    @DisplayName("R39 control: a body _meta traceparent identical to the HTTP header adds no link (green "
-            + "both before and after the producer fix)")
+    @DisplayName("control: a body _meta traceparent identical to the HTTP header adds no link")
     void shouldAddNoLinkForABodyTraceReferenceIdenticalToTheHttpHeader() throws Exception {
         // Given: the body `_meta.traceparent` carries the exact same trace/span id pair as the HTTP
         // traceparent header — a self-reference, not a genuine cross-boundary correlation.
@@ -263,14 +259,12 @@ class McpServerSpanObserverIT {
         List<SpanData> spans = exporter.getFinishedSpanItems();
         assertThat(spans).hasSize(1);
         assertThat(spans.get(0).getLinks())
-                .as("DECISIVE: a body trace reference identical to the HTTP context is a self-reference — "
-                        + "no link, today and after the fix")
+                .as("DECISIVE: a body trace reference identical to the HTTP context is a self-reference — " + "no link")
                 .isEmpty();
     }
 
     @Test
-    @DisplayName("R39 bounds: malformed body traceparent syntax never links and never fails the request "
-            + "(trivially green today — the real bounds proof starts once the producer extracts it)")
+    @DisplayName("bounds: malformed body traceparent syntax never links and never fails the request")
     void shouldSucceedWithNoLinkForMalformedBodyTraceparentSyntax() throws Exception {
         // Given: a body `_meta.traceparent` that is not well-formed W3C traceparent syntax at all.
         started = McpServerSpanObserverITFixture.start();
@@ -282,7 +276,7 @@ class McpServerSpanObserverIT {
         await(pollUntilSpanPresent(started.vertx(), exporter, 60, 50));
 
         // Then: the request still succeeds and no link is added. This fixture wires no log-capturing
-        // test appender, so the bounded WARN diagnostic T022 specifies is not independently observable
+        // test appender, so the bounded WARN diagnostic is not independently observable
         // here — request success plus zero links is the decisive, fixture-observable proof.
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(sseResult(response.bodyAsString()).getBoolean("isError")).isFalse();
@@ -294,9 +288,8 @@ class McpServerSpanObserverIT {
     }
 
     @Test
-    @DisplayName("R39 bounds: an oversized body tracestate beyond TraceReference's cap never links and never "
-            + "fails the request (trivially green today — the real bounds proof starts once the "
-            + "producer extracts it)")
+    @DisplayName("bounds: an oversized body tracestate beyond TraceReference's cap never links and never "
+            + "fails the request")
     void shouldSucceedWithNoLinkForOversizedBodyTracestate() throws Exception {
         // Given: a structurally valid, distinct body traceparent, but a tracestate longer than
         // TraceReference's 512-character bound.
@@ -362,8 +355,8 @@ class McpServerSpanObserverIT {
     /**
      * Sends one {@code tools/call} whose HTTP {@code traceparent} header is {@code httpTraceparent},
      * and whose body {@code params._meta} optionally carries {@code traceparent}/{@code tracestate}
-     * values distinct from the resolved {@code io.modelcontextprotocol/} reserved keys (R39's resolved
-     * extraction shape — see the block comment above the R39 test methods).
+     * values distinct from the resolved {@code io.modelcontextprotocol/} reserved keys (see the block
+     * comment above the body-trace test methods).
      *
      * @param httpTraceparent the HTTP {@code traceparent} header value; never {@code null}
      * @param bodyTraceparent the body {@code _meta.traceparent} value, or {@code null} to omit it

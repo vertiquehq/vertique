@@ -20,16 +20,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T009 — effective profile selection drives schema generation, end to end through
+ * Effective profile selection drives schema generation, end to end through
  * {@link McpToolRuntimeFactory#create}.
  *
- * <p>{@link McpJsonProfileBindingTest} (T002) already proves profile <em>resolution</em> and that
+ * <p>{@link McpJsonProfileBindingTest} already proves profile <em>resolution</em> and that
  * the runtime binding retains the resolved profile's exact stable mapper. This test proves the
- * remaining T009 half: the resolved profile is not just retained for materialization, it is the one
+ * remaining half: the resolved profile is not just retained for materialization, it is the one
  * threaded into {@code AnnotationJsonSchemaGenerator.forInputProfile(...)}, so two tools declaring
  * different profiles over the exact same input carrier type publish two different input schemas.
  */
-@DisplayName("MCP JSON profile selection — T009 schema-generation binding")
+@DisplayName("MCP JSON profile selection — schema-generation binding")
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpJsonProfileIT {
 

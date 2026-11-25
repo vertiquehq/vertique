@@ -13,16 +13,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Progressive public-surface guard for {@code vertique-mcp-server} (T006, TP-001).
+ * Progressive public-surface guard for {@code vertique-mcp-server}.
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
- * exactly equal.
+ * full generic signature in both directions. Recorded and compiled sets must be exactly equal.
  */
 class McpServerInventoryGuardTest {
 
     private static final String INVENTORY_RESOURCE = "mcp/architecture/mcp-server-public-inventory.json";
-    private static final Set<String> R17_TOKEN_BUDGET_SIGNATURES = Set.of(
+    private static final Set<String> TOKEN_BUDGET_SIGNATURES = Set.of(
             "public int dev.vertique.mcp.server.McpServerConfig.ingressMaxTokens()",
             "public int dev.vertique.mcp.server.McpServerConfig.outputMaxTokens()",
             "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder "
@@ -31,7 +30,7 @@ class McpServerInventoryGuardTest {
                     + "dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxTokens(int)");
 
     @Test
-    @DisplayName("exports exactly the recorded generic signatures and the required R17 token-budget surface")
+    @DisplayName("exports exactly the recorded generic signatures and the required token-budget surface")
     void shouldExportExactlyTheRecordedGenericSignatures() {
         McpServerInventoryChecker checker = new McpServerInventoryChecker(McpServerConfig.class);
         JsonObject recorded = McpServerInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
@@ -77,11 +76,11 @@ class McpServerInventoryGuardTest {
                 .isEmpty();
 
         assertThat(scannedSignatures)
-                .as("R17 token-budget signatures scanned from vertique-mcp-server")
-                .containsAll(R17_TOKEN_BUDGET_SIGNATURES);
+                .as("token-budget signatures scanned from vertique-mcp-server")
+                .containsAll(TOKEN_BUDGET_SIGNATURES);
         assertThat(recordedSignatures)
-                .as("R17 token-budget signatures recorded in " + INVENTORY_RESOURCE)
-                .containsAll(R17_TOKEN_BUDGET_SIGNATURES);
+                .as("token-budget signatures recorded in " + INVENTORY_RESOURCE)
+                .containsAll(TOKEN_BUDGET_SIGNATURES);
 
         assertThat(checker.publicTypesWithNonPublicModuleSupertypes())
                 .as("a public type extending a non-public module type leaks that type's public members past the guard")

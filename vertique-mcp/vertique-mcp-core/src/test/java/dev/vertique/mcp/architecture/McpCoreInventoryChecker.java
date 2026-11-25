@@ -99,8 +99,8 @@ final class McpCoreInventoryChecker {
      *
      * <p>The check is structural rather than member-level for exactly that reason: a declaring-class
      * comparison cannot see the escape, because reflection reports the bridge as declared by the
-     * public subtype. Nothing in the guarded modules does this today; the check exists because the
-     * mechanism is frozen for seven modules and the remaining task graph.
+     * public subtype. Nothing in the guarded modules does this; the check exists because the guard
+     * mechanism applies unchanged to every guarded module.
      *
      * @return the offending {@code subtype extends supertype} pairs, empty when the surface is clean
      */
@@ -172,9 +172,8 @@ final class McpCoreInventoryChecker {
     }
 
     /**
-     * Annotation-processor output carries no source file and is not guarded surface (T006 § Frozen
-     * guard mechanism and scan scope). Nested types are judged by their outer type, so generated
-     * members of a hand-authored type stay in scope.
+     * Annotation-processor output carries no source file and is not guarded surface. Nested types
+     * are judged by their outer type, so generated members of a hand-authored type stay in scope.
      */
     private boolean handAuthored(Class<?> type) {
         String binaryName = type.getName();

@@ -19,7 +19,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R44 remediation proof — {@link McpRequestInterceptor} and {@link McpToolInterceptor} each declare
+ * Proves that {@link McpRequestInterceptor} and {@link McpToolInterceptor} each declare
  * exactly one abstract method (their {@code OrderedExtension} supertype contributes none), so a
  * lambda is a valid implementation and composes into a Vert.x {@link Future} chain like any other
  * implementor. This pins the {@code @FunctionalInterface} property mechanically, not just by
@@ -35,7 +35,7 @@ class McpInterceptorFunctionalInterfaceTest {
             new McpToolDescriptor(
                     "functional.interface.tool",
                     null,
-                    "R44 functional-interface fixture tool.",
+                    "Functional-interface fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,

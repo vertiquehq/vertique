@@ -81,7 +81,7 @@ class McpLifecycleEventTest {
             null,
             Map.of());
 
-    // --- Terminal tuple matrix (W3 / TP-010) ---
+    // --- Terminal tuple matrix ---
 
     @org.junit.jupiter.api.Test
     @DisplayName("a terminal event always carries an origin; an unresolved one is RequestOrigin.unknown()")
@@ -179,7 +179,7 @@ class McpLifecycleEventTest {
         }
     }
 
-    // --- Completion tuple matrix (W3 / TP-010) ---
+    // --- Completion tuple matrix ---
 
     @Nested
     @DisplayName("completion tuple matrix")
@@ -613,7 +613,7 @@ class McpLifecycleEventTest {
                         null,
                         null,
                         RequestOrigin.unknown())),
-                // P04 remediation (issue W7): a resolved tool identity must be bounded by the published
+                // A resolved tool identity must be bounded by the published
                 // McpToolDescriptor name grammar ([A-Za-z0-9_.-]{1,128}), not merely non-blank — an
                 // unresolved name never touches a real descriptor, so nothing else would bound it before
                 // it reached every lifecycle observer and listener as internal telemetry.
@@ -655,7 +655,7 @@ class McpLifecycleEventTest {
                                 SECURITY,
                                 null,
                                 RequestOrigin.unknown())),
-                // R05 (issue #431): a protocolVersion past the bound this record shares with the
+                // A protocolVersion past the bound this record shares with the
                 // negotiation stage that produces it (McpProtocolCodec#MAX_PROTOCOL_VERSION_CHARS) must
                 // never reach an observer — see the BoundedValues nested class for the full boundary
                 // matrix; this row anchors it into the same illegal-facts table every other terminal
@@ -751,9 +751,9 @@ class McpLifecycleEventTest {
                                 SECURITY,
                                 null,
                                 RequestOrigin.unknown())),
-                // R05 (issue #431): a null protocolVersion is always legal — "emit only when negotiation
-                // completed" means every rejection path this repair did not touch (and
-                // every request that never negotiates) must still construct cleanly.
+                // A null protocolVersion is always legal — "emit only when negotiation completed" means every
+                // rejection path that does not negotiate (and every request that never negotiates) must still
+                // construct cleanly.
                 Arguments.of("a null protocolVersion", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
                         STARTED_AT,
                         TERMINAL_AT,
@@ -863,7 +863,7 @@ class McpLifecycleEventTest {
                         true));
     }
 
-    // --- Row tables: bounded values (W5) ---
+    // --- Row tables: bounded values ---
 
     private static Stream<Arguments> acceptedTraceStateRows() {
         return Stream.of(

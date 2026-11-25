@@ -34,8 +34,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T022 {@link McpServerSpanObserver} contract: the span is
- * captured exactly once, at {@code open}, and every enrichment — including the optional body-trace
+ * Exercises the {@link McpServerSpanObserver} contract: the span is captured exactly once, at
+ * {@code open}, and every enrichment — including the optional body-trace
  * link — lands on that exact retained span, never on whatever span (if any) is current at callback
  * time. No span is ever created or renamed.
  *
@@ -86,8 +86,8 @@ class McpServerSpanObserverTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
-    @DisplayName("T022 observer matrix: capture-at-open identity and the bounded body-trace link")
-    void shouldEnforceT022ContractMatrix(String row) throws Exception {
+    @DisplayName("observer matrix: capture-at-open identity and the bounded body-trace link")
+    void shouldEnforceObserverContractMatrix(String row) throws Exception {
         switch (row) {
             case CAPTURE_AT_OPEN_ROW -> shouldCaptureTheCurrentServerSpanAtOpen();
             case OFF_CONTEXT_TERMINAL_ROW -> shouldEnrichTheCapturedSpanFromAnOffContextTerminal();
@@ -95,7 +95,7 @@ class McpServerSpanObserverTest {
             case MATCHING_LINK_ROW -> shouldAddNoLinkForAMatchingBodyContext();
             case MALFORMED_LINK_ROW -> shouldIgnoreMalformedBodyTraceDataWithABoundedDiagnostic();
             case PROTOCOL_VERSION_ROW -> shouldEmitProtocolVersionOnlyWhenNegotiated();
-            default -> fail("unknown T022 observer row: " + row);
+            default -> fail("unknown observer row: " + row);
         }
     }
 
@@ -200,12 +200,12 @@ class McpServerSpanObserverTest {
     // --- shouldAddNoLinkForAMatchingBodyContext ---
 
     /**
-     * R39 repair: the body reference here deliberately shares only the captured span's <em>trace</em>
+     * The body reference here deliberately shares only the captured span's <em>trace</em>
      * id, with a <em>different</em> span id (the span id an HTTP {@code traceparent} header's parent
      * context would carry) — the shape a real HTTP-header self-reference actually takes, since the
      * captured span's own span id is freshly minted at {@code open} and never equals its parent's.
      * Suppression must therefore key on trace id alone: comparing full span identity (trace id
-     * <em>and</em> span id, as the pre-fix implementation did) would miss this case and wrongly add a
+     * <em>and</em> span id) would miss this case and wrongly add a
      * link for the request's own HTTP parent.
      */
     private void shouldAddNoLinkForAMatchingBodyContext() {
@@ -270,7 +270,7 @@ class McpServerSpanObserverTest {
     // --- shouldEmitProtocolVersionOnlyWhenNegotiated ---
 
     /**
-     * R05 (issue #431): {@code mcp.protocol.version} is set only from a terminal event whose {@link
+     * {@code mcp.protocol.version} is set only from a terminal event whose {@link
      * McpRequestTerminalEvent#protocolVersion()} is non-{@code null} — never a hardcoded constant, and
      * never emitted for a request whose negotiation never completed.
      */

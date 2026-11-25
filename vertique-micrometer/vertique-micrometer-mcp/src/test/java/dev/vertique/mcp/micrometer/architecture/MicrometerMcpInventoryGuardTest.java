@@ -12,11 +12,10 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 /**
- * Progressive public-surface guard for {@code vertique-micrometer-mcp} (T021, TP-001).
+ * Progressive public-surface guard for {@code vertique-micrometer-mcp}.
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
- * exactly equal.
+ * full generic signature in both directions. Recorded and compiled sets must be exactly equal.
  */
 class MicrometerMcpInventoryGuardTest {
 

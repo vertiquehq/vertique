@@ -43,7 +43,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Framework wiring for {@link McpTraceCompositionTest} (T022 TP-003): builds the omitting graph (no
+ * Framework wiring for {@link McpTraceCompositionTest}: builds the omitting graph (no
  * {@link McpOpenTelemetryModule} anywhere in its module list) and the installed graph (the exact
  * production module set, contributing {@link McpServerSpanObserver}), each servable over a Vertx
  * instance the test itself wires with either a no-op or a recording OpenTelemetry tracer. Nothing
@@ -200,7 +200,7 @@ final class McpTraceCompositionTestFixture {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "T022 TP-003 fixture tool.",
+                "Trace composition fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 "{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\"}},\"required\":[\"status\"]}",

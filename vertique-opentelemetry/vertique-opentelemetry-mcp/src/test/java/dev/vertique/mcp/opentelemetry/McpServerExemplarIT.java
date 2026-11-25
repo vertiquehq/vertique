@@ -27,20 +27,20 @@ import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R06 (issue #435) TP-002 — production-path exemplar proof: proves that when a sampled OpenTelemetry
- * server span is current at MCP terminal settlement, and the OpenTelemetry MCP observer's completion
- * scope ({@link McpServerSpanObserver.Session#openCompletionScope()} via the new {@code
- * McpCompletionScope} capability) re-establishes it around the framework's real completion dispatch
+ * Production-path exemplar proof: proves that when a sampled OpenTelemetry server span is current
+ * at MCP terminal settlement, and the OpenTelemetry MCP observer's completion scope ({@link
+ * McpServerSpanObserver.Session#openCompletionScope()} via the {@code McpCompletionScope}
+ * capability) re-establishes it around the framework's real completion dispatch
  * (real {@code McpCompletionCoordinator}, real {@code McpServerMetricsObserver}), the resulting
  * Prometheus OpenMetrics scrape carries an exemplar with a {@code trace_id} matching the server span.
  *
- * <h3>Why this proves the fix, not just the plumbing</h3>
+ * <h3>Why this proves the behavior, not just the plumbing</h3>
  *
  * <p>Vert.x 5's OTel tracer ends the HTTP server span before any completion callback runs — the same
- * situation {@code RestServerExemplarIT} documents for REST. Before R06, {@code
- * McpServerMetricsObserver}'s session recorded its timer with no span current, so the OpenMetrics
- * scrape carried no exemplar; the R06 completion evidence records this class failing exactly that way
- * when {@code McpCompletionCoordinator}'s scope bracketing is reverted. The exemplar bridge itself
+ * situation {@code RestServerExemplarIT} documents for REST. Without the completion scope, {@code
+ * McpServerMetricsObserver}'s session would record its timer with no span current, so the OpenMetrics
+ * scrape would carry no exemplar; this class fails exactly that way when {@code
+ * McpCompletionCoordinator}'s scope bracketing is removed. The exemplar bridge itself
  * ({@link io.prometheus.metrics.tracer.otel.OpenTelemetrySpanContext}) is registry-level, shared,
  * un-MCP-specific plumbing already proven for REST — this test's only job is proving the MCP-specific
  * half: that a sampled span is actually current when the timer records.
@@ -86,7 +86,7 @@ class McpServerExemplarIT {
     }
 
     @RepeatedTest(5)
-    @DisplayName("R06 TP-002: OpenMetrics scrape carries an exemplar with trace_id matching the "
+    @DisplayName("OpenMetrics scrape carries an exemplar with trace_id matching the "
             + "server span, recorded via the real completion-scope-bracketed pipeline")
     void productionPathExemplarAttachesViaCompletionScope() throws Exception {
         started = McpServerExemplarITFixture.start();

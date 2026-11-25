@@ -42,12 +42,12 @@ import org.junit.jupiter.api.Test;
  * <p>The frozen direction graph is the one stated in the schema/profile/mapping contract: MCP core and the MCP
  * annotation processor use the profile annotation and id contracts from {@code vertique-core}; the MCP server
  * consumes {@code vertique-json} for the registry/config, {@code vertique-json-schema} for schema generation, and
- * {@code vertique-input-processing} for the T014 fixed input boundary; neither JSON artifact nor
+ * {@code vertique-input-processing} for the fixed input boundary; neither JSON artifact nor
  * {@code vertique-input-processing} depends on MCP; and no reversed edge exists.
  *
  * <p><strong>Scanned scope.</strong> The rule reads the compiled production bytecode of the six artifacts that
  * {@code vertique-mcp-server} compiles against — {@code vertique-core}, {@code vertique-json},
- * {@code vertique-json-schema} (T009), {@code vertique-input-processing} (T014), {@code vertique-mcp-core},
+ * {@code vertique-json-schema}, {@code vertique-input-processing}, {@code vertique-mcp-core},
  * {@code vertique-mcp-server} — so a newly added production type is covered without touching this test.
  * {@code vertique-codegen-mcp} and generated application source are not on this module's classpath, so their
  * <em>outgoing</em> edges cannot be read here; their zones are still pinned as forbidden <em>targets</em>, which is
@@ -141,8 +141,8 @@ class McpProfileDependencyArchitectureTest {
 
         /**
          * Imports every compiled production class of the six artifacts {@code vertique-mcp-server} compiles
-         * against: {@code vertique-core}, {@code vertique-json}, {@code vertique-json-schema} (T009),
-         * {@code vertique-input-processing} (T014), {@code vertique-mcp-core} and {@code vertique-mcp-server}.
+         * against: {@code vertique-core}, {@code vertique-json}, {@code vertique-json-schema},
+         * {@code vertique-input-processing}, {@code vertique-mcp-core} and {@code vertique-mcp-server}.
          */
         static JavaClasses importCompiledProfileGraph() {
             return new ClassFileImporter()

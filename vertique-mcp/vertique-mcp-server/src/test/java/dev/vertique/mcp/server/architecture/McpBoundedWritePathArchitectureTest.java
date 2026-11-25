@@ -20,22 +20,20 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R14 item 4 — the byte-unbounded {@code McpProtocolCodec} error helpers stay off every write path.
+ * The byte-unbounded {@code McpProtocolCodec} error helpers stay off every write path.
  *
- * <p>R12 (merge blocker 5) rerouted every dispatcher error write through {@code
+ * <p>Every dispatcher error write goes through {@code
  * McpRequestDispatcher#boundedErrorResponse}, which streams into the capped output stream, and away
  * from the codec's own {@code errorResponse}/{@code errorResponseFor}/{@code internalFallback} — each
- * an unrestricted {@code writeValueAsBytes} that never observes {@code mcp.output.maxBytes}. R12's
- * own evidence recorded that no test could prove that rerouting stayed done: the defective and fixed
- * paths emit identical bytes for any id short of an {@code OutOfMemoryError}, so no wire-observable
- * signal distinguishes them.
+ * an unrestricted {@code writeValueAsBytes} that never observes {@code mcp.output.maxBytes}. No test
+ * can prove that routing through the wire alone: the bounded and unbounded paths emit identical
+ * bytes for any id short of an {@code OutOfMemoryError}, so no wire-observable signal distinguishes
+ * them.
  *
- * <p>R14 item 4 supplies the protection R12 reported as unavailable. The fourth helper — {@code
- * errorResponseFor(JsonNode, NegotiationResult)}, the exact method the reverted call site used — was
- * deleted outright, so that specific regression no longer compiles. The three helpers the codec's own
- * golden and failure tests genuinely need survive, and this rule pins them: <strong>no production
- * class other than {@code McpProtocolCodec} itself may call any of them</strong>. Reintroducing the
- * R12 defect at any call site turns this test red.
+ * <p>This structural rule supplies that protection. The three helpers the codec's own golden and
+ * failure tests genuinely need survive, and this rule pins them: <strong>no production class other
+ * than {@code McpProtocolCodec} itself may call any of them</strong>. Routing an error write through
+ * one of them at any call site turns this test red.
  *
  * <p>The rule reads compiled production bytecode, so a call added from a class that does not exist
  * yet is covered without touching this test. {@link McpUnboundedCodecCallProbe} — compiled test
@@ -50,24 +48,24 @@ class McpBoundedWritePathArchitectureTest {
             Set.of("errorResponse", "errorResponseFor", "internalFallback");
 
     @Test
-    @DisplayName("R14 item 4: no production class outside McpProtocolCodec calls a byte-unbounded error helper")
+    @DisplayName("no production class outside McpProtocolCodec calls a byte-unbounded error helper")
     void shouldKeepUnboundedCodecHelpersOffEveryProductionWritePath() {
         JavaClasses production = importCompiledProductionClasses();
 
         assertThat(typeNames(production))
-                .as("the scan must genuinely cover the dispatcher — the one class that held the R12 defect — "
+                .as("the scan must genuinely cover the dispatcher — the class that writes its errors — "
                         + "otherwise an empty violation list proves nothing")
                 .contains("dev.vertique.mcp.server.McpRequestDispatcher", CODEC);
 
         assertThat(unboundedHelperCallsFromOutsideTheCodec(production))
                 .as("DECISIVE: every error write must go through McpRequestDispatcher#boundedErrorResponse; "
                         + "a call to one of the codec's byte-unbounded helpers from any other production "
-                        + "class is the R12 regression")
+                        + "class is a regression")
                 .isEmpty();
     }
 
     @Test
-    @DisplayName("R14 item 4: the same rule reports a violation for each unbounded call a probe makes")
+    @DisplayName("the same rule reports a violation for each unbounded call a probe makes")
     void shouldReportAViolationForEachUnboundedCallFromOutsideTheCodec() {
         JavaClasses probe = new ClassFileImporter().importClasses(McpUnboundedCodecCallProbe.class);
 

@@ -9,14 +9,14 @@ import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import java.util.Set;
 
-/** Framework wiring for {@link McpJson005ConsumptionIT}: real factory composition only. */
-final class McpJson005ConsumptionITFixture {
+/** Framework wiring for {@link McpCanonicalSchemaConsumptionIT}: real factory composition only. */
+final class McpCanonicalSchemaConsumptionITFixture {
 
-    private McpJson005ConsumptionITFixture() {}
+    private McpCanonicalSchemaConsumptionITFixture() {}
 
     /**
      * Builds a real {@link McpToolRuntimeFactory} over the framework's built-in profiles — no MCP
-     * boundary or global default configured, so the resolver's tail ({@code vertique}, issue #440)
+     * boundary or global default configured, so the resolver's tail ({@code vertique})
      * applies. Schema generation is unaffected either way: neither the {@code vertx} nor the {@code
      * vertique} built-in profile declares any {@code jsonSchemaTypeOverrides}.
      *

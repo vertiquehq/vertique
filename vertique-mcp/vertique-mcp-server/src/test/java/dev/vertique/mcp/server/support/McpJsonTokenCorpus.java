@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Loads the sole R18 JSON token-budget corpus and deterministically renders each declared shape.
+ * Loads the sole JSON token-budget corpus and deterministically renders each declared shape.
  *
  * <p>The resource bytes are loaded exactly once so the digest proof can pin the artifact rather than
  * a reserialized interpretation of it. Parsing also independently recounts Jackson parser tokens,

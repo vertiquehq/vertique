@@ -12,7 +12,7 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 /**
- * Progressive public-surface guard for {@code vertique-mcp-core} (T006, TP-002).
+ * Progressive public-surface guard for {@code vertique-mcp-core}.
  *
  * <p>Uses the same full-generic-signature, exact-set comparison as the sibling guard in {@code
  * vertique-mcp-server}, driven by this module's own duplicated checker rather than a shared utility.

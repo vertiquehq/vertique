@@ -12,7 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T009 — determinism of MCP's own harden-then-canonicalize pipeline.
+ * Determinism of MCP's own harden-then-canonicalize pipeline.
  *
  * <p>Equal logical documents and parameter metadata must produce byte-identical hardened, canonical
  * output regardless of the source object's member insertion order. Each seed in the committed

@@ -16,8 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Provider-independence proof for repair task R47 (phase-exit review): a bound application {@link
- * Validator} must never trigger {@code McpBeanValidation}'s default-provider bootstrap.
+ * Provider-independence proof: a bound application {@link Validator} must never trigger {@code
+ * McpBeanValidation}'s default-provider bootstrap.
  *
  * <p><strong>Form chosen.</strong> {@code McpBeanValidation}'s default factory now lives behind a
  * private, lazily initialized holder class ({@code DefaultValidatorHolder}) with no public accessor

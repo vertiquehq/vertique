@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T022 TP-003 — three Dagger graphs serving one identical tool call: omitting {@link
+ * Three Dagger graphs serving one identical tool call: omitting {@link
  * McpOpenTelemetryModule} entirely, installing it with a no-op {@link OpenTelemetry} instance and no
  * exporter configured, and installing it with a recording SDK-backed tracer. Framework wiring lives
  * behind {@link McpTraceCompositionTestFixture}; only the Given values, the one action per graph, and
