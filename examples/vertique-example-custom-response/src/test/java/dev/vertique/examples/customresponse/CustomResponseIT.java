@@ -99,6 +99,10 @@ class CustomResponseIT {
                 .extract();
 
         verifyDigest(response);
+        assertEquals(
+                1,
+                response.headers().getValues("Content-Type").size(),
+                "the digest filter replaces the Content-Type, it does not add a second one");
     }
 
     @Test
