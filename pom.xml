@@ -1395,6 +1395,8 @@ SPDX-License-Identifier: EUPL-1.2
                                 <version>2.80.0</version>
                             </palantirJavaFormat>
                             <removeUnusedImports/>
+                            <!-- Fails the check on any `import a.b.*;`, in main and test sources. It reports and does not rewrite: replace the wildcard with the explicit imports. -->
+                            <forbidWildcardImports/>
                         </java>
                     </configuration>
                 </plugin>
