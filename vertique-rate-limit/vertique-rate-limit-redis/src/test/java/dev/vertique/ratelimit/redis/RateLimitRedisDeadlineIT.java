@@ -79,9 +79,9 @@ class RateLimitRedisDeadlineIT {
         RateLimitBackend backend = RateLimitRedisTestFixture.backend(fake, vertx, operationTimeoutMs, 1_000);
         String storageKey = RateLimitRedisTestFixture.storageKey("deadline-" + UUID.randomUUID());
 
-        // Given: the CAS round-trip is held indefinitely — Bucket4j's own internal loop, unbounded
-        // here because the builder's maxRetries and requestTimeout are left unset, would wait on it
-        // forever absent Vertique's own deadline.
+        // Given: the CAS round-trip is held indefinitely — Bucket4j's own call, unbounded here
+        // because the builder's requestTimeout is left unset, would wait on it forever absent
+        // Vertique's own deadline.
         long startedAtNanos = System.nanoTime();
         Future<RateLimitBackendResult> future =
                 backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1));

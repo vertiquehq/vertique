@@ -49,8 +49,8 @@ silences the warning but does not change what is generated.
 
 The processor runs once, in the first round that is not the last, so a `@RestClient` interface that only
 appears in a later round gets no proxy. It skips, without a diagnostic, a `@RestClient` type that carries
-`@NoAutoWire`, and a `@RestClient` type that is not an interface (the dagger processor rejects the latter
-with an error). A failure to write a generated proxy or accessor is reported as a compile error
+`@NoAutoWire`, and a `@RestClient` type that is not an interface (when auto-wiring is active and the type is not `@NoAutoWire`, the dagger
+processor rejects the latter with an error). A failure to write a generated proxy or accessor is reported as a compile error
 (`Failed to write ...` with the underlying reason).
 
 > **Note:** `vertique.codegen.package` is **not supported for REST client artifacts**. The processor

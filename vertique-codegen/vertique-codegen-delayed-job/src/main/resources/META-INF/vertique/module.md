@@ -265,7 +265,7 @@ Both steps are individually reversible: removing the processor reverts all contr
 Promotes the "no same-unit executor" diagnostic from WARNING to ERROR. Only the exact value `true`
 enables it; any other value leaves the diagnostic a WARNING.
 
-The processor looks for executors among the top-level classes of the current compilation. An executor
+The processor looks for executors among the top-level types of the current compilation. An executor
 declared as a nested class is not found, so the diagnostic fires for its contract even in a single-module
 build.
 

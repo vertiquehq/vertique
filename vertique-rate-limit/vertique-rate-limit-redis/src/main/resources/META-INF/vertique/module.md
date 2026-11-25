@@ -35,7 +35,7 @@ Bucket4jVertx.casBasedBuilder(sharedRedis)
 
 The pinned `bucket4j_jdk17-vertx:8.22.0` builder also offers `requestTimeout`, `maxRetries`,
 `retryStrategy`, `expirationAfterWrite` and `clientClock` hooks. This module uses none of them. It
-owns the timeout, attempt-bounding and TTL maintenance itself, layered on top:
+owns the operation deadline and the TTL maintenance itself, layered on top:
 
 - **Operation deadline.** A Vert.x timer at `rateLimit.redis.operationTimeoutMs` bounds each
   clustered consume. Whichever of the deadline timer or the Bucket4j completion settles first wins;

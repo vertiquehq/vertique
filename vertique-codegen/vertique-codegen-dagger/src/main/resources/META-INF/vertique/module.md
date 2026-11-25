@@ -174,16 +174,16 @@ contributions are supported.
 Collects classes annotated `@WorkflowSignalSource` and turns each into a required `Registration` per
 `@SignalSourceType` interface it implements, directly or through a supertype, carrying that marker's `module()`. It
 honors `@NoAutoWire`, rejects a class that is not concrete, requires exactly one `@Inject` constructor, and reports an
-error naming a class that implements no marked interface, or whose `@SignalSourceType(module = ...)` does not name a
-class.
+error naming a class that implements no marked interface. A `@SignalSourceType` interface whose `module` does not name a
+declared class is also an error.
 
 ### `GeneratedSignalSourceCollector`
 
 Predicts the class generated for a form-annotated interface and turns it into a required
 `Registration` that carries the target's `@SignalSourceType` module. It keeps the predicted names so the final round can
 report each one no processor generated, unless `RoundEnvironment.errorRaised()` is true. It honors `@NoAutoWire` and
-reads the form from the annotation types present in the round. A form annotation that does not name a source interface,
-and a target that is not a `@SignalSourceType` interface with a module, are compile errors.
+reads the form from the annotation types present in the round. An interface carrying a form annotation that does not name a source interface, and a form target
+that lacks `@SignalSourceType` or its `module`, are compile errors.
 
 ### `MultibindingModuleEmitter`
 
@@ -334,7 +334,7 @@ public class AdminResource { ... }
 
 ### Same module name from two compilation units
 
-Two compilation units that resolve to the same output package each write `<package>.Generated{Qualifier}Module` (and `GeneratedRegistrationsModule`). The processor does not detect this: it checks only the classes it writes itself, so a clash inside one compilation fails with `Failed to write ...` and the underlying reason, while a copy from a dependency or another module is not reported and only one copy is visible to the component. Give each compilation unit its own output package with `-Avertique.codegen.package`.
+Two compilation units that resolve to the same output package each write `<package>.Generated{Qualifier}Module` (and `GeneratedRegistrationsModule`). The processor does not detect this: a clash inside one compilation fails with `Failed to write ...` and the underlying reason from the compiler, while a copy from a dependency or another module is not reported and only one copy is visible to the component. Give each compilation unit its own output package with `-Avertique.codegen.package`.
 
 ### Multi-round emission limitation
 
