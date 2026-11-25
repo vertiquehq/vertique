@@ -10,7 +10,7 @@ import java.util.Map;
 /**
  * The nested (depth-2) leaf record of {@link CrossTransportInputCorpus}'s fixture graph: one scalar
  * string, one string list, and one string map, each declaring {@link CrossTransportUppercaseSanitizer}
- * so INP-001 discovers and runs it identically regardless of which transport materializes this type —
+ * so the input processor discovers and runs it identically regardless of which transport materializes this type —
  * field-level policy resolution is transport-neutral.
  *
  * @param scalar  a bare string leaf

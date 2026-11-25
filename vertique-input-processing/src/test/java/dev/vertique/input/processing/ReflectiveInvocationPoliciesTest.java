@@ -28,10 +28,10 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-002 (T016, issue #379): {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter}
- * resolve the same IP-01..IP-19 matrix as {@link InvocationPolicyResolverTest}, from real annotated
- * carrier classes in {@link dev.vertique.input.processing.testkit.InvocationPolicyScenarios} instead of
- * hand-built stubs.
+ * {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter} resolve the same
+ * invocation-policy matrix as {@link InvocationPolicyResolverTest}, from real annotated carrier classes
+ * in {@link dev.vertique.input.processing.testkit.InvocationPolicyScenarios} instead of hand-built
+ * stubs.
  *
  * <p>Unlike {@code InvocationPolicyResolver.resolveRouteChain}/{@code resolveParameterChain},
  * {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter} resolve both axes in a
@@ -40,15 +40,16 @@ import org.slf4j.LoggerFactory;
  * the {@code SANITIZE}-axis outcome to decide whether the call is expected to throw, and asserts both
  * axes' chains together when it is not.
  *
- * <p>Only IP-14 (same-site) and IP-17 (real {@code IFoo}/{@code FooImpl} names) have a contract-frozen
- * exact message (L75-80); IP-15 (parameter-level) and IP-19 (type-level) assert {@code axis()} and that
- * both real declaration sites appear in {@code getMessage()}, since the contract does not pin an exact
- * literal for those element kinds (ruling, T016 L01 — see completion evidence).
+ * <p>Only {@code same-method-conflict} (same-site) and {@code override-skip-conflict} (real
+ * {@code IFoo}/{@code FooImpl} names) assert an exact message; {@code same-parameter-conflict}
+ * (parameter-level) and {@code supertype-skip-conflict} (type-level) assert {@code axis()} and that
+ * both real declaration sites appear in {@code getMessage()}, since no exact literal is pinned for
+ * those element kinds.
  *
- * <p>Sensitivity (contract-required): resolving {@code method.getAnnotation(Sanitize.class)} directly
- * instead of through {@code AnnotationResolver} in {@code resolveRoute} would make IP-09 and IP-11
- * resolve {@code []} instead of {@code [B]} — {@link #resolvesRouteAndParameterFromRealClasses} would
- * fail for those rows.
+ * <p>Sensitivity: resolving {@code method.getAnnotation(Sanitize.class)} directly instead of through
+ * {@code AnnotationResolver} in {@code resolveRoute} would make {@code interface-method-chain} and
+ * {@code composed-annotation} resolve {@code []} instead of {@code [B]} —
+ * {@link #resolvesRouteAndParameterFromRealClasses} would fail for those rows.
  */
 class ReflectiveInvocationPoliciesTest {
 
@@ -95,26 +96,35 @@ class ReflectiveInvocationPoliciesTest {
     private void assertConflict(Row row, Outcome.Conflict expected, InvocationPolicyConflictException ex) {
         assertEquals(PolicyAxis.SANITIZE, ex.axis());
         switch (row.id()) {
-            case "IP-14" ->
+            case "same-method-conflict" ->
                 assertEquals(
                         dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
-                                PolicyAxis.SANITIZE, "Ip14.bar", "Ip14.bar", "method Ip14.bar"),
+                                PolicyAxis.SANITIZE,
+                                "SameMethodConflict.bar",
+                                "SameMethodConflict.bar",
+                                "method SameMethodConflict.bar"),
                         ex.getMessage());
-            case "IP-17" ->
+            case "override-skip-conflict" ->
                 assertEquals(
                         dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
                                 PolicyAxis.SANITIZE, "IFoo.bar", "FooImpl.bar", "method FooImpl.bar"),
                         ex.getMessage());
-            case "IP-15" -> {
+            case "same-parameter-conflict" -> {
                 assertFalse(ex.elementDescription() == null
                         || ex.elementDescription().isBlank());
-                assertTrue(ex.getMessage().contains("Ip15.bar"), "message should name Ip15.bar: " + ex.getMessage());
+                assertTrue(
+                        ex.getMessage().contains("SameParameterConflict.bar"),
+                        "message should name SameParameterConflict.bar: " + ex.getMessage());
             }
-            case "IP-19" -> {
+            case "supertype-skip-conflict" -> {
                 assertFalse(ex.elementDescription() == null
                         || ex.elementDescription().isBlank());
-                assertTrue(ex.getMessage().contains("Ip19Base"), "message should name Ip19Base: " + ex.getMessage());
-                assertTrue(ex.getMessage().contains("Ip19"), "message should name Ip19: " + ex.getMessage());
+                assertTrue(
+                        ex.getMessage().contains("SupertypeSkipConflictBase"),
+                        "message should name SupertypeSkipConflictBase: " + ex.getMessage());
+                assertTrue(
+                        ex.getMessage().contains("SupertypeSkipConflict"),
+                        "message should name SupertypeSkipConflict: " + ex.getMessage());
             }
             default -> throw new AssertionError("unexpected conflict row " + row.id());
         }
@@ -184,7 +194,7 @@ class ReflectiveInvocationPoliciesTest {
                 ex.getMessage());
     }
 
-    // --- R2 (security review): an inherited skip that silently removes a class-level chain ---
+    // --- An inherited skip that silently removes a class-level chain ---
 
     /** The interface method carries the skip; the implementation never mentions it. */
     interface ISkipDeclaringIface {

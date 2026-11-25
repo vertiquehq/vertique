@@ -7,8 +7,8 @@ import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
 
 /**
- * Deterministic marker sanitizer used by {@link InvocationPolicyScenarios} (T016, issue #379) to
- * distinguish which {@code @Sanitize} declaration site an {@link InvocationPolicyResolverTest} /
+ * Deterministic marker sanitizer used by {@link InvocationPolicyScenarios} to distinguish which
+ * {@code @Sanitize} declaration site an {@link InvocationPolicyResolverTest} /
  * {@link ReflectiveInvocationPoliciesTest} scenario resolved to.
  *
  * <p>{@link #transform(String)} is the single source of truth for this stub's behavior, mirroring

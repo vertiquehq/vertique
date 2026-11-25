@@ -123,9 +123,9 @@ class ApiSurfaceTest {
          * package and its subpackages (e.g. {@code "apt.ElementInvocationPolicies"}), excluding
          * nested/anonymous classes ({@code $}) and any {@code package-info}.
          *
-         * <p>Package-aware since T018 (issue #379): the {@code apt} subpackage must be inventoried
-         * too, so the scan walks the whole compiled-classes subtree under {@code
-         * dev/vertique/input/processing} rather than listing one directory.
+         * <p>Package-aware: the {@code apt} subpackage must be inventoried too, so the scan walks the
+         * whole compiled-classes subtree under {@code dev/vertique/input/processing} rather than listing
+         * one directory.
          *
          * @return the dotted package-relative names found in the module's compiled main-classes tree
          */
@@ -469,14 +469,14 @@ class ApiSurfaceTest {
     }
 
     @Nested
-    @DisplayName("apt package purity (AR-009)")
+    @DisplayName("apt package purity")
     class AptPackagePurity {
 
         /**
          * No {@code src/main/java} file outside the {@code apt} subpackage may reference the {@code
          * apt} subpackage or {@code javax.lang.model} — {@code dev.vertique.input.processing.apt} is
-         * compile-time-only and never loaded by runtime code (contract "apt package in a runtime
-         * artifact (AR-009)"; T018, issue #379).
+         * compile-time-only and never loaded by runtime code, so a runtime artifact carries no
+         * dependency on it.
          */
         @Test
         @DisplayName("no file outside apt/ references processing.apt or javax.lang.model")
@@ -497,8 +497,7 @@ class ApiSurfaceTest {
         /**
          * Every import in {@code apt/*.java} is JDK-only ({@code java.}, {@code javax.lang.model.},
          * {@code javax.annotation.processing.}) or references this module's own base package — the
-         * {@code apt} adapter requires only the JDK {@code java.compiler} module (contract, "apt
-         * package in a runtime artifact (AR-009)"; T018, issue #379).
+         * {@code apt} adapter requires only the JDK {@code java.compiler} module.
          */
         @Test
         @DisplayName("every import in apt/*.java is JDK-only or dev.vertique.input.processing")

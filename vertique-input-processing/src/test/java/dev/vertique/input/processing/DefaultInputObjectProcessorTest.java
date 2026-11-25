@@ -320,10 +320,10 @@ class DefaultInputObjectProcessorTest {
         assertEquals("  hello  ", input.get("name"));
     }
 
-    // --- Fix 1: Top-level list body processing ---
+    // --- Top-level list body processing ---
 
     @Nested
-    @DisplayName("top-level List body processing (Fix 1)")
+    @DisplayName("top-level List body processing")
     class TopLevelListBody {
 
         @Test
@@ -365,10 +365,10 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
-    // --- Fix 3: Ancestor chain propagation and sticky skip ---
+    // --- Ancestor chain propagation and sticky skip ---
 
     @Nested
-    @DisplayName("ancestor chain propagation (Fix 3)")
+    @DisplayName("ancestor chain propagation")
     class AncestorChainPropagation {
 
         @Test
@@ -717,8 +717,8 @@ class DefaultInputObjectProcessorTest {
             }
 
             // Control: entering the same chain at level 4 leaves nine links to the deepest level,
-            // which is inside the resolver's ten-level budget — so this arm passes today and pins
-            // the failure below to the depth budget rather than to the fixture.
+            // which is inside the resolver's ten-level budget — so this arm pins any failure below to
+            // the depth budget rather than to the fixture.
             Object shallowResult = processor.processInput(
                     levels.get(3),
                     Depth4.class,
@@ -1744,7 +1744,7 @@ class DefaultInputObjectProcessorTest {
             assertEquals(
                     "tag_list[0]",
                     elementContext.logicalName(),
-                    "list elements keep today's behavior: the element path occupies both components, so "
+                    "list elements report the element path in both components, so "
                             + "the projection does not change what an element-level sanitizer observes");
         }
 
@@ -1764,11 +1764,11 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
-    // --- Schema-free traversal (S6d) ---
+    // --- Schema-free traversal ---
 
     /**
-     * Pins the frozen contract: schema-free traversal — a raw collection, a Map/Object target, a
-     * wire/declared shape mismatch, an unknown subtree — has no field-name owner and never invokes
+     * Pins that schema-free traversal (a raw collection, a Map/Object target, a
+     * wire/declared shape mismatch, an unknown subtree) has no field-name owner and never invokes
      * {@link InputFieldNameResolver#logicalName}, while {@link InputValueContext#ownerType()} still
      * carries the traversal's processing provenance.
      */
@@ -1849,7 +1849,7 @@ class DefaultInputObjectProcessorTest {
                     List.class,
                     listLeaf.ownerType(),
                     "the raw container class is still reported as processing provenance even though it "
-                            + "is no longer a field-name owner");
+                            + "is not a field-name owner");
 
             seen.clear();
             Map<String, Object> unknownValue = new LinkedHashMap<>();

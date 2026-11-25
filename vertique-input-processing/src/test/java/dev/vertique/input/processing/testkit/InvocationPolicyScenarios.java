@@ -14,7 +14,8 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
- * The IP-01..IP-19 invocation-policy scenario matrix (T016, issue #379).
+ * The invocation-policy scenario matrix: nineteen named scenarios covering declaration-site precedence,
+ * inheritance, composed annotations, independent axes, and conflicts.
  *
  * <p>Every row is expressed twice, from the same declarative description, for the two proofs that
  * consume this class:
@@ -22,10 +23,10 @@ import java.util.stream.Stream;
  * <ul>
  *   <li>{@link Row#canonicalize()} / {@link Row#sanitize()} carry hand-built
  *       {@link InvocationPolicySource} stubs (built with {@link #sources}/{@link #none}) mirroring
- *       each scenario, for {@code InvocationPolicyResolverTest} (TP-001) to drive
+ *       each scenario, for {@code InvocationPolicyResolverTest} to drive
  *       {@code InvocationPolicyResolver.resolveRouteChain}/{@code resolveParameterChain} directly.</li>
  *   <li>{@link Row#owner()}, {@link Row#method()}, {@link Row#parameterIndex()} carry a real annotated
- *       class/interface hierarchy, for {@code ReflectiveInvocationPoliciesTest} (TP-002) to drive
+ *       class/interface hierarchy, for {@code ReflectiveInvocationPoliciesTest} to drive
  *       {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter} over actual
  *       reflection.</li>
  * </ul>
@@ -39,7 +40,8 @@ import java.util.stream.Stream;
  * are all {@code @Sanitize}/{@code @SkipSanitization} only ever conflicts on the {@code SANITIZE} axis
  * — the {@code CANONICALIZE} axis for that same scenario has no {@code @Canonicalize}/
  * {@code @SkipCanonicalization} annotations at all and resolves cleanly to {@code []}, exactly like
- * every other axis-less row. Every conflict row in this matrix (IP-14, IP-15, IP-17, IP-19) is
+ * every other axis-less row. Every conflict row in this matrix ({@code same-method-conflict},
+ * {@code same-parameter-conflict}, {@code override-skip-conflict}, {@code supertype-skip-conflict}) is
  * SANITIZE-only for that reason; {@link Row#canonicalize()} is never a conflict.
  */
 public final class InvocationPolicyScenarios {
@@ -47,194 +49,241 @@ public final class InvocationPolicyScenarios {
     private InvocationPolicyScenarios() {}
 
     /**
-     * The IP-01..IP-19 scenario rows, for {@code @MethodSource(
+     * The scenario rows, for {@code @MethodSource(
      * "dev.vertique.input.processing.testkit.InvocationPolicyScenarios#rows")}.
      *
-     * @return the matrix rows in IP-01..IP-19 order
+     * @return the matrix rows in declaration order
      */
     public static Stream<Row> rows() {
         return ROWS.stream();
     }
 
     private static final List<Row> ROWS = List.of(
-            ip01(), ip02(), ip03(), ip04(), ip05(), ip06(), ip07(), ip08(), ip09(), ip10(), ip11(), ip12(), ip13(),
-            ip14(), ip15(), ip16(), ip17(), ip18(), ip19());
+            noPolicy(),
+            typeChain(),
+            methodChain(),
+            methodOverridesType(),
+            methodSkipOverTypeChain(),
+            methodSkipOnly(),
+            parameterOverridesType(),
+            parameterSkipOverTypeChain(),
+            interfaceMethodChain(),
+            superclassTypeChain(),
+            composedAnnotation(),
+            interfaceParameterChain(),
+            independentAxes(),
+            sameMethodConflict(),
+            sameParameterConflict(),
+            interfaceMethodSkip(),
+            overrideSkipConflict(),
+            overrideReplacesChain(),
+            supertypeSkipConflict());
 
     // --- Row definitions ---
 
-    private static Row ip01() {
-        return new Row("IP-01", Ip01.class, method(Ip01.class, "bar", String.class), 0, emptyAxis(), emptyAxis());
+    private static Row noPolicy() {
+        return new Row(
+                "no-policy", NoPolicy.class, method(NoPolicy.class, "bar", String.class), 0, emptyAxis(), emptyAxis());
     }
 
-    private static Row ip02() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip02", false, null, "type Ip02");
+    private static Row typeChain() {
+        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "TypeChain", false, null, "type TypeChain");
         return new Row(
-                "IP-02",
-                Ip02.class,
-                method(Ip02.class, "bar", String.class),
+                "type-chain",
+                TypeChain.class,
+                method(TypeChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(none(), type, none(), Outcome.chain(A.class), Outcome.chain(A.class)));
     }
 
-    private static Row ip03() {
+    private static Row methodChain() {
         InvocationPolicySource<Class<?>> methodSrc =
-                sources(List.of(B.class), "Ip03.bar", false, null, "method Ip03.bar");
+                sources(List.of(B.class), "MethodChain.bar", false, null, "method MethodChain.bar");
         return new Row(
-                "IP-03",
-                Ip03.class,
-                method(Ip03.class, "bar", String.class),
+                "method-chain",
+                MethodChain.class,
+                method(MethodChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, none(), none(), Outcome.chain(B.class), Outcome.chain(B.class)));
     }
 
-    private static Row ip04() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip04", false, null, "type Ip04");
+    private static Row methodOverridesType() {
+        InvocationPolicySource<Class<?>> type =
+                sources(List.of(A.class), "MethodOverridesType", false, null, "type MethodOverridesType");
         InvocationPolicySource<Class<?>> methodSrc =
-                sources(List.of(B.class), "Ip04.bar", false, null, "method Ip04.bar");
+                sources(List.of(B.class), "MethodOverridesType.bar", false, null, "method MethodOverridesType.bar");
         return new Row(
-                "IP-04",
-                Ip04.class,
-                method(Ip04.class, "bar", String.class),
+                "method-overrides-type",
+                MethodOverridesType.class,
+                method(MethodOverridesType.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, type, none(), Outcome.chain(B.class), Outcome.chain(B.class)));
     }
 
-    private static Row ip05() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip05", false, null, "type Ip05");
-        InvocationPolicySource<Class<?>> methodSrc = sources(null, null, true, "Ip05.bar", "method Ip05.bar");
+    private static Row methodSkipOverTypeChain() {
+        InvocationPolicySource<Class<?>> type =
+                sources(List.of(A.class), "MethodSkipOverTypeChain", false, null, "type MethodSkipOverTypeChain");
+        InvocationPolicySource<Class<?>> methodSrc =
+                sources(null, null, true, "MethodSkipOverTypeChain.bar", "method MethodSkipOverTypeChain.bar");
         return new Row(
-                "IP-05",
-                Ip05.class,
-                method(Ip05.class, "bar", String.class),
+                "method-skip-over-type-chain",
+                MethodSkipOverTypeChain.class,
+                method(MethodSkipOverTypeChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, type, none(), Outcome.chain(), Outcome.chain()));
     }
 
-    private static Row ip06() {
-        InvocationPolicySource<Class<?>> methodSrc = sources(null, null, true, "Ip06.bar", "method Ip06.bar");
+    private static Row methodSkipOnly() {
+        InvocationPolicySource<Class<?>> methodSrc =
+                sources(null, null, true, "MethodSkipOnly.bar", "method MethodSkipOnly.bar");
         return new Row(
-                "IP-06",
-                Ip06.class,
-                method(Ip06.class, "bar", String.class),
+                "method-skip-only",
+                MethodSkipOnly.class,
+                method(MethodSkipOnly.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, none(), none(), Outcome.chain(), Outcome.chain()));
     }
 
-    private static Row ip07() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip07", false, null, "type Ip07");
-        InvocationPolicySource<Class<?>> param =
-                sources(List.of(C.class), "Ip07.bar", false, null, "parameter 0 of method Ip07.bar");
+    private static Row parameterOverridesType() {
+        InvocationPolicySource<Class<?>> type =
+                sources(List.of(A.class), "ParameterOverridesType", false, null, "type ParameterOverridesType");
+        InvocationPolicySource<Class<?>> param = sources(
+                List.of(C.class),
+                "ParameterOverridesType.bar",
+                false,
+                null,
+                "parameter 0 of method ParameterOverridesType.bar");
         return new Row(
-                "IP-07",
-                Ip07.class,
-                method(Ip07.class, "bar", String.class),
+                "parameter-overrides-type",
+                ParameterOverridesType.class,
+                method(ParameterOverridesType.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(none(), type, param, Outcome.chain(A.class), Outcome.chain(C.class)));
     }
 
-    private static Row ip08() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip08", false, null, "type Ip08");
-        InvocationPolicySource<Class<?>> param =
-                sources(null, null, true, "Ip08.bar", "parameter 0 of method Ip08.bar");
+    private static Row parameterSkipOverTypeChain() {
+        InvocationPolicySource<Class<?>> type =
+                sources(List.of(A.class), "ParameterSkipOverTypeChain", false, null, "type ParameterSkipOverTypeChain");
+        InvocationPolicySource<Class<?>> param = sources(
+                null,
+                null,
+                true,
+                "ParameterSkipOverTypeChain.bar",
+                "parameter 0 of method ParameterSkipOverTypeChain.bar");
         return new Row(
-                "IP-08",
-                Ip08.class,
-                method(Ip08.class, "bar", String.class),
+                "parameter-skip-over-type-chain",
+                ParameterSkipOverTypeChain.class,
+                method(ParameterSkipOverTypeChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(none(), type, param, Outcome.chain(A.class), Outcome.chain()));
     }
 
-    private static Row ip09() {
-        InvocationPolicySource<Class<?>> methodSrc =
-                sources(List.of(B.class), "Ip09Iface.bar", false, null, "method Ip09.bar");
+    private static Row interfaceMethodChain() {
+        InvocationPolicySource<Class<?>> methodSrc = sources(
+                List.of(B.class), "InterfaceMethodChainIface.bar", false, null, "method InterfaceMethodChain.bar");
         return new Row(
-                "IP-09",
-                Ip09.class,
-                method(Ip09.class, "bar", String.class),
+                "interface-method-chain",
+                InterfaceMethodChain.class,
+                method(InterfaceMethodChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, none(), none(), Outcome.chain(B.class), Outcome.chain(B.class)));
     }
 
-    private static Row ip10() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip10Base", false, null, "type Ip10");
+    private static Row superclassTypeChain() {
+        InvocationPolicySource<Class<?>> type =
+                sources(List.of(A.class), "SuperclassTypeChainBase", false, null, "type SuperclassTypeChain");
         return new Row(
-                "IP-10",
-                Ip10.class,
-                method(Ip10.class, "bar", String.class),
+                "superclass-type-chain",
+                SuperclassTypeChain.class,
+                method(SuperclassTypeChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(none(), type, none(), Outcome.chain(A.class), Outcome.chain(A.class)));
     }
 
-    private static Row ip11() {
+    private static Row composedAnnotation() {
         InvocationPolicySource<Class<?>> methodSrc =
-                sources(List.of(B.class), "Ip11.bar", false, null, "method Ip11.bar");
+                sources(List.of(B.class), "ComposedAnnotation.bar", false, null, "method ComposedAnnotation.bar");
         return new Row(
-                "IP-11",
-                Ip11.class,
-                method(Ip11.class, "bar", String.class),
+                "composed-annotation",
+                ComposedAnnotation.class,
+                method(ComposedAnnotation.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, none(), none(), Outcome.chain(B.class), Outcome.chain(B.class)));
     }
 
-    private static Row ip12() {
-        InvocationPolicySource<Class<?>> param =
-                sources(List.of(C.class), "Ip12Iface.bar", false, null, "parameter 0 of method Ip12.bar");
+    private static Row interfaceParameterChain() {
+        InvocationPolicySource<Class<?>> param = sources(
+                List.of(C.class),
+                "InterfaceParameterChainIface.bar",
+                false,
+                null,
+                "parameter 0 of method InterfaceParameterChain.bar");
         return new Row(
-                "IP-12",
-                Ip12.class,
-                method(Ip12.class, "bar", String.class),
+                "interface-parameter-chain",
+                InterfaceParameterChain.class,
+                method(InterfaceParameterChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(none(), none(), param, Outcome.chain(), Outcome.chain(C.class)));
     }
 
-    private static Row ip13() {
-        InvocationPolicySource<Class<?>> canonType = sources(List.of(K.class), "Ip13", false, null, "type Ip13");
+    private static Row independentAxes() {
+        InvocationPolicySource<Class<?>> canonType =
+                sources(List.of(K.class), "IndependentAxes", false, null, "type IndependentAxes");
         InvocationPolicySource<Class<?>> saniMethod =
-                sources(List.of(B.class), "Ip13.bar", false, null, "method Ip13.bar");
+                sources(List.of(B.class), "IndependentAxes.bar", false, null, "method IndependentAxes.bar");
         return new Row(
-                "IP-13",
-                Ip13.class,
-                method(Ip13.class, "bar", String.class),
+                "independent-axes",
+                IndependentAxes.class,
+                method(IndependentAxes.class, "bar", String.class),
                 0,
                 axis(none(), canonType, none(), Outcome.chain(K.class), Outcome.chain(K.class)),
                 axis(saniMethod, none(), none(), Outcome.chain(B.class), Outcome.chain(B.class)));
     }
 
-    private static Row ip14() {
-        InvocationPolicySource<Class<?>> methodSrc =
-                sources(List.of(B.class), "Ip14.bar", true, "Ip14.bar", "method Ip14.bar");
+    private static Row sameMethodConflict() {
+        InvocationPolicySource<Class<?>> methodSrc = sources(
+                List.of(B.class),
+                "SameMethodConflict.bar",
+                true,
+                "SameMethodConflict.bar",
+                "method SameMethodConflict.bar");
         return new Row(
-                "IP-14",
-                Ip14.class,
-                method(Ip14.class, "bar", String.class),
+                "same-method-conflict",
+                SameMethodConflict.class,
+                method(SameMethodConflict.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(
                         methodSrc,
                         none(),
                         none(),
-                        Outcome.conflict("method Ip14.bar", "Ip14.bar", "Ip14.bar"),
+                        Outcome.conflict(
+                                "method SameMethodConflict.bar", "SameMethodConflict.bar", "SameMethodConflict.bar"),
                         Outcome.chain()));
     }
 
-    private static Row ip15() {
-        InvocationPolicySource<Class<?>> param =
-                sources(List.of(C.class), "Ip15.bar", true, "Ip15.bar", "parameter 0 of method Ip15.bar");
+    private static Row sameParameterConflict() {
+        InvocationPolicySource<Class<?>> param = sources(
+                List.of(C.class),
+                "SameParameterConflict.bar",
+                true,
+                "SameParameterConflict.bar",
+                "parameter 0 of method SameParameterConflict.bar");
         return new Row(
-                "IP-15",
-                Ip15.class,
-                method(Ip15.class, "bar", String.class),
+                "same-parameter-conflict",
+                SameParameterConflict.class,
+                method(SameParameterConflict.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(
@@ -242,25 +291,29 @@ public final class InvocationPolicyScenarios {
                         none(),
                         param,
                         Outcome.chain(),
-                        Outcome.conflict("parameter 0 of method Ip15.bar", "Ip15.bar", "Ip15.bar")));
+                        Outcome.conflict(
+                                "parameter 0 of method SameParameterConflict.bar",
+                                "SameParameterConflict.bar",
+                                "SameParameterConflict.bar")));
     }
 
-    private static Row ip16() {
-        InvocationPolicySource<Class<?>> methodSrc = sources(null, null, true, "Ip16Iface.bar", "method Ip16.bar");
+    private static Row interfaceMethodSkip() {
+        InvocationPolicySource<Class<?>> methodSrc =
+                sources(null, null, true, "InterfaceMethodSkipIface.bar", "method InterfaceMethodSkip.bar");
         return new Row(
-                "IP-16",
-                Ip16.class,
-                method(Ip16.class, "bar", String.class),
+                "interface-method-skip",
+                InterfaceMethodSkip.class,
+                method(InterfaceMethodSkip.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, none(), none(), Outcome.chain(), Outcome.chain()));
     }
 
-    private static Row ip17() {
+    private static Row overrideSkipConflict() {
         InvocationPolicySource<Class<?>> methodSrc =
                 sources(List.of(B.class), "IFoo.bar", true, "FooImpl.bar", "method FooImpl.bar");
         return new Row(
-                "IP-17",
+                "override-skip-conflict",
                 FooImpl.class,
                 method(FooImpl.class, "bar", String.class),
                 0,
@@ -273,27 +326,38 @@ public final class InvocationPolicyScenarios {
                         Outcome.chain()));
     }
 
-    private static Row ip18() {
+    private static Row overrideReplacesChain() {
         InvocationPolicySource<Class<?>> methodSrc =
-                sources(List.of(A.class), "Ip18.bar", false, null, "method Ip18.bar");
+                sources(List.of(A.class), "OverrideReplacesChain.bar", false, null, "method OverrideReplacesChain.bar");
         return new Row(
-                "IP-18",
-                Ip18.class,
-                method(Ip18.class, "bar", String.class),
+                "override-replaces-chain",
+                OverrideReplacesChain.class,
+                method(OverrideReplacesChain.class, "bar", String.class),
                 0,
                 emptyAxis(),
                 axis(methodSrc, none(), none(), Outcome.chain(A.class), Outcome.chain(A.class)));
     }
 
-    private static Row ip19() {
-        InvocationPolicySource<Class<?>> type = sources(List.of(A.class), "Ip19", true, "Ip19Base", "type Ip19");
+    private static Row supertypeSkipConflict() {
+        InvocationPolicySource<Class<?>> type = sources(
+                List.of(A.class),
+                "SupertypeSkipConflict",
+                true,
+                "SupertypeSkipConflictBase",
+                "type SupertypeSkipConflict");
         return new Row(
-                "IP-19",
-                Ip19.class,
-                method(Ip19.class, "bar", String.class),
+                "supertype-skip-conflict",
+                SupertypeSkipConflict.class,
+                method(SupertypeSkipConflict.class, "bar", String.class),
                 0,
                 emptyAxis(),
-                axis(none(), type, none(), Outcome.conflict("type Ip19", "Ip19", "Ip19Base"), Outcome.chain()));
+                axis(
+                        none(),
+                        type,
+                        none(),
+                        Outcome.conflict(
+                                "type SupertypeSkipConflict", "SupertypeSkipConflict", "SupertypeSkipConflictBase"),
+                        Outcome.chain()));
     }
 
     private static AxisExpectation axis(
@@ -347,8 +411,8 @@ public final class InvocationPolicyScenarios {
 
     /**
      * Builds the exact conflict message the resolver's exception constructor is expected to produce
-     * (contract L75-80): both proofs use this single formatter so the fixed tail is never restated as
-     * a second literal that could silently drift.
+     * (see {@code InvocationPolicyConflictException}): both proofs use this single formatter so the fixed
+     * tail is never restated as a second literal that could silently drift.
      *
      * @param axis               the conflicting axis
      * @param additiveDeclaredAt the additive annotation's declaration site
@@ -370,9 +434,9 @@ public final class InvocationPolicyScenarios {
 
     /**
      * Builds the exact WARN {@code InvocationPolicyResolver} is expected to log when a skip declared
-     * on a <em>supertype</em> site removes a non-empty additive chain declared one level below
-     * (security review R2): the precedence is unchanged — the skip still wins — but the removal is
-     * announced instead of being silent.
+     * on a <em>supertype</em> site removes a non-empty additive chain declared one level below: the
+     * precedence is unchanged — the skip still wins — but the removal is announced instead of being
+     * silent.
      *
      * <p>Both proofs (the stub-driven {@code InvocationPolicyResolverTest} and the real-carrier
      * {@code ReflectiveInvocationPoliciesTest}) format the expectation here, so the message shape is
@@ -410,9 +474,9 @@ public final class InvocationPolicyScenarios {
     // --- Row / expectation shapes ---
 
     /**
-     * One IP-01..IP-19 scenario row: stub sources for TP-001 (via {@link #canonicalize()} /
-     * {@link #sanitize()}) and a real carrier for TP-002 (via {@link #owner()} / {@link #method()} /
-     * {@link #parameterIndex()}).
+     * One scenario row: stub sources for the resolver proof (via {@link #canonicalize()} /
+     * {@link #sanitize()}) and a real carrier for the reflection proof (via {@link #owner()} /
+     * {@link #method()} / {@link #parameterIndex()}).
      */
     public record Row(
             String id,
@@ -429,7 +493,7 @@ public final class InvocationPolicyScenarios {
     }
 
     /**
-     * One axis's expectation for a row: the stub sources TP-001 feeds to
+     * One axis's expectation for a row: the stub sources the resolver proof feeds to
      * {@code InvocationPolicyResolver}, and the expected route/parameter {@link Outcome}s both proofs
      * assert against.
      */
@@ -470,103 +534,103 @@ public final class InvocationPolicyScenarios {
     // --- Carriers ---
     // Every carrier method is bar(String) so every row exercises both resolveRoute/resolveRouteChain
     // and resolveParameter/resolveParameterChain uniformly at parameterIndex 0; the resolver's message
-    // shape omits the parameter list (contract L75-77), so this is safe even for the exact-message
-    // rows (IP-14, IP-17).
+    // shape omits the parameter list, so this is safe even for the exact-message
+    // rows (same-method-conflict, override-skip-conflict).
 
-    static class Ip01 {
+    static class NoPolicy {
         public void bar(String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip02 {
+    static class TypeChain {
         public void bar(String p) {}
     }
 
-    static class Ip03 {
+    static class MethodChain {
         @Sanitize(B.class)
         public void bar(String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip04 {
+    static class MethodOverridesType {
         @Sanitize(B.class)
         public void bar(String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip05 {
+    static class MethodSkipOverTypeChain {
         @SkipSanitization
         public void bar(String p) {}
     }
 
-    static class Ip06 {
+    static class MethodSkipOnly {
         @SkipSanitization
         public void bar(String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip07 {
+    static class ParameterOverridesType {
         public void bar(@Sanitize(C.class) String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip08 {
+    static class ParameterSkipOverTypeChain {
         public void bar(@SkipSanitization String p) {}
     }
 
-    interface Ip09Iface {
+    interface InterfaceMethodChainIface {
         @Sanitize(B.class)
         void bar(String p);
     }
 
-    static class Ip09 implements Ip09Iface {
+    static class InterfaceMethodChain implements InterfaceMethodChainIface {
         @Override
         public void bar(String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip10Base {
+    static class SuperclassTypeChainBase {
         public void bar(String p) {}
     }
 
-    static class Ip10 extends Ip10Base {}
+    static class SuperclassTypeChain extends SuperclassTypeChainBase {}
 
-    static class Ip11 {
+    static class ComposedAnnotation {
         @ComposedSanitize
         public void bar(String p) {}
     }
 
-    interface Ip12Iface {
+    interface InterfaceParameterChainIface {
         void bar(@Sanitize(C.class) String p);
     }
 
-    static class Ip12 implements Ip12Iface {
+    static class InterfaceParameterChain implements InterfaceParameterChainIface {
         @Override
         public void bar(String p) {}
     }
 
     @Canonicalize(K.class)
-    static class Ip13 {
+    static class IndependentAxes {
         @Sanitize(B.class)
         public void bar(String p) {}
     }
 
-    static class Ip14 {
+    static class SameMethodConflict {
         @Sanitize(B.class)
         @SkipSanitization
         public void bar(String p) {}
     }
 
-    static class Ip15 {
+    static class SameParameterConflict {
         public void bar(@Sanitize(C.class) @SkipSanitization String p) {}
     }
 
-    interface Ip16Iface {
+    interface InterfaceMethodSkipIface {
         @SkipSanitization
         void bar(String p);
     }
 
-    static class Ip16 implements Ip16Iface {
+    static class InterfaceMethodSkip implements InterfaceMethodSkipIface {
         @Override
         public void bar(String p) {}
     }
@@ -582,22 +646,22 @@ public final class InvocationPolicyScenarios {
         public void bar(String p) {}
     }
 
-    static class Ip18Base {
+    static class OverrideReplacesChainBase {
         @Sanitize(B.class)
         public void bar(String p) {}
     }
 
-    static class Ip18 extends Ip18Base {
+    static class OverrideReplacesChain extends OverrideReplacesChainBase {
         @Override
         @Sanitize(A.class)
         public void bar(String p) {}
     }
 
     @SkipSanitization
-    static class Ip19Base {
+    static class SupertypeSkipConflictBase {
         public void bar(String p) {}
     }
 
     @Sanitize(A.class)
-    static class Ip19 extends Ip19Base {}
+    static class SupertypeSkipConflict extends SupertypeSkipConflictBase {}
 }
