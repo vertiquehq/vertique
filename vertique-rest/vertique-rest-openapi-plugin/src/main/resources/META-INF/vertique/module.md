@@ -9,7 +9,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.openapi`
 > **Artifact:** `vertique-rest-openapi-plugin`
 
-A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, `ScalarOptionalModelConverter` resolves `OptionalInt`/`OptionalLong`/`OptionalDouble` to scalar schemas, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types. Each model converter also initializes swagger-core's shared registry under the `ModelConverters` monitor before the Maven plugin registers application-specific converters, keeping parallel Maven reactor builds deterministic.
+A thin build-time module that provides Swagger `ModelConverter`s and two `OpenAPIExtension`s for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, `ScalarOptionalModelConverter` resolves `OptionalInt`/`OptionalLong`/`OptionalDouble` to scalar schemas, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types. `SecurityRequirementsExtension` makes the `security` of each generated operation the one the runtime enforces (see below). Each model converter also initializes swagger-core's shared registry under the `ModelConverters` monitor before the Maven plugin registers application-specific converters, keeping parallel Maven reactor builds deterministic.
 
 ---
 
@@ -207,6 +207,21 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
 **Limitation:** `@FormParam` fields are not included in the generated spec because form parameters belong to a request body, not individual OpenAPI parameters. The runtime correctly binds `@FormParam` record components; only spec generation omits them.
 
 **Registration** — declared via `ServiceLoader`, so no `pom.xml` change is required in consumer modules beyond including `rest-openapi-plugin` on the swagger-maven-plugin classpath (see [Configuration](#configuration)); the service file is packaged at `META-INF/services/io.swagger.v3.jaxrs2.ext.OpenAPIExtension`.
+
+### SecurityRequirementsExtension
+
+Swagger's reader adds the class-level `@SecurityRequirement` requirements to every operation and then appends the method's own, so an unmodified build-time `openapi.json` lists both. The runtime resolves one level only, and this extension makes the generated operation match it:
+
+1. the method declares requirements (`@SecurityRequirement`, `@SecurityRequirements` or `@Operation(security = ...)`): the operation lists those, **replacing** the class-level ones;
+2. otherwise the resource class declares requirements: the operation lists those;
+3. otherwise an empty `@SecurityRequirements({})` on the method or on the class that declares it: the operation gets `security: []` (public);
+4. otherwise the operation has no `security` member, and the document level applies.
+
+An empty `@SecurityRequirements({})` on a method does not clear a class-level requirement, as at runtime. `@OpenAPIDefinition(security = ...)` is not touched. A `combine` requirement keeps its AND-group shape.
+
+**Limitation:** the requirements are read from the method and the declarations it overrides, as the runtime reads them. The empty marker is read only from the method and the class that declares it, so a marker on a subclass of that class is not seen at build time. A marker inherited from a superclass or interface is not honoured by the runtime (it refuses to start), and the build-time file does not treat it as a marker either unless the superclass declares the method.
+
+**Registration** — `ServiceLoader`, like `RequestParamsExtension`: no `pom.xml` change beyond having this artifact on the swagger-maven-plugin classpath.
 
 ---
 
