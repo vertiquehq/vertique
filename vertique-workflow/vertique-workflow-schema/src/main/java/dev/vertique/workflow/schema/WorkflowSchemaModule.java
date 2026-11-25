@@ -29,10 +29,13 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
  * and {@link WorkflowStateCompatibility}, which compares the state classes of definitions that share an id across
  * scopes by their JSON Schemas: added properties are allowed, removed or retyped properties are not.
  *
- * <p>It also binds the {@link WorkflowPlanSchemaProducer} that lets the engine store each version's start schema and
- * declared signal names on its definition row.
+ * <p>It also binds the {@link WorkflowPlanSchemaProducer} that lets the engine store each version's start schema on
+ * its definition row. The producer produces the start, decision and output schemas only; the declared signal names
+ * come from {@code DeclaredSignalNames} in the core module.
  *
- * <p>Registration validators run synchronously on the registering thread; call {@code activate} off the event loop.
+ * <p>Registration validators run synchronously on the registering thread. The lifecycle builds the plan for
+ * {@code publish} and {@code activate} through {@code executeBlocking} on the current Vert.x context, so a caller
+ * already on a Vert.x context need not leave it.
  */
 @Module
 public abstract class WorkflowSchemaModule {
@@ -68,8 +71,8 @@ public abstract class WorkflowSchemaModule {
     abstract WorkflowStateCompatibility stateCompatibility(SchemaStateCompatibility compatibility);
 
     /**
-     * Binds the producer of the start and decision schemas that definition rows store, so a node with this module
-     * writes the signal names and the start schema of a version together with its plan hash.
+     * Binds the producer of the start, decision and output schemas, so a node with this module writes the start
+     * schema of a version together with its plan hash. The declared signal names do not come from the producer.
      *
      * @param producer the default implementation
      * @return the producer as the framework-internal interface

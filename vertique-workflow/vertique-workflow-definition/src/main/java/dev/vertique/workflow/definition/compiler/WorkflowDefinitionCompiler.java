@@ -100,7 +100,7 @@ public final class WorkflowDefinitionCompiler {
      * compiler that serves documents from an untrusted source must use the constructor that takes the
      * type-name index, which never loads a class by name.
      *
-     * @param lookup the facade over all 10 named callback registries; non-null
+     * @param lookup the facade over the named callback registries; non-null
      * @param profile the expression profile used to build the expression environment for decision
      *     steps; non-null
      * @param decisionRouteCompiler the compiler for decision route tables; non-null
@@ -117,7 +117,7 @@ public final class WorkflowDefinitionCompiler {
      * does not know fails with {@code WorkflowUnknownTypeNameException} and no class is loaded by
      * name.
      *
-     * @param lookup the facade over all 10 named callback registries; non-null
+     * @param lookup the facade over the named callback registries; non-null
      * @param profile the expression profile used to build the expression environment for decision
      *     steps; non-null
      * @param decisionRouteCompiler the compiler for decision route tables; non-null

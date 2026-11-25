@@ -10,7 +10,9 @@ import dev.vertique.workflow.ops.WorkflowOperations;
 import io.vertx.sqlclient.SqlClient;
 
 /**
- * Public composite handle that re-bundles the four already-public workflow engine interfaces into a
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
+ * <p>Public composite handle that re-bundles the four already-public workflow engine interfaces into a
  * single type, and exposes the execution probe and the executor control of the same engine.
  *
  * <p>It exists as the return type of the {@link WorkflowEngineFactory} assembly seam so that callers outside the

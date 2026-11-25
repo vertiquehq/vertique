@@ -42,19 +42,18 @@ public interface WorkflowDefinitionService {
     /**
      * Deprecates an available definition so it is refused for new starts, whether named or selected by an
      * activation record, and as a migration target, while instances already pinned to it keep running. The status is
-     * committed durably before it is projected into the local cache and registry. The version that the default
-     * scope's activation record of the id names is refused with {@code INVALID_TRANSITION} until another version is
-     * activated in the default scope or {@link #deactivateDefault(String)} clears the record. A durable registry is
-     * required; without one the returned future fails.
+     * committed to the registry store through the lifecycle, which then updates the node's view of the definition.
+     * The version that the default scope's activation record of the id names is refused with
+     * {@code INVALID_TRANSITION} until another version is activated in the default scope or
+     * {@link #deactivateDefault(String)} clears the record.
      */
     Future<Void> deprecate(DefinitionKey key);
     /**
      * Retires a candidate, or a deprecated definition as soon as no instance is pinned to it, so it
-     * can no longer be published or resolved. The durable status is committed first, together with the pin
-     * check, and then projected into the local cache; a refused retirement fails typed and changes
+     * can no longer be published or resolved. The status is committed to the registry store first, together
+     * with the pin check, and the node's view is updated afterwards; a refused retirement fails typed and changes
      * nothing. The local runtime is removed only when it is the registration published for this key. The version
-     * that the default scope's activation record of the id names is refused like a deprecation of it. A
-     * durable registry is required; without one the returned future fails.
+     * that the default scope's activation record of the id names is refused like a deprecation of it.
      */
     Future<Void> retire(DefinitionKey key);
     /**
@@ -62,9 +61,8 @@ public interface WorkflowDefinitionService {
      * source: the deployed code for a code version, the stored text for a document version. A deprecated version is
      * still registered, so only its status and deprecation mark change. The future fails typed with
      * {@code CODE_UNAVAILABLE}, {@code DRIFT}, {@code LOADER_MISSING} or {@code INVALID_TRANSITION}. When the
-     * durable change fails, the version keeps its status and only the registration this call published is removed;
-     * a registration that existed before the call stays. A durable registry is required; without one the returned
-     * future fails.
+     * change to the registry store fails, the version keeps its status and only the registration this call published
+     * is removed; a registration that existed before the call stays.
      */
     Future<Void> reinstate(DefinitionKey key);
     /**
@@ -72,8 +70,8 @@ public interface WorkflowDefinitionService {
      * version runs it. The target scope is the scope itself or the default scope, and the default scope may target
      * only itself; any other combination fails the future with {@link IllegalArgumentException}. The target version
      * must be available in the target scope, otherwise the future fails typed with {@code INVALID_TRANSITION}
-     * naming the target key. The scope's earlier record is replaced. Without a durable registry the record lives
-     * only in this node's view and is lost on restart.
+     * naming the target key. The scope's earlier record is replaced. The record is committed to the registry store, so it survives a
+     * restart and other nodes read it.
      */
     Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version);
     /**
@@ -92,8 +90,7 @@ public interface WorkflowDefinitionService {
     Future<Void> follow(String scopeKey, String definitionId);
     /**
      * Lists the activation records of one scope, or of every scope when {@code scopeKey} is {@code null}, ordered by
-     * definition id and then scope. With a durable registry the records are read from it; without one they are this
-     * node's view.
+     * definition id and then scope. The records are read from the registry store.
      */
     Future<List<DefinitionActivation>> activations(@Nullable String scopeKey);
     /** Returns an immutable, source-free metadata snapshot in the selected scope. */

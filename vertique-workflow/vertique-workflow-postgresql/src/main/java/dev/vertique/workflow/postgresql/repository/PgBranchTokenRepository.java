@@ -33,8 +33,7 @@ import java.util.UUID;
  *
  * <p>Branch transitions use optimistic concurrency on {@code version}; the
  * {@link #updateOptimistic} method returns the affected row count so callers can detect a stale
- * snapshot. Recovery queries surface RETRY_SCHEDULED branches whose {@code next_retry_at} is due
- * and stale RUNNING branches whose {@code updated_at} is older than a configurable threshold.
+ * snapshot.
  */
 @Singleton
 public final class PgBranchTokenRepository extends PgSqlRepository implements BranchTokenRepository<SqlClient> {

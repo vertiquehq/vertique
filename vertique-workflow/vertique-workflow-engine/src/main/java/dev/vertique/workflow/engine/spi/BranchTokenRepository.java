@@ -18,8 +18,7 @@ import java.util.UUID;
  * interface without binding to a specific database client.
  *
  * <p>Branch transitions use optimistic concurrency on {@code version}; {@link #updateOptimistic}
- * returns the affected row count so callers can detect a stale snapshot. Recovery queries surface
- * RETRY_SCHEDULED branches whose retry is due and stale RUNNING branches.
+ * returns the affected row count so callers can detect a stale snapshot.
  *
  * @param <TX> the transaction-handle type threaded through transactional operations
  */

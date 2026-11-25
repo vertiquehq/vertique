@@ -294,8 +294,9 @@ message; they are not treated as absent. Metadata listing never selects the sour
 `STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`, and is null for every other row. Only `recordFailure(key, failure)`
 writes it, in one `UPDATE` under the definition id lock that only matches a DOCUMENT row of a scope other than `default` (a default scope row, a CODE row or a RETIRED row is left untouched), and a startup or a reconciliation pass that finds no conflict clears it. `find` and
 `list` read it into `WorkflowDefinitionRecord.failure()` with the rule's fixed description as the detail; a reason this
-release does not know reads as no failure. A node refuses starts from its own startup evaluation, not from this column, so
-nodes that ship different code can rewrite it during a rolling deploy.
+release does not know reads as no failure. Nothing is refused when a start is recorded: the column refuses nothing, and a start of a failing version is
+recorded like any other. The executor fails the recorded start, judging from its own node's evaluation of the
+version and not from this column, so nodes that ship different code can rewrite it during a rolling deploy.
 
 The stored plan hash covers the compiled plan structure, not callback bodies. `name_binding` holds, as a JSON
 object, the binary name of each state and payload class the plan names, mapped to the name the hash used. The

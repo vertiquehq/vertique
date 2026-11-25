@@ -42,7 +42,11 @@ import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Verifies asynchronous service behavior when no durable registry or lifecycle is installed. */
+/**
+ * Verifies that the service keeps its outcomes, over an in-memory registry store and a recording lifecycle, for
+ * {@code load}, {@code publish}, {@code list} and {@code sourceMetadata}, and that it refuses invalid arguments and
+ * over-long source attribution before it stores anything.
+ */
 class DefinitionAsyncFallbackTest {
 
     record OrderState(String orderId) {}

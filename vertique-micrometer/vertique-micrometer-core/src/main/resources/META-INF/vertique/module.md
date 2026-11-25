@@ -324,7 +324,7 @@ abstract class AopBindingsModule {
 | `extraTags()` | Key-value pairs added on top, validated at binding time |
 | Duration | A `System.nanoTime()` delta, taken before `proceed()` and recorded when the returned future settles. It is never negative because the clock is monotonic — nothing clamps it |
 | Asynchronous methods | The sample is recorded when the downstream future settles, not when the method returns |
-| Isolation | Fire-and-forget: any `Throwable` the registry raises is caught and logged at WARN, except a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is rethrown. The original result or exception reaches the caller untouched |
+| Isolation | Fire-and-forget: a `Throwable` the registry raises is caught and logged at WARN with its class name only, except a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is rethrown. The original result or exception reaches the caller untouched |
 | Metrics disabled | With `MetricsConfig.enabled()` false, or a disabled config present, the interceptor records nothing and still passes the call through |
 | Cardinality | `extraTags()` keys are not in `GUARDED_TAG_KEYS`, so they are bounded by the application, not by the guard. Keep their value space small |
 

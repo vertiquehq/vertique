@@ -71,18 +71,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 /**
- * Verifies {@link DefaultWorkflowDefinitionService}:
+ * Verifies {@link DefaultWorkflowDefinitionService} over an in-memory registry store:
  * <ul>
- *   <li>{@link WorkflowDefinitionService#load} then
- *       {@link WorkflowDefinitionService#publish} succeeds and makes the definition
- *       resolvable via the registry.</li>
- *   <li>A load failure with invalid YAML leaves the store untouched; a prior active version
- *       remains accessible.</li>
- *   <li>{@link WorkflowDefinitionService#publish} without prior load fails its Future.</li>
- *   <li>Two distinct definitionIds loaded and activated concurrently both appear in the
- *       registry.</li>
- *   <li>A {@link RuntimeException} from {@code registry.register()} resets the PUBLISHING claim
- *       back to CANDIDATE so the caller can retry.</li>
+ *   <li>{@link WorkflowDefinitionService#load} stores a candidate under the named scope, keeps each scope's
+ *       candidates apart and refuses an invalid scope argument before it stores anything.</li>
+ *   <li>A load records the identity of the caller as the actor of the candidate, or none when there is no identity
+ *       or the mapper fails; a failing mapper never refuses the load.</li>
+ *   <li>A load failure (invalid YAML, a document over the size cap) leaves the store untouched; a prior
+ *       candidate remains listed.</li>
+ *   <li>A scope load of a default id under another contract is refused.</li>
  * </ul>
  */
 class DefaultWorkflowDefinitionServiceTest {
