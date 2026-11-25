@@ -132,11 +132,20 @@ class DocumentLevelSecurityTest {
         }
 
         @Test
-        @DisplayName("A marker reached only through a superclass fails startup")
-        void markerOnASuperclassFails() {
+        @DisplayName("A marker on an interface default method the resource does not override fails startup")
+        void markerOnAnInheritedDefaultMethodFails() {
             assertThrows(
                     RestConfigurationException.class,
+                    () -> effective(new InheritsDefaultMethodMarkerResource(), "get", bearerDocument()));
+        }
+
+        @Test
+        @DisplayName("A marker reached only through a superclass fails startup")
+        void markerOnASuperclassFails() {
+            RestConfigurationException failure = assertThrows(
+                    RestConfigurationException.class,
                     () -> effective(new InheritsSuperclassMarkerResource(), "get", bearerDocument()));
+            assertTrue(failure.getMessage().contains("inherits @SecurityRequirements({})"), failure.getMessage());
         }
 
         @Test
@@ -284,6 +293,52 @@ class DocumentLevelSecurityTest {
         }
 
         @Test
+        @DisplayName("@PermitAll with the marker under a document level stays anonymous")
+        void permitAllWithMarkerStaysAnonymous() {
+            RecordingContributor contributor = new RecordingContributor();
+            JaxRsRouterMount mount =
+                    applicationMount(factory(contributor), BearerApi.class, new PermitAllMarkedResource());
+            Router root = Router.router(vertx);
+            root.route(mount.mountPath()).subRouter(await(mount.createRouter(vertx)));
+            listen(root);
+
+            assertEquals(200, get("/api/login", null));
+            assertEquals(List.of(), contributor.descriptors.get("login").securityRequirementSets());
+        }
+
+        @Test
+        @DisplayName("Scopes from both the document and @Authorized fail startup naming the operation")
+        void documentScopesWithAuthorizedScopesFail() {
+            JaxRsRouterMount mount = applicationMount(
+                    factory(new RecordingContributor()), ScopedApi.class, new AuthorizedScopesResource());
+            Throwable failure = failureOf(() -> mount.createRouter(vertx));
+            assertTrue(failure instanceof RestConfigurationException, String.valueOf(failure));
+            assertTrue(failure.getMessage().contains("'scoped'"), failure.getMessage());
+            assertTrue(
+                    failure.getMessage().contains("both @Authorized and @SecurityRequirement"), failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("requireExplicitPolicy accepts an operation covered only by the document level")
+        void documentLevelCountsAsExplicit() {
+            JaxRsRouterMount.Factory strict = TestFactories.builder()
+                    .securitySchemeHandlers(Set.of(new BearerSchemeHandler()))
+                    .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
+                    .jaxRsConfig(dev.vertique.rest.core.config.JaxRsConfig.builder()
+                            .validationStrategy(dev.vertique.rest.jaxrs.validation.NoneValidationStrategy.ID)
+                            .security(new dev.vertique.rest.core.config.JaxRsSecurityConfig(true))
+                            .build())
+                    .build();
+
+            await(applicationMount(strict, BearerApi.class, new PlainResource()).createRouter(vertx));
+            JaxRsRouterMount withoutDocument = applicationMount(strict, NoDefinitionApi.class, new PlainResource());
+            Throwable control = failureOf(() -> withoutDocument.createRouter(vertx));
+            assertTrue(
+                    String.valueOf(control).contains("no explicit security policy"),
+                    "control: without the document the same operation is implicit and fails: " + control);
+        }
+
+        @Test
         @DisplayName("A hand-built mount has no document level")
         void handBuiltMountHasNoDocument() {
             RecordingContributor contributor = new RecordingContributor();
@@ -363,6 +418,20 @@ class DocumentLevelSecurityTest {
                 factory.createApplicationMount("/api/*", null, Set.of(resource), "orders", declaringType);
         mount.markValidated();
         return mount;
+    }
+
+    /** The router build's failure, whether it throws or returns a failed future. */
+    private static Throwable failureOf(java.util.function.Supplier<Future<?>> build) {
+        try {
+            build.get().toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException e) {
+            return e.getCause();
+        } catch (RuntimeException e) {
+            return e;
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        throw new AssertionError("expected the router build to fail");
     }
 
     private static <T> T await(Future<T> future) {
@@ -538,6 +607,31 @@ class DocumentLevelSecurityTest {
         }
     }
 
+    @Path("")
+    public static class PermitAllMarkedResource {
+        @GET
+        @Path("/login")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "login")
+        @jakarta.annotation.security.PermitAll
+        @SecurityRequirements({})
+        public String login() {
+            return "ok";
+        }
+    }
+
+    @Path("")
+    public static class AuthorizedScopesResource {
+        @GET
+        @Path("/scoped")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "scoped")
+        @dev.vertique.security.authz.Authorized(scopes = "write")
+        public String scoped() {
+            return "ok";
+        }
+    }
+
     public interface MarkedContract {
         @GET
         @Path("/get")
@@ -552,6 +646,18 @@ class DocumentLevelSecurityTest {
             return "ok";
         }
     }
+
+    public interface MarkedDefaultContract {
+        @GET
+        @Path("/get")
+        @SecurityRequirements({})
+        default String get() {
+            return "ok";
+        }
+    }
+
+    @Path("")
+    public static class InheritsDefaultMethodMarkerResource implements MarkedDefaultContract {}
 
     @SecurityRequirements({})
     public static class MarkedBase {}

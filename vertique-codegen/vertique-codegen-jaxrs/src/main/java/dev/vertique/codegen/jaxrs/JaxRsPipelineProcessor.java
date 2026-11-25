@@ -229,6 +229,10 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      */
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        if (!roundEnv.processingOver()) {
+            // Every round, so a type another processor generates later is checked too.
+            documentSecurityPlacement.validate(roundEnv);
+        }
         if (roundEnv.processingOver() || emitted) {
             return false;
         }
@@ -351,7 +355,6 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         JaxRsApplicationScanner.scan(roundEnv, ctx);
         List<TypeElement> declarations = RestApplicationScanner.scan(roundEnv, ctx);
         Set<TypeElement> rejectedDeclarations = applicationAnnotations.validate(declarations);
-        documentSecurityPlacement.validate(roundEnv, declarations);
         emitModule(diCandidates, declarations, rejectedDeclarations);
 
         emitted = true;

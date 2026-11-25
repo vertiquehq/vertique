@@ -4,7 +4,6 @@
 package dev.vertique.codegen.jaxrs.processor.validate;
 
 import dev.vertique.codegen.CodegenContext;
-import java.util.Collection;
 import java.util.Map;
 import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.AnnotationMirror;
@@ -26,6 +25,9 @@ import javax.lang.model.element.TypeElement;
  */
 public final class DocumentSecurityPlacementValidator {
 
+    /** FQN of {@code dev.vertique.rest.core.application.RestApplication}. */
+    private static final String REST_APPLICATION_FQN = "dev.vertique.rest.core.application.RestApplication";
+
     /** FQN of {@code io.swagger.v3.oas.annotations.OpenAPIDefinition}. */
     private static final String OPEN_API_DEFINITION_FQN = "io.swagger.v3.oas.annotations.OpenAPIDefinition";
 
@@ -42,18 +44,19 @@ public final class DocumentSecurityPlacementValidator {
 
     /**
      * Reports a compile error on every type of the round that carries {@code @OpenAPIDefinition}
-     * with a non-empty {@code security} and is not one of {@code declarations}.
+     * with a non-empty {@code security} and is not annotated {@code @RestApplication}. Runs on every
+     * round, so a type another processor generates in a later round is checked too.
      *
      * @param roundEnv the current round
-     * @param declarations the round's {@code @RestApplication} declaring interfaces
      */
-    public void validate(RoundEnvironment roundEnv, Collection<TypeElement> declarations) {
+    public void validate(RoundEnvironment roundEnv) {
         TypeElement openApiDefinition = ctx.elements().getTypeElement(OPEN_API_DEFINITION_FQN);
         if (openApiDefinition == null) {
             return;
         }
+        TypeElement restApplication = ctx.elements().getTypeElement(REST_APPLICATION_FQN);
         for (Element element : roundEnv.getElementsAnnotatedWith(openApiDefinition)) {
-            if (!(element instanceof TypeElement type) || declarations.contains(type)) {
+            if (!(element instanceof TypeElement type) || isDeclaration(type, restApplication)) {
                 continue;
             }
             if (declaresSecurity(type, openApiDefinition)) {
@@ -67,6 +70,18 @@ public final class DocumentSecurityPlacementValidator {
                                 type.getQualifiedName());
             }
         }
+    }
+
+    private static boolean isDeclaration(TypeElement type, TypeElement restApplication) {
+        if (restApplication == null) {
+            return false;
+        }
+        for (AnnotationMirror mirror : type.getAnnotationMirrors()) {
+            if (mirror.getAnnotationType().asElement().equals(restApplication)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean declaresSecurity(TypeElement type, TypeElement openApiDefinition) {
