@@ -59,11 +59,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * by {@link WorkflowPostgresqlModule} with no additional context-provider module installed), the
  * full lifecycle — start, live signal, and a branch-targeted signal — runs exactly as it
  * did before durable context support: {@code workflow_instances.metadata} is {@code NULL} throughout (every
- * capture is empty per FR-WF-CTX-010), no bind-related failure occurs (the FR-CTX-157b strict-context
- * guard never trips because the bind gate — explicit carrier {@code null} AND instance metadata
- * {@code null} — always skips the bind, per C2), and every side effect the definition emits still
- * completes. This proves NFR-WF-CTX-005's "no kill switch needed, the NULL-skip chain is the dark
- * path" claim end to end.
+ * capture is empty), no bind-related failure occurs (the strict-context guard never trips because
+ * the bind gate — explicit carrier {@code null} AND instance metadata {@code null} — always skips
+ * the bind), and every side effect the definition emits still completes. This proves that no kill
+ * switch is needed: the NULL-skip chain is the dark path.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -105,7 +104,7 @@ public class WorkflowDarkModeIT {
     /**
      * Fork with a single {@code ALL_REQUIRED} branch waiting on a signal. After {@code start}, the
      * single branch is WAITING and the parent instance is parked at JOIN. The test delivers the
-     * fork-triggering signal live (an instance-owned binder-row drive per S4), then delivers a
+     * fork-triggering signal live (an instance-owned binder-row drive), then delivers a
      * branch-targeted signal that drives the branch to completion, exercising the branch carrier
      * seam with zero registered namespaces.
      */
@@ -265,7 +264,7 @@ public class WorkflowDarkModeIT {
      * Runs a test's async chain on a duplicated Vert.x context.
      *
      * <p>Even in dark mode, {@link dev.vertique.context.DefaultContextHolder} write paths (bind /
-     * install) require a duplicated context (per FR-CTX-157b) — production dispatch entries always
+     * install) require a duplicated context (the write guard) — production dispatch entries always
      * reach the engine via a duplicate; this IT calls the engine directly from a JUnit thread, so it
      * must establish the duplicate itself, mirroring the other engine ITs.
      *
@@ -290,7 +289,7 @@ public class WorkflowDarkModeIT {
     }
 
     @Test
-    @DisplayName("AC-8 — dark mode: start, live signal, and branch signal leave metadata NULL throughout"
+    @DisplayName("dark mode: start, live signal, and branch signal leave metadata NULL throughout"
             + " with no bind-related failure")
     void darkMode_startSignalBranchSignal_metadataAlwaysNullAndBehaviorByteIdenticalToToday(VertxTestContext ctx) {
         Start payload = new Start("dm-1");
@@ -307,13 +306,13 @@ public class WorkflowDarkModeIT {
 
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(started -> probe.awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
-                // Post-start: metadata must be NULL (empty ambient capture per FR-WF-CTX-010).
+                // Post-start: metadata must be NULL (empty ambient capture).
                 .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
                     assertTrue(
                             isNull, "post-start workflow_instances.metadata must be NULL (no namespaces registered)");
                     return io.vertx.core.Future.succeededFuture(id);
                 }))
-                // Live signal: instance-owned binder-row drive (S4) triggers the fork.
+                // Live signal: instance-owned binder-row drive triggers the fork.
                 .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-start")
                         .compose(v -> probe.awaitIdle(id, IDLE_TIMEOUT))
                         .map(idle -> id))

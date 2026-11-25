@@ -48,10 +48,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests verifying that attempting to resume a workflow instance whose pinned
- * definition version is no longer registered in the engine produces a typed
- * {@link WorkflowVersionPinUnavailableException} with the {@code instanceId} populated, and that
- * the transaction is rolled back leaving the instance state unchanged (FR-WF-DEF-062).
+ * Integration tests verifying what happens when a workflow instance's pinned definition version is not
+ * registered in the engine that receives a signal for it: the signal is recorded, the engine without the version
+ * applies nothing, and the instance state stays unchanged.
  *
  * <p>Engine A knows v1 and is used to create a WAITING instance. Engine B has an empty registry
  * (does NOT know v1) and is used to send a signal. Recording a signal needs no plan, so the call succeeds and the
@@ -199,13 +198,13 @@ public class PgWorkflowEngineMissingPinResumeIT {
     // --- Tests ---
 
     /**
-     * FR-WF-DEF-062: A signal sent through engine B, which lacks the pinned version, is recorded: recording needs no
+     * A signal sent through engine B, which lacks the pinned version, is recorded: recording needs no
      * plan. Engine B applies nothing and the instance row stays as it was; engine A, which has the version, runs the
      * recorded command and the instance completes.
      */
     @Test
     @DisplayName(
-            "FR-WF-DEF-062 — signal via engine without pinned version is recorded, changes nothing, and the engine with the version applies it")
+            "signal via engine without pinned version is recorded, changes nothing, and the engine with the version applies it")
     void signalViaEngineWithoutPinnedVersionIsRecordedAndAppliedByTheEngineWithIt(VertxTestContext ctx) {
         String key = "missing-pin-signal-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -259,7 +258,7 @@ public class PgWorkflowEngineMissingPinResumeIT {
     }
 
     /**
-     * FR-WF-DEF-062: Verifying the scenario where the instance's {@code definition_version} column
+     * Verifies the scenario where the instance's {@code definition_version} column
      * references a version not in any live registry by directly updating the DB row to a fake
      * version that was never registered, then attempting a signal via engine A (which only knows v1).
      *
@@ -268,8 +267,7 @@ public class PgWorkflowEngineMissingPinResumeIT {
      * deployment are discovered after a rollback.
      */
     @Test
-    @DisplayName(
-            "FR-WF-DEF-062 — signal for an instance whose DB row references an unknown version is recorded and deferred")
+    @DisplayName("signal for an instance whose DB row references an unknown version is recorded and deferred")
     void resumeWhenDbRowReferencesUnknownVersionIsRecordedAndDeferred(VertxTestContext ctx) {
         String key = "missing-pin-db-version-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(

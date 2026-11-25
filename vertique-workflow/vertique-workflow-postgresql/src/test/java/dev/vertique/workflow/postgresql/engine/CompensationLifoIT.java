@@ -57,7 +57,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Engine-level integration test for LIFO compensation ordering (test plan §9.4 — 17a).
+ * Engine-level integration test for LIFO compensation ordering.
  *
  * <p>Verifies that when multiple compensable forward steps have completed and a subsequent step
  * fails, the engine emits compensation intents in LIFO order (most-recently-completed first) and

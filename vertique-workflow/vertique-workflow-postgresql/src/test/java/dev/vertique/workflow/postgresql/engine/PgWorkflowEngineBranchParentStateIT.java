@@ -58,13 +58,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that a branch's payload factory sees the parent workflow instance's state when the
- * fork is dispatched (FR-WF-PAR-031).
+ * fork is dispatched.
  *
- * <p>Before the fix, {@code BranchTransitionEngine} decoded the branch's own
- * {@link dev.vertique.workflow.state.BranchToken#resultJson()} (which is null for a freshly
- * created branch) and fell back to {@code "{}"} — payload factories saw a default-initialised
- * state object, regardless of what the parent had stored. This IT pins the regression: the
- * captured outbox-bound payload must echo the order id we set during {@code init}.
+ * <p>The branch's own {@link dev.vertique.workflow.state.BranchToken#resultJson()} is null for a freshly
+ * created branch, so it cannot be the source of the payload factory's state: a factory that saw it would get
+ * a default-initialised state object regardless of what the parent had stored. The captured outbox-bound
+ * payload must echo the order id set during {@code init}.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)

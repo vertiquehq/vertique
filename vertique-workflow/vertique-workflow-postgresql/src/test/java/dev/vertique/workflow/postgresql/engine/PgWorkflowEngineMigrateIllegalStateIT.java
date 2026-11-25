@@ -456,11 +456,11 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     // --- Tests ---
 
     /**
-     * AC #15a — Migrating a COMPLETED instance throws
+     * Migrating a COMPLETED instance throws
      * {@link WorkflowMigrationIllegalStateException}.
      */
     @Test
-    @DisplayName("AC #15a — migrate on COMPLETED instance is refused with WorkflowMigrationIllegalStateException")
+    @DisplayName("migrate on COMPLETED instance is refused with WorkflowMigrationIllegalStateException")
     void migrateCompletedInstance(VertxTestContext ctx) {
         String key = "migrate-completed-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -511,11 +511,11 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     }
 
     /**
-     * AC #15a — Migrating a CANCELLED instance throws
+     * Migrating a CANCELLED instance throws
      * {@link WorkflowMigrationIllegalStateException}.
      */
     @Test
-    @DisplayName("AC #15a — migrate on CANCELLED instance throws WorkflowMigrationIllegalStateException")
+    @DisplayName("migrate on CANCELLED instance throws WorkflowMigrationIllegalStateException")
     void migrateCancelledInstance(VertxTestContext ctx) {
         String key = "migrate-cancelled-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -563,7 +563,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     }
 
     /**
-     * AC #15b — Migrating an instance with active fork-branch state throws
+     * Migrating an instance with active fork-branch state throws
      * {@link WorkflowMigrationIllegalStateException}.
      *
      * <p>The fork definition starts and parks the instance at {@code WAITING} (join wait) with two
@@ -571,8 +571,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
      * active.
      */
     @Test
-    @DisplayName(
-            "AC #15b — migrate on instance with active fork-branch state is rejected and the instance stays on its version")
+    @DisplayName("migrate on instance with active fork-branch state is rejected and the instance stays on its version")
     void migrateInstanceWithActiveBranches(VertxTestContext ctx) {
         String key = "migrate-fork-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(

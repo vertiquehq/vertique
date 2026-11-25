@@ -80,7 +80,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * definition scope, id and version.
  *
  * <p>Each definition exists in the default scope and in {@code acme} with different step graphs (see
- * {@link ScopedApprovalFixture}). The engine has no scoped start yet, so an instance pinned to {@code acme} is made
+ * {@link ScopedApprovalFixture}). An instance pinned to {@code acme} is made
  * by starting it in the default scope and then stamping its row with the {@code acme} definition scope and plan
  * hash. The graphs share their step ids and initial state up to the first wait, so the stamped row is a valid row
  * for the {@code acme} plan. The graph holds no definition store, so both scopes may hold one id.

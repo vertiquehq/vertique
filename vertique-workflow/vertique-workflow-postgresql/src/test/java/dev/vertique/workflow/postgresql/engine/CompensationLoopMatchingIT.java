@@ -60,16 +60,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Engine-level integration test for compensation step matching when a plan loops back through the
  * same {@link dev.vertique.workflow.plan.WaitSignalNode}.
  *
- * <p>Before the fix, {@code collectCompletedCompensableStepIds} tracked only the <em>first</em>
- * {@code SIGNAL_RECEIVED} sequence per signal name ({@code signalNameToFirstSequence.putIfAbsent}).
- * For a plan that loops — dispatching and waiting on the same signal twice — only the first
- * iteration's dispatch was matched; the second was silently excluded because the signal sequence
- * comparison ({@code firstSignalSeq > dispatch2Seq}) was against the first signal's sequence
- * (which was already less than the second dispatch's sequence).
- *
- * <p>After the fix, the algorithm maintains per-name FIFOs of received-signal sequences and
- * consumes one entry per dispatch in order. Both dispatch occurrences are matched correctly,
- * and LIFO compensation order is preserved.
+ * <p>For a plan that loops — dispatching and waiting on the same signal twice — compensation
+ * matching must not pair every dispatch with the first received signal of that name; the second
+ * iteration's dispatch would then be silently excluded. The algorithm
+ * ({@code collectCompletedCompensableStepIds}) therefore maintains per-name FIFOs of
+ * received-signal sequences and consumes one entry per dispatch in order. Both dispatch
+ * occurrences are matched correctly, and LIFO compensation order is preserved.
  *
  * <p>Scenario:
  * <pre>
@@ -252,8 +248,8 @@ public class CompensationLoopMatchingIT {
      * Drives the loop-saga through two iterations (two dispatches + two "x" signals), then hits
      * the FailNode. Asserts that BOTH s1 occurrences are compensated via c1 in LIFO order.
      *
-     * <p>This test fails before the fix (second dispatch is excluded from compensation) and passes
-     * after the fix (per-name signal FIFO correctly matches both dispatches).
+     * <p>The per-name signal FIFO must match both dispatches; the second dispatch must not be
+     * excluded from compensation.
      */
     @Test
     @DisplayName("loop: both s1 dispatch occurrences are compensated (LIFO) after two signal deliveries")

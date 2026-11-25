@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Timeout;
  * can participate in the integration test suite and run as part of {@code verify} without needing
  * a dedicated module.
  *
- * <p>The validator is the enforcement point for cycle-4 design point §5: reminders require events.
+ * <p>The validator is the enforcement point for the rule that reminders require events.
  * Without a {@code WORKFLOW_EVENT} recorder, reminder fires produce only history entries and never
  * notify downstream consumers — a silent misconfiguration that must be caught at startup.
  */

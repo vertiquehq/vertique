@@ -89,7 +89,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * End-to-end integration test proving a JSON-defined workflow document executes through the same
  * {@link dev.vertique.workflow.engine.WorkflowEngineHandle} as code-first definitions, and
- * that JSON-compiled {@code planHash} values are valid (AC #10, AC #12).
+ * that JSON-compiled {@code planHash} values are valid.
  *
  * <p>This IT is fully independent from {@link DocumentDefinitionEndToEndYamlIT}:
  * <ul>
@@ -108,9 +108,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Assertions verified:
  * <ul>
- *   <li>AC #1 — document-defined workflow executes end-to-end via the engine.</li>
- *   <li>AC #4 — instance reaches {@link WorkflowStatus#COMPLETED}.</li>
- *   <li>AC #10 / AC #12 — JSON format produces a valid, non-blank planHash; the engine drives
+ *   <li>A document-defined workflow executes end-to-end via the engine.</li>
+ *   <li>The instance reaches {@link WorkflowStatus#COMPLETED}.</li>
+ *   <li>The JSON format produces a valid, non-blank planHash; the engine drives
  *       JSON-sourced instances to COMPLETED, proving source-encoding-agnostic execution.</li>
  * </ul>
  */
@@ -446,8 +446,8 @@ public class DocumentDefinitionEndToEndJsonIT {
      * Drives the JSON-defined order-fulfillment saga from start to COMPLETED by manually sending
      * the three expected signals.
      *
-     * <p>Verifies AC #1 (document-defined workflow executes via the engine), AC #4 (instance
-     * reaches COMPLETED), and that the definition version recorded in the DB matches the
+     * <p>Verifies that a document-defined workflow executes via the engine, that the instance
+     * reaches COMPLETED, and that the definition version recorded in the DB matches the
      * JSON-declared version (2).
      */
     @Test
@@ -490,7 +490,7 @@ public class DocumentDefinitionEndToEndJsonIT {
 
     /**
      * Verifies that the JSON-compiled {@code planHash} is non-blank and the definition is listed
-     * as {@link DefinitionStatus#AVAILABLE} by the service after bootstrap (AC #10, AC #12).
+     * as {@link DefinitionStatus#AVAILABLE} by the service after bootstrap.
      */
     @Test
     @DisplayName("JSON planHash is non-blank and definition is active in the service after bootstrap")

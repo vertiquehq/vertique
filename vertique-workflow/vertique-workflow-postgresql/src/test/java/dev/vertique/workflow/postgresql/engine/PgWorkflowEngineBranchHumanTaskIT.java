@@ -64,12 +64,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for {@link BranchTransitionEngine#branchHandleHumanTaskNode} (Slice 4).
+ * Integration tests for {@link BranchTransitionEngine#branchHandleHumanTaskNode}.
  *
  * <p>Uses a workflow plan with a fork where branch A enters a {@code HumanTaskNode} and branch B
  * waits on a signal. The {@link DefaultWorkflowRegistry} is constructed without a
  * {@link dev.vertique.workflow.plan.WorkflowPlanValidator} so the branch-owned
- * {@code HumanTaskNode} plan is accepted — the validator gate is slice 5's responsibility.
+ * {@code HumanTaskNode} plan is registered without plan validation.
  *
  * <p>Covers:
  * <ul>

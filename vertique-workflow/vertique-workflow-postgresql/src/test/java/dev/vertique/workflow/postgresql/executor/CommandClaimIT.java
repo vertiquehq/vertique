@@ -195,7 +195,7 @@ class CommandClaimIT {
 
                 long holdMs = 0;
                 if (situation == Situation.SHORTENED_BUDGET) {
-                    // E3's first attempt is held; take the instance's execution lock, release the call, and keep the
+                    // The first attempt is held; take the instance's execution lock, release the call, and keep the
                     // lock for two margins
                     await(Future.fromCompletionStage(a.runner.held()), IDLE);
                     assertThat(fixture.commandOf(id).claimToken()).isEqualTo(token);
@@ -348,7 +348,7 @@ class CommandClaimIT {
             firstDeadline++;
         }
         assertThat(firstDeadline).as("a call that hit the deadline").isLessThan(calls.size());
-        assertThat(firstDeadline).as("E3 retried the busy lock").isGreaterThanOrEqualTo(2);
+        assertThat(firstDeadline).as("the busy lock was retried").isGreaterThanOrEqualTo(2);
         for (int i = 2; i <= firstDeadline; i++) {
             assertThat(calls.get(i).duration)
                     .as("retry %d passes a shorter duration than the retry before it", i)

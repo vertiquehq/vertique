@@ -49,7 +49,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies the {@code FIRST_FAILURE} race-join policy (FR-WF-PAR-053).
+ * Verifies the {@code FIRST_FAILURE} race-join policy.
  *
  * <p>Setup: a fork with two branches under {@code FIRST_FAILURE}. Branch {@code a} is a
  * {@link dev.vertique.workflow.plan.FailNode} (terminates as FAILED); branch {@code b} is a
@@ -184,7 +184,7 @@ public class PgWorkflowEngineFirstFailureIT {
     }
 
     @Test
-    @DisplayName("AC #13 — FIRST_FAILURE takes the failure route on the first branch to terminate FAILED")
+    @DisplayName("FIRST_FAILURE takes the failure route on the first branch to terminate FAILED")
     void firstFailureAdvancesOnFirstFailingBranch(VertxTestContext ctx) {
         StartRace payload = new StartRace("rf1");
         StartCommand cmd = new StartCommand(

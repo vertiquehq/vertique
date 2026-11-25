@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for {@link PgBranchTokenQueryService} (NFR-WF-PAR-003).
+ * Integration tests for {@link PgBranchTokenQueryService}.
  *
  * <p>Covers the read API end-to-end against a real PostgreSQL container:
  * <ul>

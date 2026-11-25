@@ -69,7 +69,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       call {@code migrate(...)}.</li>
  * </ul>
  *
- * <p>After migration the following are asserted (AC #6):
+ * <p>After migration the following are asserted:
  * <ul>
  *   <li>The instance is re-pinned to v2 with the correct plan hash.</li>
  *   <li>The instance has been driven forward in the v2 plan (AnchorAtInitial → init-v2 →
@@ -324,12 +324,12 @@ public class PgWorkflowEngineMigrateIT {
     // --- Tests ---
 
     /**
-     * AC #6 happy path: start v1 instance via engineV1 (lands at WAITING), migrate to v2 via
+     * Happy path: start v1 instance via engineV1 (lands at WAITING), migrate to v2 via
      * engineMigrate, assert re-pin + history entry + instance advanced to COMPLETED on v2 plan
      * (AnchorAtInitial → init-v2 → CompleteNode).
      */
     @Test
-    @DisplayName("AC #6 — migrate v1→v2 re-pins instance, records WORKFLOW_MIGRATED history, advances on v2 plan")
+    @DisplayName("migrate v1→v2 re-pins instance, records WORKFLOW_MIGRATED history, advances on v2 plan")
     void migrateHappyPath(VertxTestContext ctx) {
         String idempotencyKey = "migrate-happy-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
