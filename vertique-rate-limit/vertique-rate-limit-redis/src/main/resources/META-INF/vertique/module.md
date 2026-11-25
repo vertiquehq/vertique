@@ -33,9 +33,9 @@ Bucket4jVertx.casBasedBuilder(sharedRedis)
   .asAsync()
 ```
 
-This is the only surface the pinned `bucket4j_jdk17-vertx:8.19.0` builder exposes — no
-`requestTimeout`, `maxRetries`, `expirationAfterWrite`, or client-clock hook. Timeout,
-attempt-bounding, and TTL maintenance are layered on top by this module:
+The pinned `bucket4j_jdk17-vertx:8.22.0` builder also offers `requestTimeout`, `maxRetries`,
+`retryStrategy`, `expirationAfterWrite` and `clientClock` hooks. This module uses none of them. It
+owns the timeout, attempt-bounding and TTL maintenance itself, layered on top:
 
 - **Operation deadline.** A Vert.x timer at `rateLimit.redis.operationTimeoutMs` bounds each
   clustered consume. Whichever of the deadline timer or the Bucket4j completion settles first wins;
@@ -43,9 +43,9 @@ attempt-bounding, and TTL maintenance are layered on top by this module:
   delivered to the caller or an observer a second time. Expiry is ambiguous — the in-flight
   compare-and-swap may or may not have committed — and is classified `TIMEOUT`, handled per the
   policy's `failureMode`.
-- **No Vertique-side retry.** Bucket4j's internal compare-and-swap loop is unbounded in 8.19.0; the
-  operation deadline above is the sole bound on total elapsed time. There is no `maxCasAttempts` to
-  configure.
+- **No Vertique-side retry.** The module does not set `maxRetries` or a retry strategy, so
+  Bucket4j's internal compare-and-swap loop is unbounded; the operation deadline above is the sole
+  bound on total elapsed time. There is no `maxCasAttempts` to configure.
 - **TTL maintenance.** After a write that consumes or creates bucket state, this module issues
   `PEXPIRE <physicalKey> <worstCaseTimeToFullMs + expirationSlackMs>` on the shared client. A
   TTL-write failure is diagnostic-only: it is logged and never changes the admission decision the
@@ -59,8 +59,8 @@ segment is the full 32-byte/64-character lowercase-hex `HMAC-SHA-256` of the can
 changes with it, old-generation buckets become unreachable and expire via TTL, and no separate key
 id needs to be bumped. Raw keys and HMAC output never reach telemetry, logs, or `toString()`.
 
-The compare-and-swap uses the acquiring JVM's wall clock — 8.19.0 exposes no injectable client-clock
-hook — so participating nodes must run synchronized time; clock skew can change which contender's
+The compare-and-swap uses the acquiring JVM's wall clock — this module does not configure a
+`clientClock` — so participating nodes must run synchronized time; clock skew can change which contender's
 refill calculation is accepted. There is no local fallback for a CLUSTERED policy: a Redis failure
 classifies per the policy's `failureMode` and never silently degrades to LOCAL state.
 
