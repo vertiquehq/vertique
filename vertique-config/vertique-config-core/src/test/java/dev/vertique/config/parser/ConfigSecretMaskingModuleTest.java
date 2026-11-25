@@ -368,6 +368,32 @@ class ConfigSecretMaskingModuleTest {
         }
 
         @Test
+        @DisplayName("a password that holds '#', '/', '?' or a raw '@' is masked in the mapper dump")
+        void delimiterPasswordMasked() throws Exception {
+            JsonNode json = tree(new Urls(
+                    "https://admin:12345#x@minio.internal:9000",
+                    "https://admin:12/34@api.example:8443/v1",
+                    Optional.of("https://admin:12?34@api.example"),
+                    List.of("https://admin:12@34#5@h:9000"),
+                    Map.of("orders", "https://admin:1%4034/5@h:9000/p"),
+                    null,
+                    "h"));
+
+            assertFalse(json.toString().contains("12345"), json.toString());
+            assertFalse(json.toString().contains("12/34"), json.toString());
+            assertFalse(json.toString().contains("12?34"), json.toString());
+            assertFalse(json.toString().contains("34#5"), json.toString());
+            assertFalse(json.toString().contains("1%4034"), json.toString());
+            assertEquals("https://***@minio.internal:9000", json.get("jdbcUrl").asText());
+            assertEquals("https://***@api.example:8443/v1", json.get("baseUrl").asText());
+            assertEquals("https://***@api.example", json.get("uri").asText());
+            assertEquals("https://***@h:9000", json.get("endpoints").get(0).asText());
+            assertEquals(
+                    "https://***@h:9000/p",
+                    json.get("endpointsByName").get("orders").asText());
+        }
+
+        @Test
         @DisplayName("a secret-named URL field masks whole: secret wins over URL")
         void secretNamedUrlMaskedWhole() throws Exception {
             JsonNode json =
