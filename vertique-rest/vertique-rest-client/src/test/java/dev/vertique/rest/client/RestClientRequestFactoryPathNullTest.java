@@ -139,7 +139,7 @@ class RestClientRequestFactoryPathNullTest {
         assertThat(path).isEqualTo("/items/default-id");
     }
 
-    // --- @BeanParam @PathParam parity (Codex round-7 finding) ---
+    // --- @BeanParam @PathParam parity ---
 
     @Test
     @DisplayName("buildPath throws when a @BeanParam @PathParam field is null and has no @DefaultValue")

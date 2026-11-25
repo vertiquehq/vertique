@@ -291,7 +291,7 @@ class RestClientRedirectSafetyIT {
     @Test
     @DisplayName("A cross-origin redirect forwards only safelisted headers and refuses a downgrade or userinfo")
     void crossOriginRedirectForwardsOnlySafelistedHeadersAndRefusesDowngrade() throws Exception {
-        // AC-070. Given server A on 127.0.0.1, server B on localhost, and an https server C whose
+        // Given server A on 127.0.0.1, server B on localhost, and an https server C whose
         // redirect leads back to A over plain http
         Origin a = startOrigin(LOOPBACK);
         Origin b = startOrigin(LOCALHOST);
@@ -354,7 +354,7 @@ class RestClientRedirectSafetyIT {
     @Test
     @DisplayName("A redirect with an unreadable Location is refused with a constant failure")
     void aRedirectWithAnUnreadableLocationIsRefusedWithAConstantFailure() throws Exception {
-        // AC-070. Given a server redirecting to a Location the client cannot read
+        // Given a server redirecting to a Location the client cannot read
         Origin a = startOrigin(LOOPBACK);
         a.handler = Origin.redirect(302, "http://h/a b?sig=SECRET");
         Plain client = builder().baseUrl(a.base()).build(Plain.class);
@@ -374,7 +374,7 @@ class RestClientRedirectSafetyIT {
     @Test
     @DisplayName("A same-origin hop keeps its headers and Vert.x method handling is unchanged")
     void sameOriginHopAndMethodHandlingAreUnchanged() {
-        // FR-031. Given a server with a same-origin 302, a 303 and a 307
+        // Given a server with a same-origin 302, a 303 and a 307
         Origin a = startOrigin(LOOPBACK);
         a.handler = request -> {
             switch (request.path()) {

@@ -20,7 +20,7 @@ class RetryAfterTest {
     private static final Instant NOW = Instant.parse("1994-11-06T08:49:37Z");
 
     @Test
-    @DisplayName("AC-010: HTTP-date and garbage parse against a fixed clock and cap at 24 hours")
+    @DisplayName("HTTP-date and garbage parse against a fixed clock and cap at 24 hours")
     void httpDateAndGarbageParseAgainstAFixedClockAndCapAtTwentyFourHours() {
         // Given the parser with a fixed clock at Sun, 06 Nov 1994 08:49:37 GMT
         RetryAfter parser = new RetryAfter(Clock.fixed(NOW, ZoneOffset.UTC));
@@ -41,7 +41,7 @@ class RetryAfterTest {
     }
 
     @Test
-    @DisplayName("AC-010: the parser never reads the system clock")
+    @DisplayName("the parser never reads the system clock")
     void theParserNeverReadsTheSystemClock() {
         // Given two parsers whose fixed clocks differ by an hour
         RetryAfter early = new RetryAfter(Clock.fixed(NOW, ZoneOffset.UTC));
@@ -56,7 +56,7 @@ class RetryAfterTest {
     }
 
     @Test
-    @DisplayName("AC-010: absent, blank, negative and oversized values are bounded")
+    @DisplayName("absent, blank, negative and oversized values are bounded")
     void absentBlankNegativeAndFarFutureValuesAreBounded() {
         // Given the parser with a fixed clock
         RetryAfter parser = new RetryAfter(Clock.fixed(NOW, ZoneOffset.UTC));

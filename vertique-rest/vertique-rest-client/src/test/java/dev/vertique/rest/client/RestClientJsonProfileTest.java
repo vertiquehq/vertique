@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the JSON profile selection surface on {@link RestClientBuilder}, {@link RestClient}
- * annotation, and {@link RestClientConfig} introduced in slice 3.1.
+ * annotation, and {@link RestClientConfig}.
  *
  * <p>Verifies:
  * <ul>

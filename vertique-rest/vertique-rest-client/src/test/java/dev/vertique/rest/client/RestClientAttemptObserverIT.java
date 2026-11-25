@@ -628,7 +628,7 @@ public class RestClientAttemptObserverIT {
 
     /**
      * A refused connection delivers one specific raw transport failure class to
-     * {@code onAttemptCompleted}. Supports AC-046.
+     * {@code onAttemptCompleted}.
      */
     @Test
     @DisplayName("refused connection: the attempt carries the raw transport failure class")

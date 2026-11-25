@@ -384,9 +384,9 @@ class BodyCaptureIT {
 
     // --- proofs ---
 
-    /** AC-095: capture is off by default; the builder and the configuration key turn it on. */
+    /** Capture is off by default; the builder and the configuration key turn it on. */
     @Test
-    @DisplayName("AC-095: body capture is off by default and a client or configuration turns it on")
+    @DisplayName("body capture is off by default and a client or configuration turns it on")
     void captureIsOffByDefaultAndTheBuilderOrConfigurationTurnsItOn() {
         // Given a recording interceptor and a server answering 200 with body ok
         RecordingServer server = okServer();
@@ -442,9 +442,9 @@ class BodyCaptureIT {
         assertAbsent(bothSeen.get(1).responseBody());
     }
 
-    /** AC-096: a completed exchange carries both bodies, as written and as received. */
+    /** A completed exchange carries both bodies, as written and as received. */
     @Test
-    @DisplayName("AC-096: a completed exchange carries both bodies")
+    @DisplayName("a completed exchange carries both bodies")
     void aCompletedExchangeCarriesBothBodies() {
         // Given a capturing client, a recording interceptor and a server that echoes the request body and type
         RecordingServer server = echoServer();
@@ -526,9 +526,9 @@ class BodyCaptureIT {
                 .orElseThrow(() -> new AssertionError("no completion for " + path + " in " + all.size()));
     }
 
-    /** AC-097: a streamed or incomplete body is reported as metadata only. */
+    /** A streamed or incomplete body is reported as metadata only. */
     @Test
-    @DisplayName("AC-097: a streamed or incomplete body is reported as metadata only")
+    @DisplayName("a streamed or incomplete body is reported as metadata only")
     void aStreamedOrIncompleteBodyIsReportedAsMetadataOnly() throws Exception {
         // Given servers able to produce each path
         RecordingServer big = support.server((request, body) ->
@@ -628,9 +628,9 @@ class BodyCaptureIT {
         assertMetadataOnly(streamSeen.responseBody(), "text/plain", 6);
     }
 
-    /** AC-097: a refusal before sending describes the body the caller wrote. */
+    /** A refusal before sending describes the body the caller wrote. */
     @Test
-    @DisplayName("AC-097: a relative request without a base URL reports the buffered body")
+    @DisplayName("a relative request without a base URL reports the buffered body")
     void anEarlyRefusalReportsTheBufferedBody() {
         // Given a capturing client without a base URL
         Recorder recorder = new Recorder();
@@ -646,9 +646,9 @@ class BodyCaptureIT {
         assertAbsent(seen.responseBody());
     }
 
-    /** AC-098: a followed redirect reports the final hop's response body. */
+    /** A followed redirect reports the final hop's response body. */
     @Test
-    @DisplayName("AC-098: a followed redirect reports the final hop's response body")
+    @DisplayName("a followed redirect reports the final hop's response body")
     void aFollowedRedirectReportsTheFinalHopsResponseBody() {
         // Given a capturing client that follows redirects and a server redirecting POST /a to /b, which
         // answers 200 with body done. A 303 is used because a 307 on a POST is returned, not followed.
@@ -689,9 +689,9 @@ class BodyCaptureIT {
         assertBuffered(both.get(1).responseBody(), "done", null);
     }
 
-    /** AC-097: a chunked response over the bound, read by a decoding codec, is metadata only. */
+    /** A chunked response over the bound, read by a decoding codec, is metadata only. */
     @Test
-    @DisplayName("AC-097: a chunked response over the bound read by a decoding codec is metadata only")
+    @DisplayName("a chunked response over the bound read by a decoding codec is metadata only")
     void aChunkedResponseOverTheBoundReadByADecodingCodecIsMetadataOnly() {
         // Given a capturing client with maxResponseBytes(1024) and a server streaming 1800 bytes with no length
         RecordingServer server = support.server((request, body) -> {
@@ -716,9 +716,9 @@ class BodyCaptureIT {
         assertMetadataOnly(seen.responseBody(), "text/plain", -1);
     }
 
-    /** AC-097: a body the caller pipes or discards is metadata only, with nothing copied. */
+    /** A body the caller pipes or discards is metadata only, with nothing copied. */
     @Test
-    @DisplayName("AC-097: a piped or discarded response body is metadata only")
+    @DisplayName("a piped or discarded response body is metadata only")
     void aPipedOrDiscardedResponseBodyIsMetadataOnly() {
         // Given a capturing client and a server answering 200 with a two-byte text body
         RecordingServer server = support.server((request, body) ->
@@ -739,9 +739,9 @@ class BodyCaptureIT {
         assertMetadataOnly(byPath(all, "/none").responseBody(), "text/plain", 2);
     }
 
-    /** AC-096: an empty body is absent, on the request and on the response, a 204 and a HEAD answer included. */
+    /** An empty body is absent, on the request and on the response, a 204 and a HEAD answer included. */
     @Test
-    @DisplayName("AC-096: an empty body is absent")
+    @DisplayName("an empty body is absent")
     void anEmptyBodyIsAbsent() {
         // Given a capturing client and a server answering 204, 200 with an empty body, and HEAD with a length
         RecordingServer server = support.server((request, body) -> {
@@ -776,9 +776,9 @@ class BodyCaptureIT {
         assertThat(byPath(all, "/none").completion().statusCode()).isEqualTo(204);
     }
 
-    /** AC-095: capture with no interceptor registered changes nothing for the caller. */
+    /** Capture with no interceptor registered changes nothing for the caller. */
     @Test
-    @DisplayName("AC-095: capture without an interceptor leaves the exchange unchanged")
+    @DisplayName("capture without an interceptor leaves the exchange unchanged")
     void captureWithoutAnInterceptorLeavesTheExchangeUnchanged() {
         // Given a capturing client with no interceptor and a server answering ok
         RecordingServer server = okServer();
@@ -801,9 +801,9 @@ class BodyCaptureIT {
         }
     }
 
-    /** AC-096: a JSON body the capture cannot encode does not change the outcome of the exchange. */
+    /** A JSON body the capture cannot encode does not change the outcome of the exchange. */
     @Test
-    @DisplayName("AC-096: a JSON body that cannot be encoded fails as it does without capture")
+    @DisplayName("a JSON body that cannot be encoded fails as it does without capture")
     void aJsonBodyThatCannotBeEncodedFailsAsItDoesWithoutCapture() {
         // Given a capturing and a plain client, each with a recorder, and a server answering ok
         RecordingServer server = okServer();
@@ -839,9 +839,9 @@ class BodyCaptureIT {
         assertThat(only(boundedRec).completion().error()).isSameAs(bounded);
     }
 
-    /** AC-099: bodies and credentials are unredacted while printing stays excluded. */
+    /** Bodies and credentials are unredacted while printing stays excluded. */
     @Test
-    @DisplayName("AC-099: bodies and credentials are unredacted while printing stays excluded")
+    @DisplayName("bodies and credentials are unredacted while printing stays excluded")
     void bodiesAndCredentialsAreUnredactedWhilePrintingStaysExcluded() {
         // Given a capturing client with a bearer credential source and a server answering with a token body
         RecordingServer server = support.server((request, body) ->

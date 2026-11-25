@@ -324,9 +324,8 @@ class InterceptorExtensionIT {
 
     // --- proofs ---
 
-    /** AC-023. */
     @Test
-    @DisplayName("AC-023: beforeRequest, failures and toString never show credentials; the completion snapshot does")
+    @DisplayName("beforeRequest, failures and toString never show credentials; the completion snapshot does")
     void beforeRequestFailuresAndToStringNeverShowCredentials() {
         // Given a credential source, a recording interceptor and a server that answers 500 to GET /x
         RecordingServer server = support.server(
@@ -390,7 +389,6 @@ class InterceptorExtensionIT {
                 .isFalse();
     }
 
-    /** FR-016, supporting. */
     @Test
     @DisplayName("the response head keeps every Set-Cookie value while its toString prints none")
     void theResponseHeadKeepsEverySetCookieValueWhileItsToStringPrintsNone() {
@@ -412,7 +410,6 @@ class InterceptorExtensionIT {
         assertThat(head.toString()).doesNotContain(SECRET).doesNotContain("pref");
     }
 
-    /** FR-016, supporting. */
     @Test
     @DisplayName("the snapshot carries the credential an asynchronous source resolved for the last original-origin hop")
     void theSnapshotCarriesTheCredentialAnAsynchronousSourceResolvedForTheLastOriginalOriginHop() {
@@ -478,9 +475,8 @@ class InterceptorExtensionIT {
         return text.toString();
     }
 
-    /** AC-039. */
     @Test
-    @DisplayName("AC-039: interceptors add headers in order and beforeRequest sees no credentials")
+    @DisplayName("interceptors add headers in order and beforeRequest sees no credentials")
     void interceptorsAddHeadersInOrderAndBeforeRequestSeesNoCredentials() {
         // Given interceptor A (key a) adding X-Trace: 1, B (key b) recording what it receives and adding X-Trace: 2,
         // a credential source and a recording server
@@ -623,9 +619,8 @@ class InterceptorExtensionIT {
         return MultiMap.caseInsensitiveMultiMap().addAll(ctx.headers()).add("X-Trace", value);
     }
 
-    /** AC-040. */
     @Test
-    @DisplayName("AC-040: a failing beforeRequest sends nothing and notifies once with its failure")
+    @DisplayName("a failing beforeRequest sends nothing and notifies once with its failure")
     void failingBeforeRequestSendsNothingAndNotifiesOnceWithItsFailure() {
         // Given a counting server and three failing interceptors: a failed future, a null result and a throw
         RecordingServer server = okServer();
@@ -666,9 +661,8 @@ class InterceptorExtensionIT {
         assertThat(server.openedConnections.get()).isZero();
     }
 
-    /** AC-041. */
     @Test
-    @DisplayName("AC-041: every buffered terminal path and every refusal before sending notifies exactly once")
+    @DisplayName("every buffered terminal path and every refusal before sending notifies exactly once")
     void everyBufferedTerminalPathAndEveryRefusalBeforeSendingNotifiesExactlyOnce() throws Exception {
         // Given servers able to produce each path, one exchange per path with its own recording client
         RecordingServer ok = okServer();
@@ -882,9 +876,8 @@ class InterceptorExtensionIT {
         assertThat(done.completion().target().port()).isEqualTo(port);
     }
 
-    /** AC-044. */
     @Test
-    @DisplayName("AC-044: a throwing interceptor neither changes the outcome nor skips the next")
+    @DisplayName("a throwing interceptor neither changes the outcome nor skips the next")
     void throwingInterceptorNeitherChangesTheOutcomeNorSkipsTheNext() {
         // Given interceptors A to D whose onAttemptCompleted throws, E that records, and a server answering "ok"
         RecordingServer server = okServer();
@@ -929,7 +922,6 @@ class InterceptorExtensionIT {
         assertThat(next).isEqualTo("ok");
     }
 
-    /** FR-016, supporting. */
     @Test
     @DisplayName("concurrent exchanges each complete once with their own snapshot")
     void concurrentExchangesEachCompleteOnceWithTheirOwnSnapshot() {
@@ -981,7 +973,6 @@ class InterceptorExtensionIT {
         }
     }
 
-    /** FR-016, supporting. */
     @Test
     @DisplayName("a call cancelled before a request existed notifies nothing")
     void aCallCancelledBeforeARequestExistedNotifiesNothing() {

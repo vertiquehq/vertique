@@ -226,11 +226,8 @@ class HttpClientFactoryIT {
         return ((HttpClient) client).settings();
     }
 
-    // --- TP-001 / AC-049 ---
-
-    /** AC-049. */
     @Test
-    @DisplayName("AC-049: a named client applies its configuration")
+    @DisplayName("a named client applies its configuration")
     void namedClientAppliesItsConfiguration() {
         // Given the configuration of httpClient.search and a global interceptor in the Dagger set
         RecordingServer server = apiServer();
@@ -302,7 +299,7 @@ class HttpClientFactoryIT {
         assertThat(server.requestsTo("/api/r2")).as("no redirect followed").hasSize(1);
     }
 
-    /** FR-020: the webClient bag is merged over whichever base options apply. */
+    /** The webClient bag is merged over whichever base options apply. */
     @Test
     @DisplayName("the webClient bag is merged over the builder's base options")
     void webClientBagMergesOverTheBuilderBase() {
@@ -336,7 +333,7 @@ class HttpClientFactoryIT {
         assertThat(server.requestsTo("/api/r3")).isEmpty();
     }
 
-    /** FR-020: a non-empty bag does not drop the base's trust and proxy options. */
+    /** A non-empty bag does not drop the base's trust and proxy options. */
     @Test
     @DisplayName("a non-empty webClient bag keeps the builder base's trust and proxy options")
     void webClientBagKeepsTheBuilderBaseTrustAndProxyOptions() throws Exception {
@@ -400,11 +397,8 @@ class HttpClientFactoryIT {
         assertThat(proxy.requests.get(0).headers().get("Proxy-Authorization")).isEqualTo("Basic dTpw");
     }
 
-    // --- TP-004 / AC-062 ---
-
-    /** AC-062. */
     @Test
-    @DisplayName("AC-062: close fails in-flight calls once and is idempotent")
+    @DisplayName("close fails in-flight calls once and is idempotent")
     void closeFailsInFlightCallsOnceAndIsIdempotent() {
         // Given a client with defaults, a recording interceptor and a server that never answers GET /never
         RecordingServer server = support.server((request, body) -> {});
@@ -477,9 +471,6 @@ class HttpClientFactoryIT {
         assertThat(direct.requestsTo("/never")).hasSize(1);
     }
 
-    // --- TP-007 ---
-
-    /** FR-020. */
     @Test
     @DisplayName("the Dagger graph provides the factory, the global interceptor set and the shutdown step")
     void daggerGraphProvidesTheFactoryWithGlobalInterceptorsAndShutdownStep() {
@@ -512,7 +503,7 @@ class HttpClientFactoryIT {
                 .isTrue();
     }
 
-    /** AC-050: a valid configuration passes the startup validators. */
+    /** A valid configuration passes the startup validators. */
     @Test
     @DisplayName("the startup validators accept a valid configuration with every checked key set")
     void startupValidatorsAcceptAValidConfiguration() {
@@ -536,9 +527,9 @@ class HttpClientFactoryIT {
         assertThat(app.composeValidators()).isNotEmpty();
     }
 
-    /** AC-050: the startup validator rejects a configured value the builder rejects, without the value. */
+    /** The startup validator rejects a configured value the builder rejects, without the value. */
     @Test
-    @DisplayName("AC-050: startup fails for a bad baseUrl, naming the key path and not the value")
+    @DisplayName("startup fails for a bad baseUrl, naming the key path and not the value")
     void startupFailsForABadBaseUrl() {
         // Given a client whose baseUrl is not acceptable
         JsonObject config = section(
@@ -553,9 +544,6 @@ class HttpClientFactoryIT {
                 .satisfies(e -> assertThat(e.toString()).doesNotContain("zz-bad-host-81"));
     }
 
-    // --- TP-008 ---
-
-    /** FR-024. */
     @Test
     @DisplayName("application shutdown closes every factory client")
     void applicationShutdownClosesEveryFactoryClient() {

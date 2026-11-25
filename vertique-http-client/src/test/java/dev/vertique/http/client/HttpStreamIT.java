@@ -348,10 +348,8 @@ class HttpStreamIT {
         assertThat(failure.getClass().getName()).doesNotStartWith("dev.vertique");
     }
 
-    // --- AC-006 ---
-
     /**
-     * AC-006: the head is delivered before any body byte and the terminal future completes at the
+     * The head is delivered before any body byte and the terminal future completes at the
      * end. A stream is exempt from the response bound: a body above {@code maxResponseBytes} that
      * declares a larger {@code Content-Length} is delivered in full.
      */
@@ -410,8 +408,6 @@ class HttpStreamIT {
         assertThat(big.body.text()).isEqualTo("x".repeat(5000));
     }
 
-    // --- AC-007 ---
-
     /** What the flooding server did: bytes written and whether its write queue was full. */
     private static final class Flood {
         final AtomicLong written = new AtomicLong();
@@ -449,7 +445,7 @@ class HttpStreamIT {
     }
 
     /**
-     * AC-007: pausing the body stops reading from the connection, so the server's writes stall with
+     * Pausing the body stops reading from the connection, so the server's writes stall with
      * its write queue full, and resuming lets the writes proceed.
      */
     @Test
@@ -511,10 +507,8 @@ class HttpStreamIT {
         awaitFailure(stream.completion());
     }
 
-    // --- AC-008 ---
-
     /**
-     * AC-008: the stream idle timeout fails the terminal future with a {@code TimeoutException} and
+     * The stream idle timeout fails the terminal future with a {@code TimeoutException} and
      * resets the exchange; every body byte restarts the timer; the same timeout configured as
      * {@code httpClient.<name>.streamIdleTimeoutMs} reaches the client's idle timer.
      */
@@ -579,9 +573,7 @@ class HttpStreamIT {
         assertThat(awaitFailure(viaConfig.head().completion())).isExactlyInstanceOf(TimeoutException.class);
     }
 
-    // --- AC-016 ---
-
-    /** AC-016: cancel after the head fails the terminal future and closes the connection; a second cancel is a no-op. */
+    /** Cancel after the head fails the terminal future and closes the connection; a second cancel is a no-op. */
     @Test
     @DisplayName("cancel after the head fails the terminal future")
     void cancelAfterTheHeadFailsTheTerminalFuture() {
@@ -606,9 +598,7 @@ class HttpStreamIT {
         assertThat(awaitFailure(stream.completion())).isSameAs(failure);
     }
 
-    // --- AC-034 ---
-
-    /** AC-034: a failure after the head is delivered through the terminal future and is never retried. */
+    /** A failure after the head is delivered through the terminal future and is never retried. */
     @Test
     @DisplayName("a failure after a streamed head is not retried")
     void failureAfterAStreamedHeadIsNotRetried() {
@@ -633,8 +623,6 @@ class HttpStreamIT {
         assertThat(server.requestsTo("/feed")).hasSize(1);
         assertThat(opened.deliveries.get()).isEqualTo(1);
     }
-
-    // --- AC-036 ---
 
     /** A stream call on a server that answers {@code /late} 400 ms after it receives the request. */
     private void lateHeadRun(boolean closeTheClient) {
@@ -678,7 +666,7 @@ class HttpStreamIT {
         assertThat(seen.get(0).completion().error()).isExactlyInstanceOf(failure.getClass());
     }
 
-    /** AC-036: a head that arrives after the execution settled is reset and never delivered. */
+    /** A head that arrives after the execution settled is reset and never delivered. */
     @Test
     @DisplayName("a late streamed head after the execution settled is reset")
     void lateStreamedHeadAfterTheExecutionSettledIsReset() {
@@ -769,7 +757,7 @@ class HttpStreamIT {
     }
 
     /**
-     * AC-036: a head that arrives while the caller's context is busy, with the call cancelled in that gap,
+     * A head that arrives while the caller's context is busy, with the call cancelled in that gap,
      * never leaves an open stream without an owner, and the caller and the interceptor see the cancel failure.
      */
     @Test
@@ -778,14 +766,12 @@ class HttpStreamIT {
         gapRun(false);
     }
 
-    /** AC-036: the same gap with an attempt timeout ends with the timeout or an accepted head, never an internal failure. */
+    /** The same gap with an attempt timeout ends with the timeout or an accepted head, never an internal failure. */
     @Test
     @DisplayName("a head delivered in the gap before the pipeline settles and a timeout report the timeout")
     void headDeliveredInTheGapBeforeTheCallSettlesReportsTheAttemptTimeout() throws Exception {
         gapRun(true);
     }
-
-    // --- AC-043 ---
 
     private static void assertNotifiedOnce(Recorder recorder, RecordingServer server) {
         List<Recorder.Seen> seen = recorder.settled(1);
@@ -798,7 +784,7 @@ class HttpStreamIT {
         assertThat(only.completion().target().port()).isEqualTo(server.port());
     }
 
-    /** AC-043: every terminal path of a stream notifies the interceptor exactly once with the head. */
+    /** Every terminal path of a stream notifies the interceptor exactly once with the head. */
     @Test
     @DisplayName("every stream terminal path notifies exactly once")
     void everyStreamTerminalPathNotifiesExactlyOnce() {
@@ -882,9 +868,7 @@ class HttpStreamIT {
                 .isExactlyInstanceOf(HttpClientClosedException.class);
     }
 
-    // --- AC-073 ---
-
-    /** AC-073: a refused 429 head is retried after Retry-After and the accepted head is delivered once. */
+    /** A refused 429 head is retried after Retry-After and the accepted head is delivered once. */
     @Test
     @DisplayName("a stream answered 429 with Retry-After is retried, then accepted")
     void aStreamAnswered429WithRetryAfterIsRetriedThenAccepted() {
@@ -938,9 +922,7 @@ class HttpStreamIT {
         assertThat(second.statusCode()).isEqualTo(200);
     }
 
-    // --- AC-074 ---
-
-    /** AC-074: a head the expectation refuses fails the call with an excerpt, resets the exchange and is never delivered. */
+    /** A head the expectation refuses fails the call with an excerpt, resets the exchange and is never delivered. */
     @Test
     @DisplayName("a refused stream head is reset and never delivered")
     void aRefusedStreamHeadIsResetAndNeverDelivered() {
@@ -1211,9 +1193,7 @@ class HttpStreamIT {
         assertThat(server.requestsTo("/hang")).hasSize(1);
     }
 
-    // --- AC-086 ---
-
-    /** AC-086: the attempt timer stops at the accepted head, so a stream may outlive the attempt timeout. */
+    /** The attempt timer stops at the accepted head, so a stream may outlive the attempt timeout. */
     @Test
     @DisplayName("a stream outlives the attempt timeout once its head is accepted")
     void aStreamOutlivesTheAttemptTimeoutOnceItsHeadIsAccepted() {

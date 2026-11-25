@@ -56,7 +56,7 @@ import org.junit.jupiter.api.Timeout;
  *
  * <p>The tests drive raw Vert.x types on purpose. They use the Vert.x internal {@code HttpContext}
  * directly and say nothing about the governed client: a Vert.x upgrade that changes one of these
- * behaviors fails here first. They prove the hook behavior behind AC-001 and AC-002 (supporting).
+ * behaviors fails here first. They prove the hook behavior the governed client relies on.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class WebClientHookContractIT {

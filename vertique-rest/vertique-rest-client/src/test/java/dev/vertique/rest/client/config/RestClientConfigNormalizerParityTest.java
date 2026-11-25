@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link RestClientConfig#normalizeWebClientKeys(JsonObject)} and the HTTP client module's
  * {@code WebClientOptionsNormalizer} agree on every input, because the REST normalizer delegates
- * to the module's one (FR-017).
+ * to the module's one.
  */
 class RestClientConfigNormalizerParityTest {
 

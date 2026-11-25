@@ -11,9 +11,9 @@ import org.junit.jupiter.api.Test;
 
 class HttpStatusRejectedExceptionTest {
 
-    /** AC-010: each call returns its own copy of the headers, without {@code Set-Cookie}. */
+    /** Each call returns its own copy of the headers, without {@code Set-Cookie}. */
     @Test
-    @DisplayName("AC-010: headers() returns a fresh copy on each call")
+    @DisplayName("headers() returns a fresh copy on each call")
     void headersReturnsAFreshCopyOnEachCall() {
         MultiMap response = MultiMap.caseInsensitiveMultiMap()
                 .add("Content-Type", "text/plain")

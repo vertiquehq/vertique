@@ -158,7 +158,7 @@ class FailureFamilyTest {
     // --- tests ---
 
     @Test
-    @DisplayName("AC-012: every failure is typed on a module root and carries no secret in its message")
+    @DisplayName("every failure is typed on a module root and carries no secret in its message")
     void everyFailureIsTypedOnAModuleRootAndCarriesNoSecretsInItsMessage() throws Exception {
         // Given the four module roots and seven leaves of the contract
 
@@ -213,7 +213,7 @@ class FailureFamilyTest {
     }
 
     @Test
-    @DisplayName("AC-012: the credential failure keeps no cause and names only the cause type")
+    @DisplayName("the credential failure keeps no cause and names only the cause type")
     void theCredentialFailureKeepsNoCauseAndNamesOnlyTheCauseType() {
         // Given every public constructor of the credential failure, fed a throwable carrying the secret
 
@@ -233,7 +233,7 @@ class FailureFamilyTest {
     }
 
     @Test
-    @DisplayName("FR-005: the status rejection copies headers without Set-Cookie and implements the delay hint")
+    @DisplayName("the status rejection copies headers without Set-Cookie and implements the delay hint")
     void theStatusRejectionCopiesHeadersWithoutSetCookieAndImplementsTheDelayHint() {
         for (Constructor<?> constructor : publicConstructors(HttpStatusRejectedException.class)) {
             // Given a rejection built from a header map holding X-Key and Set-Cookie
@@ -266,7 +266,7 @@ class FailureFamilyTest {
     }
 
     @Test
-    @DisplayName("FR-005: enums carry the contract constants and accessors reject null arguments")
+    @DisplayName("enums carry the contract constants and accessors reject null arguments")
     void enumsCarryTheContractConstantsAndAccessorsRejectNullArguments() throws Exception {
         // Given the two nested enums of the contract
 

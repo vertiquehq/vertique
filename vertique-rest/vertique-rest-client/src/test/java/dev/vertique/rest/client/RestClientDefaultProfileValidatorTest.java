@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Test;
  * <ul>
  *   <li>an unregistered {@code restClient.defaults.jsonProfile} id throws
  *       {@link JsonProfileConfigurationException} when the validator set is forced — even with
- *       <strong>zero</strong> clients configured (the inert-boundary case FR-JSON-050 explicitly
+ *       <strong>zero</strong> clients configured (the inert-boundary case the validator explicitly
  *       closes);</li>
  *   <li>shadowing: a bad {@code restClient.defaults.jsonProfile} still fails fast even when a valid
  *       per-client {@code jsonProfile} could shadow it at runtime — the validator validates the

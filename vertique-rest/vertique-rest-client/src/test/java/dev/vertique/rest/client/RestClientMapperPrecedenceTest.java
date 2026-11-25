@@ -59,8 +59,8 @@ import org.junit.jupiter.api.Test;
  *   <li>external per-client config {@code jsonProfile} ({@code restClient.{name}.jsonProfile});</li>
  *   <li>builder-level {@code jsonProfile};</li>
  *   <li>{@code @JsonProfile} annotation;</li>
- *   <li>{@code restClient.defaults.jsonProfile} — reserved sub-object default (slice 2.3);</li>
- *   <li>global {@code json.jsonProfile} — via {@link JsonConfig} (slice 2.3);</li>
+ *   <li>{@code restClient.defaults.jsonProfile} — reserved sub-object default;</li>
+ *   <li>global {@code json.jsonProfile} — via {@link JsonConfig};</li>
  *   <li>{@code vertx} default ({@link DatabindCodec#mapper()}), which never requires a registry.</li>
  * </ol>
  *
@@ -92,10 +92,10 @@ class RestClientMapperPrecedenceTest {
     /** Profile id "C" (annotation layer). */
     static final JsonProfileId ID_C = JsonProfileId.of("profile-c");
 
-    /** Profile id "D" (restClient.defaults layer — slice 2.3). */
+    /** Profile id "D" (restClient.defaults layer). */
     static final JsonProfileId ID_D = JsonProfileId.of("profile-d");
 
-    /** Profile id "E" (global json.jsonProfile layer — slice 2.3). */
+    /** Profile id "E" (global json.jsonProfile layer). */
     static final JsonProfileId ID_E = JsonProfileId.of("profile-e");
 
     @BeforeAll
@@ -345,10 +345,9 @@ class RestClientMapperPrecedenceTest {
     class GeneratedProxyParity {
 
         /**
-         * Codegen parity (FR-JSON-030A): a generated static proxy goes through the same
+         * Codegen parity: a generated static proxy goes through the same
          * {@link DefaultRestClientDispatcher} built with the resolved {@code effectiveMapper}. The
-         * dispatcher's mapper is not externally observable, so — per the slice plan's documented
-         * fallback — this asserts that {@link RestClientBuilder#resolveEffectiveMapper} returns the
+         * dispatcher's mapper is not externally observable, so this asserts that {@link RestClientBuilder#resolveEffectiveMapper} returns the
          * profile-A mapper for a generated-proxy client interface, and separately confirms that
          * {@code build()} selects the generated static proxy (not the JDK dynamic proxy) for that
          * interface, proving both halves of the parity path.
@@ -377,18 +376,17 @@ class RestClientMapperPrecedenceTest {
         }
     }
 
-    // --- Slice 2.3: defaults + global tiers ---
+    // --- defaults + global tiers ---
 
     /**
-     * Tests for the two new tiers introduced in slice 2.3:
+     * Tests for the defaults and global tiers:
      * {@code restClient.defaults.jsonProfile} (tier 5) and global {@code json.jsonProfile} (tier 6).
      *
-     * <p>These tests are RED by design: {@code resolveEffectiveProfileId} does not yet consult
-     * {@code restClient.defaults.jsonProfile} or {@code json.jsonProfile} — the green impl adds those
-     * tiers.
+     * <p>These tests verify that {@code resolveEffectiveProfileId} consults
+     * {@code restClient.defaults.jsonProfile} and {@code json.jsonProfile} after the per-client tiers.
      */
     @Nested
-    @DisplayName("defaults + global tiers (slice 2.3)")
+    @DisplayName("defaults + global tiers")
     class DefaultsAndGlobalTiers {
 
         /**
@@ -513,10 +511,10 @@ class RestClientMapperPrecedenceTest {
         }
     }
 
-    // --- TP-001: default and reserved ids resolve through a registry, with or without injection ---
+    // --- default and reserved ids resolve through a registry, with or without injection ---
 
     /**
-     * TP-001 (T012): every id, including the reserved {@code system} id, now resolves through a
+     * Every id, including the reserved {@code system} id, now resolves through a
      * {@link JsonMapperProfileRegistry} — the injected one, or a builder-private, lazily-created
      * seeded registry for reserved ids when none is injected. A non-reserved id without a registry
      * still fails fast.

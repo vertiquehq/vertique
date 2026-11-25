@@ -18,8 +18,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the {@link RestClientContextCapturer} SPI, focused on the four-argument
- * {@code onAttemptCompleted} overload added for dispatcher-owned {@link MethodMetadata} (issue
- * #120, GH plan §3a D3).
+ * {@code onAttemptCompleted} overload added for dispatcher-owned {@link MethodMetadata}.
  *
  * <p>Verifies that the four-arg default method delegates to the pre-existing three-arg method
  * unchanged, so implementations written before this overload was introduced keep compiling and

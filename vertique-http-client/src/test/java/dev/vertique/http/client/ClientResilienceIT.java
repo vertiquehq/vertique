@@ -349,9 +349,7 @@ class ClientResilienceIT {
                 (request, body) -> request.response().setStatusCode(status).end());
     }
 
-    // --- AC-017 ---
-
-    /** AC-017: cancelling during the backoff fails the call at once and no further attempt starts. */
+    /** Cancelling during the backoff fails the call at once and no further attempt starts. */
     @Test
     @DisplayName("cancelling during the backoff fails the call at once and starts no attempt")
     void cancelDuringBackoffFailsTheCallAtOnceAndStartsNoAttempt() {
@@ -378,9 +376,7 @@ class ClientResilienceIT {
         assertThat(server.requests).hasSize(1);
     }
 
-    // --- AC-022 ---
-
-    /** AC-022: a credential source that fails or names an invalid header sends nothing and is not retried. */
+    /** A credential source that fails or names an invalid header sends nothing and is not retried. */
     @Test
     @DisplayName("a failing credential source sends nothing and is not retried")
     void failingCredentialSourceSendsNothingAndIsNotRetried() {
@@ -424,9 +420,7 @@ class ClientResilienceIT {
         assertThat(failingFailure.toString()).doesNotContain("vault down");
     }
 
-    // --- AC-031 ---
-
-    /** AC-031: a retry recovers a 503 and each exchange is observed with its own ordinal. */
+    /** A retry recovers a 503 and each exchange is observed with its own ordinal. */
     @Test
     @DisplayName("a retry recovers a 503 and each attempt is observed")
     void retryRecoversA503AndEachAttemptIsObserved() {
@@ -472,10 +466,8 @@ class ClientResilienceIT {
         assertThat(second.completion().error()).isNull();
     }
 
-    // --- AC-032 ---
-
     /** Counts every failure except a 4xx rejection other than 429, which shows that the dependency answered. */
-    private static final Predicate<Throwable> AC032_CLASSIFIER = failure -> {
+    private static final Predicate<Throwable> BREAKER_FAILURE_CLASSIFIER = failure -> {
         if (failure instanceof HttpStatusRejectedException rejected) {
             int status = rejected.statusCode();
             return status < 400 || status >= 500 || status == 429;
@@ -483,7 +475,7 @@ class ClientResilienceIT {
         return true;
     };
 
-    /** AC-032: an open circuit rejects without sending and a 404 does not count as a breaker failure. */
+    /** An open circuit rejects without sending and a 404 does not count as a breaker failure. */
     @Test
     @DisplayName("an open circuit rejects without sending")
     void openCircuitRejectsWithoutSending() {
@@ -495,8 +487,8 @@ class ClientResilienceIT {
                 .setStatusCode(seen.incrementAndGet() == 1 ? 404 : 503)
                 .end());
         Completions interceptor = new Completions();
-        HttpClient client =
-                client(runtime(events), server, tiers("t", breakerTier(2, 60_000)), AC032_CLASSIFIER, interceptor);
+        HttpClient client = client(
+                runtime(events), server, tiers("t", breakerTier(2, 60_000)), BREAKER_FAILURE_CLASSIFIER, interceptor);
 
         // When the caller runs three calls (404, 503, 503) and then one more while the circuit is open
         Throwable first = awaitFailure(get(client, tierOptions("t"), "/m"));
@@ -521,9 +513,7 @@ class ClientResilienceIT {
         assertThat(changes).extracting(CircuitStateChanged::newState).containsExactly(CircuitState.OPEN);
     }
 
-    // --- AC-035 ---
-
-    /** AC-035: a cancelled half-open trial re-opens the breaker; a cancel while closed resets the count. */
+    /** A cancelled half-open trial re-opens the breaker; a cancel while closed resets the count. */
     @Test
     @DisplayName("a cancelled half-open trial re-opens the breaker")
     void cancelledHalfOpenTrialReopensTheBreaker() {
@@ -580,8 +570,6 @@ class ClientResilienceIT {
                 .isEqualTo(200);
     }
 
-    // --- AC-037 and AC-038 ---
-
     /** Arrival times of the requests a server received, in nanoseconds. */
     private record Timed(RecordingServer server, List<Long> arrivals) {}
 
@@ -607,7 +595,7 @@ class ClientResilienceIT {
                 timed.arrivals().get(1) - timed.arrivals().get(0));
     }
 
-    /** AC-037: Retry-After lengthens the delay beyond the backoff, only when the tier opts in. */
+    /** Retry-After lengthens the delay beyond the backoff, only when the tier opts in. */
     @Test
     @DisplayName("a retry waits for Retry-After instead of the shorter backoff")
     void retryWaitsForRetryAfterInsteadOfTheShorterBackoff() {
@@ -633,7 +621,7 @@ class ClientResilienceIT {
         assertThat(gapMs(ignored)).isLessThan(1_000);
     }
 
-    /** AC-038: a hint above the tier's maximum stops retrying; a hint within it is honored. */
+    /** A hint above the tier's maximum stops retrying; a hint within it is honored. */
     @Test
     @DisplayName("Retry-After above the maximum stops retrying")
     void retryAfterAboveTheMaximumStopsRetrying() {
@@ -669,9 +657,7 @@ class ClientResilienceIT {
         assertThat(gapMs(within)).isGreaterThanOrEqualTo(1_000);
     }
 
-    // --- AC-042 ---
-
-    /** AC-042: retried exchanges share a call id, ordinals are gap-free and an open circuit notifies nothing. */
+    /** Retried exchanges share a call id, ordinals are gap-free and an open circuit notifies nothing. */
     @Test
     @DisplayName("retried exchanges share a call id and an open circuit notifies nothing")
     void retriedExchangesShareACallIdAndAnOpenCircuitNotifiesNothing() {
@@ -945,11 +931,9 @@ class ClientResilienceIT {
                 .allSatisfy(c -> assertThat(c.completion().error()).isExactlyInstanceOf(TimeoutException.class));
     }
 
-    // --- AC-089 ---
-
-    /** AC-089: the client's attempt timeout is a native TimeoutException, with or without a prebuilt pipeline. */
+    /** The client's attempt timeout is a native TimeoutException, with or without a prebuilt pipeline. */
     @Test
-    @DisplayName("AC-089: the attempt timeout is a native TimeoutException with no pipeline and with a prebuilt one")
+    @DisplayName("the attempt timeout is a native TimeoutException with no pipeline and with a prebuilt one")
     void theAttemptTimeoutIsANativeTimeoutException() {
         // Given a runtime with a recording observer, a 300 ms builder read timeout, a prebuilt pipeline with a
         // retry concern and no timeout concern, an interceptor and a silent server
@@ -991,9 +975,7 @@ class ClientResilienceIT {
         assertThat(of(events, TimeoutTriggered.class)).isEmpty();
     }
 
-    // --- AC-090 ---
-
-    /** AC-090: a prebuilt pipeline's own timeout ends the first attempt's exchange before the next attempt. */
+    /** A prebuilt pipeline's own timeout ends the first attempt's exchange before the next attempt. */
     @Test
     @DisplayName("a prebuilt pipeline's own timeout ends the attempt before the next one")
     void aPrebuiltPipelinesOwnTimeoutEndsTheAttemptBeforeTheNextOne() {

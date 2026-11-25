@@ -232,7 +232,6 @@ class CredentialsIT {
 
     // --- proofs ---
 
-    /** AC-021. */
     @Test
     @DisplayName("credentials resolved per exchange replace a same-named header")
     void credentialsResolvedPerExchangeReplaceASameNamedHeader() {
@@ -273,7 +272,6 @@ class CredentialsIT {
         assertThat(server.requests.get(1).headers().get("X-Other")).isEqualTo("keep");
     }
 
-    /** AC-024. */
     @Test
     @DisplayName("a cross-origin redirect drops credentials")
     void crossOriginRedirectDropsCredentials() {
@@ -336,7 +334,6 @@ class CredentialsIT {
                 .containsExactlyInAnyOrder(a.origin() + "/start", a.origin() + "/same", a.origin() + "/landing");
     }
 
-    /** AC-025. */
     @Test
     @DisplayName("credentials are refused over plain HTTP to a non-loopback host by default")
     void credentialsRefusedOverPlainHttpByDefault() {
@@ -388,7 +385,6 @@ class CredentialsIT {
         return false;
     }
 
-    /** AC-078. */
     @Test
     @DisplayName("a credential value with a newline never reaches a message or log")
     void aCredentialValueWithANewlineNeverReachesAMessageOrLog() {
@@ -426,7 +422,7 @@ class CredentialsIT {
         }
     }
 
-    /** The valid secret never shows in a log record or a rendering either (supporting AC-078). */
+    /** The valid secret never shows in a log record or a rendering either. */
     @Test
     @DisplayName("a valid credential value is sent but never appears in a log record or a rendering")
     void aValidCredentialIsNeverLoggedOrRendered() {
@@ -451,7 +447,6 @@ class CredentialsIT {
         }
     }
 
-    /** AC-079. */
     @Test
     @DisplayName("concurrent redirecting exchanges keep their own origin")
     void concurrentRedirectingExchangesKeepTheirOwnOrigin() {
