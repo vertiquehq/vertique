@@ -32,7 +32,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Restrictive security annotations present but no declared security requirement → violation
  *   <li>Declared security requirement but no matching {@link SecuritySchemeHandler} → violation
  *   <li>{@code @PermitAll} on an operation with a declared security requirement → conflicting
- *       semantics
+ *       semantics (a scoped requirement with {@code @PermitAll} fails startup earlier, in the shape gate)
  * </ol>
  *
  * <p><strong>Fail-closed V1 matrix (SH-2):</strong> before the consistency checks above, the
@@ -49,6 +49,8 @@ import lombok.extern.slf4j.Slf4j;
  *       (via {@code @Authorized}) <em>and</em> any set has scopes — the two scope sources cannot be
  *       merged unambiguously. Roles via {@code @RolesAllowed}/{@code @Authorized} alongside
  *       {@code @SecurityRequirement} scopes is allowed (distinct authority kinds).
+ *   <li>{@code @PermitAll} <em>and</em> any set has scopes — {@code @PermitAll} skips authorization, so
+ *       the scopes would never be enforced.
  * </ol>
  *
  * <p>Supported shapes pass: no security; a single-scheme scopeless set; a single-scheme scoped set;
@@ -82,7 +84,7 @@ public class DefaultSecurityPolicyValidator implements SecurityPolicyValidator {
      * @param policy the resolved security policy derived from annotations on the resource method
      * @return list of violations found (empty if consistent)
      * @throws RestConfigurationException if the operation declares a security shape whose V1
-     *     enforcement is deferred (multi-scheme set, scoped-OR, or both-scopes); see the fail-closed
+     *     enforcement is deferred (multi-scheme set, scoped-OR, both-scopes, or @PermitAll with scopes); see the fail-closed
      *     matrix on the class javadoc
      */
     @Override
@@ -147,10 +149,10 @@ public class DefaultSecurityPolicyValidator implements SecurityPolicyValidator {
      *
      * <p>This delegates to {@link EffectiveSecurityPolicy#enforceSupportedShape}, the single source of
      * truth for the fail-closed matrix shared with the rest-jaxrs route registrar's always-on
-     * gate, so the matrix logic lives in exactly one place. The three deferred cases it rejects are any
+     * gate, so the matrix logic lives in exactly one place. The four cases it rejects are any
      * multi-scheme (AND) set; scopes on an OR alternative (more than one set with any set carrying
-     * scopes); and scopes declared via both {@code @Authorized} (the policy's required scopes) and
-     * {@code @SecurityRequirement} (a set's scopes). Roles via {@code @RolesAllowed}/{@code @Authorized}
+     * scopes); scopes declared via both {@code @Authorized} (the policy's required scopes) and
+     * {@code @SecurityRequirement} (a set's scopes); and {@code @PermitAll} with a scoped set. Roles via {@code @RolesAllowed}/{@code @Authorized}
      * alongside {@code @SecurityRequirement} scopes is permitted (distinct authority kinds).
      *
      * @param operationId the operationId named in the diagnostic

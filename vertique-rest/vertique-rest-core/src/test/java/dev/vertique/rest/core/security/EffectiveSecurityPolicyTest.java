@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test;
  *       at startup — so the fold only ever adds scopes, never merges two scope sources.</li>
  *   <li>A scopeless set (or no set) leaves the base policy untouched (the same instance is returned).</li>
  *   <li>Blanket policies ({@code PermitAll}/{@code DenyAll}) are returned unchanged — a scoped set
- *       cannot co-occur with them past startup validation, so the fold defensively leaves them alone.</li>
+ *       cannot co-occur with {@code PermitAll} past the shape gate, and {@code DenyAll} denies regardless, so the fold leaves them alone.</li>
  * </ul>
  */
 class EffectiveSecurityPolicyTest {
@@ -137,7 +137,7 @@ class EffectiveSecurityPolicyTest {
         }
 
         @Test
-        @DisplayName("PermitAll with a scoped set → unchanged (cannot co-occur past startup validation)")
+        @DisplayName("PermitAll with a scoped set → unchanged (the shape gate rejects it before the fold)")
         void permitAll_unchanged() {
             // given a blanket PermitAll policy
             SecurityPolicy base = new SecurityPolicy.PermitAll();
@@ -235,6 +235,28 @@ class EffectiveSecurityPolicyTest {
                     () -> EffectiveSecurityPolicy.enforceSupportedShape(
                             OP, List.of(scopedSchemeSet("oauth2", "read")), base));
             assertTrue(ex.getMessage().contains(OP), "message must name the operationId");
+        }
+
+        @Test
+        @DisplayName("@PermitAll with a scoped set → RestConfigurationException naming the operationId and the marker")
+        void permitAllWithScopedSet_throws() {
+            RestConfigurationException ex = assertThrows(
+                    RestConfigurationException.class,
+                    () -> EffectiveSecurityPolicy.enforceSupportedShape(
+                            OP, List.of(scopedSchemeSet("oauth2", "read")), new SecurityPolicy.PermitAll()));
+            assertTrue(ex.getMessage().contains("'" + OP + "'"), "message must name the operationId");
+            assertTrue(ex.getMessage().contains("@SecurityRequirements({})"), "message must name the workaround");
+        }
+
+        @Test
+        @DisplayName("@PermitAll with a scopeless set or no set, and @DenyAll with a scoped set, are not rejected here")
+        void permitAllWithoutScopes_passes() {
+            assertDoesNotThrow(() -> EffectiveSecurityPolicy.enforceSupportedShape(
+                    OP, List.of(scopelessSchemeSet("bearerAuth")), new SecurityPolicy.PermitAll()));
+            assertDoesNotThrow(
+                    () -> EffectiveSecurityPolicy.enforceSupportedShape(OP, List.of(), new SecurityPolicy.PermitAll()));
+            assertDoesNotThrow(() -> EffectiveSecurityPolicy.enforceSupportedShape(
+                    OP, List.of(scopedSchemeSet("oauth2", "read")), new SecurityPolicy.DenyAll()));
         }
 
         @Test

@@ -14,11 +14,9 @@ import jakarta.ws.rs.core.MediaType;
 /**
  * Case (e): class-level {@link PermitAll} together with a scoped class-level
  * {@link SecurityRequirement} (non-empty {@code scopes()}) for
- * {@link PolicySecurityModule#SCHEME_NAME}. This case is a guard only: both "declared
- * public" ({@code PermitAll}, no restricting declaration) and "restricts callers" (a non-empty,
- * non-anonymous requirement set) suppress the implicit-policy warning, so this fixture cannot itself
- * distinguish which rule wins — that precedence is proven by
- * {@code ExplicitPolicyClassificationTest} with constructed inputs.
+ * {@link PolicySecurityModule#SCHEME_NAME}. The combination is rejected at startup, because
+ * {@code @PermitAll} skips authorization and the scopes would never be checked; the test mounts this
+ * resource to prove that failure.
  */
 @Path("/permitted-scoped")
 @PermitAll
