@@ -17,38 +17,38 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Constructor invariants for {@link MessageResolvable} per FR-LOC-022..024.
+ * Constructor invariants for {@link MessageResolvable}.
  */
 class MessageResolvableTest {
 
     @Test
-    @DisplayName("FR-LOC-024: null codes list throws NullPointerException")
+    @DisplayName("null codes list throws NullPointerException")
     void nullCodesListThrowsNpe() {
         assertThrows(NullPointerException.class, () -> new MessageResolvable(null, List.of(), null));
     }
 
     @Test
-    @DisplayName("FR-LOC-024: empty codes list throws IllegalArgumentException")
+    @DisplayName("empty codes list throws IllegalArgumentException")
     void emptyCodesListThrowsIae() {
         assertThrows(IllegalArgumentException.class, () -> new MessageResolvable(List.of(), List.of(), null));
     }
 
     @Test
-    @DisplayName("FR-LOC-024: codes containing null element throws NullPointerException")
+    @DisplayName("codes containing null element throws NullPointerException")
     void nullCodeElementThrowsNpe() {
         List<String> codes = Arrays.asList("a", null, "b");
         assertThrows(NullPointerException.class, () -> new MessageResolvable(codes, List.of(), null));
     }
 
     @Test
-    @DisplayName("FR-LOC-024: codes containing blank element throws IllegalArgumentException")
+    @DisplayName("codes containing blank element throws IllegalArgumentException")
     void blankCodeElementThrowsIae() {
         assertThrows(
                 IllegalArgumentException.class, () -> new MessageResolvable(List.of("a", "  ", "b"), List.of(), null));
     }
 
     @Test
-    @DisplayName("FR-LOC-023: codes are defensively copied")
+    @DisplayName("codes are defensively copied")
     void codesDefensivelyCopied() {
         List<String> input = new ArrayList<>();
         input.add("code1");
@@ -69,7 +69,7 @@ class MessageResolvableTest {
     }
 
     @Test
-    @DisplayName("args == null normalizes to empty list (FR-LOC-083 alignment)")
+    @DisplayName("args == null normalizes to empty list")
     void nullArgsNormalizesToEmpty() {
         MessageResolvable r = new MessageResolvable(List.of("a"), null, null);
         assertEquals(List.of(), r.args());

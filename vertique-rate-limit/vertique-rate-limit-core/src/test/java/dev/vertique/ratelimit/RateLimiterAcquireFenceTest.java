@@ -15,20 +15,17 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 3: a direct {@link RateLimiter#acquire(RateLimitKey)} call's
- * backend consumption was never registered with this runtime's shared {@link
- * RateLimiterLifecycle} — only the ones reached through {@code execute(...)}'s {@code runFenced}
- * were. {@code dev.vertique.ratelimit.redis.RedisRateLimitFenceLifecycle}'s own javadoc claims
- * "fencing any in-flight {@code consume(...)}" ahead of the shared Redis client's close, but a
- * direct {@code acquire(...)} call was invisible to {@link RateLimiters#close()} entirely: it just
- * ran to completion, unattended, whatever else was happening.
+ * A direct {@link RateLimiter#acquire(RateLimitKey)} call's backend consumption is registered
+ * with this runtime's shared {@link RateLimiterLifecycle}, just like the ones reached through
+ * {@code execute(...)}'s {@code runFenced}, so {@link RateLimiters#close()} fences any in-flight
+ * {@code consume(...)} ahead of the shared Redis client's close (see {@code
+ * dev.vertique.ratelimit.redis.RedisRateLimitFenceLifecycle}).
  *
  * <p>Decision-first semantics at the entry check are unaffected: a runtime that is <em>already</em>
- * closed before {@code acquire(...)} is even called still fails immediately with the closed
- * exception (unchanged, proven by the existing {@code RateLimiterRunFencedOrderingTest} sibling
- * coverage and every other {@code acquire()} test in this module). This test covers the
- * <em>in-flight</em> case: an {@code acquire()} already under way against a backend that has not
- * yet settled.
+ * closed before {@code acquire(...)} is even called fails immediately with the closed exception
+ * (covered by {@code RateLimiterRunFencedOrderingTest} and every other {@code acquire()} test in
+ * this module). This test covers the <em>in-flight</em> case: an {@code acquire()} already under
+ * way against a backend that has not yet settled.
  */
 class RateLimiterAcquireFenceTest {
 

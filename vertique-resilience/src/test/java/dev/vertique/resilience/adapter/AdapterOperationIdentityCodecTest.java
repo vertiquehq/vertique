@@ -473,7 +473,7 @@ class AdapterOperationIdentityTest {
         try {
             return Class.forName(typeName, false, AdapterOperationIdentityTest.class.getClassLoader());
         } catch (ClassNotFoundException e) {
-            throw new AssertionError("Required T011 type is absent: " + typeName, e);
+            throw new AssertionError("Required type is absent: " + typeName, e);
         }
     }
 

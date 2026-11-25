@@ -3,7 +3,7 @@
 
 package dev.vertique.cache.caffeine;
 
-import static dev.vertique.cache.aop.T011CacheCompositionFixtures.await;
+import static dev.vertique.cache.aop.CacheCompositionFixtures.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -16,7 +16,7 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.aop.CacheAopModule;
-import dev.vertique.cache.aop.T011CacheCompositionFixtures;
+import dev.vertique.cache.aop.CacheCompositionFixtures;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.event.CacheOperation;
@@ -40,7 +40,7 @@ class CacheDaggerGraphIT {
     void generatedProxyComposesWithLocalProvider() throws Exception {
         LocalComponent component = localComponent();
 
-        T011CacheCompositionFixtures.CacheableService$AopProxy proxy = component.proxy();
+        CacheCompositionFixtures.CacheableService$AopProxy proxy = component.proxy();
 
         // When: the same cacheable method is invoked twice through the proxy.
         String first = await(proxy.local("raw-selector-is-not-observed"));
@@ -96,7 +96,7 @@ class CacheDaggerGraphIT {
                                                                 .put("mode", "LOCAL")
                                                                 .put("ttlSeconds", -1))));
         return DaggerCacheDaggerGraphIT_LocalComponent.builder()
-                .configModule(new T011CacheCompositionFixtures.ConfigModule(config))
+                .configModule(new CacheCompositionFixtures.ConfigModule(config))
                 .build();
     }
 
@@ -106,22 +106,22 @@ class CacheDaggerGraphIT {
                 CacheCaffeineModule.class,
                 CacheAopModule.class,
                 ConfigParsingModule.class,
-                T011CacheCompositionFixtures.ConfigModule.class,
+                CacheCompositionFixtures.ConfigModule.class,
                 ObserverModule.class
             })
     interface LocalComponent {
         Map<CacheMode, Provider<CacheStore>> providers();
 
-        T011CacheCompositionFixtures.CacheableService$AopProxy proxy();
+        CacheCompositionFixtures.CacheableService$AopProxy proxy();
 
-        T011CacheCompositionFixtures.RecordingObserver observer();
+        CacheCompositionFixtures.RecordingObserver observer();
     }
 
     @Module
     static final class ObserverModule {
         @Provides
         @IntoSet
-        static CacheObserver cacheObserver(T011CacheCompositionFixtures.RecordingObserver observer) {
+        static CacheObserver cacheObserver(CacheCompositionFixtures.RecordingObserver observer) {
             return observer;
         }
     }

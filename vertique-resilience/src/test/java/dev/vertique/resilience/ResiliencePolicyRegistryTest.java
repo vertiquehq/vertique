@@ -24,7 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-001 proof for named resilience-tier lookup, per-concern completion, and precedence layering.
+ * Proof for named resilience-tier lookup, per-concern completion, and precedence layering.
  *
  * <p>The fixtures keep the registry and resolver in memory so each assertion isolates the
  * observable policy selected by the named tier and its caller-provided overrides.

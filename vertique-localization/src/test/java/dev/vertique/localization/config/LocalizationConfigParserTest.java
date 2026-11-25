@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 class LocalizationConfigParserTest {
 
     @Test
-    @DisplayName("FR-LOC-041: empty input applies all defaults")
+    @DisplayName("empty input applies all defaults")
     void emptyConfigReturnsDefaults() {
         LocalizationConfig config = LocalizationConfigParser.parse(new JsonObject());
 
@@ -37,7 +37,7 @@ class LocalizationConfigParserTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-041: missing 'localization' object also applies defaults")
+    @DisplayName("missing 'localization' object also applies defaults")
     void missingLocalizationKeyAppliesDefaults() {
         LocalizationConfig config = LocalizationConfigParser.parse(new JsonObject().put("other", "ignored"));
 
@@ -46,7 +46,7 @@ class LocalizationConfigParserTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-042: defaultLocale and supportedLocales parse via Locale.forLanguageTag")
+    @DisplayName("defaultLocale and supportedLocales parse via Locale.forLanguageTag")
     void parsesLocalesFromLanguageTags() {
         JsonObject input = new JsonObject()
                 .put(
@@ -62,7 +62,7 @@ class LocalizationConfigParserTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-041a: missing defaultZone defaults to UTC (does NOT fail)")
+    @DisplayName("missing defaultZone defaults to UTC (does NOT fail)")
     void missingDefaultZoneFallsBackToUtc() {
         JsonObject input = new JsonObject().put("localization", new JsonObject());
 
@@ -72,7 +72,7 @@ class LocalizationConfigParserTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-041a: explicit defaultZone parses with ZoneId.of")
+    @DisplayName("explicit defaultZone parses with ZoneId.of")
     void defaultZoneFromLocalization() {
         JsonObject input = new JsonObject().put("localization", new JsonObject().put("defaultZone", "Europe/Helsinki"));
 
@@ -82,7 +82,7 @@ class LocalizationConfigParserTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-047..051: cacheTtlSeconds mapping")
+    @DisplayName("cacheTtlSeconds mapping")
     class CacheTtlSeconds {
 
         @Test
@@ -119,7 +119,7 @@ class LocalizationConfigParserTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-046: legacy 'cacheSeconds' field is silently ignored")
+    @DisplayName("legacy 'cacheSeconds' field is silently ignored")
     void legacyCacheSecondsIgnored() {
         JsonObject input = new JsonObject()
                 .put("localization", new JsonObject().put("messages", new JsonObject().put("cacheSeconds", 60)));

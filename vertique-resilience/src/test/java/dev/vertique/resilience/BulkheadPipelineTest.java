@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** T004 TP-001 proof for bulkhead capacity, queue ordering, races, and lifecycle release. */
+/** Proof for bulkhead capacity, queue ordering, races, and lifecycle release. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class BulkheadPipelineTest {

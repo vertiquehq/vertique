@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 class ResilienceCancellationListenerTest {
 
     /**
-     * Supporting FR-030: a listener registered after the cancel runs at once with the reason, and one
+     * A listener registered after the cancel runs at once with the reason, and one
      * registered before it does not run until the cancel.
      */
     @Test
@@ -54,7 +54,7 @@ class ResilienceCancellationListenerTest {
         assertEquals(1, late.size());
     }
 
-    /** Supporting FR-030: a listener that unregistered never runs, before or after the cancel. */
+    /** A listener that unregistered never runs, before or after the cancel. */
     @Test
     @DisplayName("an unregistered listener never runs")
     void unregisteredListenerNeverRuns() {
@@ -76,7 +76,7 @@ class ResilienceCancellationListenerTest {
     }
 
     /**
-     * Supporting FR-030: a listener that an earlier listener unregisters while the cancel is running is
+     * A listener that an earlier listener unregisters while the cancel is running is
      * skipped, because only the call that removes a listener runs it.
      */
     @Test
@@ -100,7 +100,7 @@ class ResilienceCancellationListenerTest {
     }
 
     /**
-     * Supporting FR-030: when a listener cancels again while the first cancel is delivering, the
+     * When a listener cancels again while the first cancel is delivering, the
      * listeners that follow still receive the first reason, once.
      */
     @Test
@@ -123,7 +123,7 @@ class ResilienceCancellationListenerTest {
         assertSame(first, cancellation.reason());
     }
 
-    /** Supporting FR-030: a cancellation that was not cancelled has no reason. */
+    /** A cancellation that was not cancelled has no reason. */
     @Test
     @DisplayName("a cancellation that was not cancelled has no reason")
     void uncancelledCancellationHasNoReason() {

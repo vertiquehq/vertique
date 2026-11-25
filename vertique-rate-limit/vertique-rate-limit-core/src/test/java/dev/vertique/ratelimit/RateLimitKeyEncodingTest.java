@@ -15,8 +15,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-001, TP-002, TP-005: {@link RateLimitKey}'s scalar allowlist, canonical encoding
- * distinctness, and 256-byte key-component byte bound.
+ * {@link RateLimitKey}'s scalar allowlist, canonical encoding distinctness, and 256-byte
+ * key-component byte bound.
  */
 class RateLimitKeyEncodingTest {
 
@@ -66,7 +66,7 @@ class RateLimitKeyEncodingTest {
     void shouldRenderDistinctCanonicalKeysAcrossPercentCraftedComponents() {
         // '%' must never be pass-through in the percent-encoded payload alphabet: if it were, a
         // literal '%' in one raw component could forge the encoding of an entirely different raw
-        // component that happens to spell out that component's own percent-escapes (B1).
+        // component that happens to spell out that component's own percent-escapes.
         RateLimitKey rawSlash = RateLimitKey.of("a/b");
         RateLimitKey rawPercentEscape = RateLimitKey.of("a%2Fb");
         RateLimitKey rawLiteralPercent = RateLimitKey.of("a%b");
@@ -107,7 +107,7 @@ class RateLimitKeyEncodingTest {
         // Both String and BigInteger encode a purely-numeric payload identically via their own
         // toString(); without tag domain separation folded into the oversized-component hash, this
         // pair would collide on the same SHA-256 digest despite being distinct RateLimitKey
-        // components (B1-style forgery, oversized-path variant).
+        // components (forgery through the oversized-path variant).
         String digits = "9".repeat(300);
         BigInteger sameDigitsAsBigInteger = new BigInteger(digits);
         assertThat(sameDigitsAsBigInteger.toString()).isEqualTo(digits);

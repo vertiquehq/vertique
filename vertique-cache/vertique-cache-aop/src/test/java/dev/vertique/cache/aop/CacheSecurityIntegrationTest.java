@@ -45,7 +45,7 @@ class CacheSecurityIntegrationTest {
             return invocation.proceed();
         };
 
-        Object miss = T011CacheCompositionFixtures.await(Invocations.run(
+        Object miss = CacheCompositionFixtures.await(Invocations.run(
                 this,
                 metadata,
                 new Object[] {"miss"},
@@ -56,13 +56,13 @@ class CacheSecurityIntegrationTest {
 
         trace.clear();
         ResolvedCacheKey hitKey = new ResolvedCacheKey(new CacheRegion("cache", "profiles", 2), "i2:N", "k2Shit");
-        T011CacheCompositionFixtures.await(store.put(
+        CacheCompositionFixtures.await(store.put(
                 hitKey,
                 new CacheValueDescriptor(String.class, "system"),
                 "cached-value",
                 java.time.Duration.ofSeconds(60)));
         trace.clear();
-        Object hit = T011CacheCompositionFixtures.await(Invocations.run(
+        Object hit = CacheCompositionFixtures.await(Invocations.run(
                 this,
                 metadata,
                 new Object[] {"hit"},

@@ -12,14 +12,13 @@ import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 5 (redis portion): {@code
- * RateLimitRedisModule#clusteredRateLimitBackend} read {@code rateLimit.redis.*} via {@link
+ * {@code RateLimitRedisModule#clusteredRateLimitBackend} reads {@code rateLimit.redis.*} through
+ * the canonical injected {@code dev.vertique.core.config.ConfigParser} rather than {@link
  * RateLimitRedisConfig#fromJson}'s raw {@code JsonObject} scalar reads ({@code
- * redis.getLong("operationTimeoutMs")}) instead of the canonical injected {@code
- * dev.vertique.core.config.ConfigParser} (docs/standards/config.md rule R10). Vert.x's {@code
- * JsonObject#getLong} throws a raw {@link ClassCastException} when the underlying value is a
- * coercible {@link String} (e.g. {@code "operationTimeoutMs": "200"}), unlike {@code
- * ConfigParser}'s dedicated, coercion-lenient mapper.
+ * redis.getLong("operationTimeoutMs")}). Vert.x's {@code JsonObject#getLong} throws a raw {@link
+ * ClassCastException} when the underlying value is a coercible {@link String} (e.g. {@code
+ * "operationTimeoutMs": "200"}), unlike {@code ConfigParser}'s dedicated, coercion-lenient
+ * mapper.
  */
 class RateLimitRedisConfigParserComplianceTest {
 

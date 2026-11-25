@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * AC-088: an attempt whose supplier fails with a {@link ResilienceTimeoutException} carrying the
+ * An attempt whose supplier fails with a {@link ResilienceTimeoutException} carrying the
  * pipeline's own operation key is recorded as that pipeline's timeout, on every attempt path, with
  * the value taken from the exception.
  */

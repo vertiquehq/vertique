@@ -8,11 +8,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 /**
- * P02/P03 review repair (T017, item 11): pins {@link RedisPhysicalKey#physicalKey}'s output equal
- * to {@code dev.vertique.ratelimit.RateLimitStorageIdentity#clustered}'s output for identical
- * inputs — the deliberate duplication this class's own javadoc documents (T002's equivalent is
- * package-private to {@code vertique-rate-limit-core} and unreachable from this module, so this
- * class independently re-derives the same algorithm from JDK primitives instead of sharing code).
+ * Pins {@link RedisPhysicalKey#physicalKey}'s output equal to {@code
+ * dev.vertique.ratelimit.RateLimitStorageIdentity#clustered}'s output for identical inputs — the
+ * deliberate duplication this class's own javadoc documents ({@code RateLimitStorageIdentity}'s
+ * equivalent is package-private to {@code vertique-rate-limit-core} and unreachable from this
+ * module, so this class independently re-derives the same algorithm from JDK primitives instead
+ * of sharing code).
  *
  * <p>The expected literals below are copied verbatim from {@code
  * dev.vertique.ratelimit.RateLimitStorageIdentityTest}'s own pinned golden vectors (namespace

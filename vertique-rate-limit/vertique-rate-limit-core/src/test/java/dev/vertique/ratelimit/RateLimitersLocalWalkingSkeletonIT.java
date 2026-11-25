@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-001: the walking-skeleton end-to-end LOCAL decision path — a Dagger component installing
+ * The walking-skeleton end-to-end LOCAL decision path — a Dagger component installing
  * {@link dev.vertique.ratelimit.dagger.RateLimitCoreModule} alone, one configured enabled LOCAL
  * TOKEN_BUCKET policy, {@code RateLimiters.limiter(name).acquire(RateLimitKey.of(...))} against
  * the same key: consumption within capacity yields {@code PERMITTED}, past capacity yields {@code

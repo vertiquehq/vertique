@@ -15,7 +15,7 @@ import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** T007 proof for leaf-wise resilience override layering and precedence boundaries. */
+/** Proof for leaf-wise resilience override layering and precedence boundaries. */
 @DisplayName("ResiliencePolicyOverrides")
 class ResiliencePolicyOverridesTest {
 

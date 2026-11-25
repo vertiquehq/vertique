@@ -17,9 +17,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Behavior test for ordered fan-out by {@link Observes#priority()}.
  *
- * <p>RED in slice 3.1: both {@link ObserverRegistry#match(Class)} and {@link Event#fire(Object)} are
- * failing stubs. The green step turns this test green by matching observers and dispatching them in
- * ascending-priority order via {@code Combinators.foldSequential}.
+ * <p>{@link ObserverRegistry#match(Class)} and {@link Event#fire(Object)} dispatch the matched observers in
+ * ascending-priority order.
  */
 @ExtendWith(VertxExtension.class)
 class PriorityOrderedDispatchTest {

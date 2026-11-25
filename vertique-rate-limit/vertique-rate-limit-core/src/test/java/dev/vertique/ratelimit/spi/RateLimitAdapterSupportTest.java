@@ -33,7 +33,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001: {@link RateLimitAdapterSupport#subjectKey} distinguishes an anonymous caller (governed
+ * {@link RateLimitAdapterSupport#subjectKey} distinguishes an anonymous caller (governed
  * by {@link AnonymousRateLimitPolicy}) from an authenticated caller whose requested facet is
  * absent — a hard {@code SUBJECT_UNRESOLVABLE} failure, never a silent fall-through into the
  * shared anonymous bucket.
@@ -57,7 +57,7 @@ class RateLimitAdapterSupportTest {
         vertx.close();
     }
 
-    static Stream<MatrixRow> t006ContractMatrix() {
+    static Stream<MatrixRow> contractMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldFrameASharedAnonymousComponentWhenNoIdentityAndPolicyIsSharedBucket",
@@ -76,9 +76,9 @@ class RateLimitAdapterSupportTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t006ContractMatrix")
-    @DisplayName("enforces the T006 subject-resolution contract matrix")
-    void shouldEnforceT006ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("contractMatrix")
+    @DisplayName("enforces the subject-resolution contract matrix")
+    void shouldEnforceContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 

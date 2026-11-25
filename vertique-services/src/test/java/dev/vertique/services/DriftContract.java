@@ -6,10 +6,10 @@ package dev.vertique.services;
 import io.vertx.core.Future;
 
 /**
- * Test-fixture service contract simulating a stale generated companion (CG-015 §4.2 reachability
- * note): the interface declares a single current operation ({@code "opA"}), but its companion
- * ({@link DriftContract_ServiceClientProxy}) was "compiled" against an older interface version
- * that also had an {@code "opGhost"} operation baked into its constructor.
+ * Test-fixture service contract simulating a stale generated companion: the interface declares a
+ * single current operation ({@code "opA"}), but its companion ({@link
+ * DriftContract_ServiceClientProxy}) was "compiled" against an older interface version that
+ * also had an {@code "opGhost"} operation baked into its constructor.
  *
  * <p>A runtime-complete registry entry for this contract (one operation, {@code "opA"}, matching
  * the current interface) still causes the companion constructor to fail, because the companion's

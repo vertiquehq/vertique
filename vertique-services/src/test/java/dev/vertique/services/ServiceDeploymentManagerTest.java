@@ -251,7 +251,7 @@ class ServiceDeploymentManagerTest {
         manager.deployAll().compose(v -> manager.undeployAll()).onComplete(ctx.succeeding(v -> {
             ctx.verify(() -> {
                 // The ordering guarantee: deregister must precede undeploy so the supervisor
-                // cannot restart a verticle that is in the process of being torn down (AC-14).
+                // cannot restart a verticle that is in the process of being torn down.
                 InOrder inOrder = inOrder(supervisor, deployer);
                 inOrder.verify(supervisor).deregister(TestContract.class);
                 inOrder.verify(deployer).undeploy(testContractDeploymentName());

@@ -19,9 +19,9 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * §11.1 LocaleResolver tests for RFC 4647 language range resolution. Every throw row
+ * LocaleResolver tests for RFC 4647 language range resolution. Every throw row
  * asserts {@code reason()}, {@code value()}, {@code supportedLocales()}, and whether
- * {@code getCause()} is set per the plan's "Universal field-population invariants".
+ * {@code getCause()} is set.
  */
 class DefaultLocaleResolverLanguageRangeTest {
 
@@ -39,7 +39,7 @@ class DefaultLocaleResolverLanguageRangeTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-090..094: resolveLanguageRange(value) uses defaultLocale fallback")
+    @DisplayName("resolveLanguageRange(value) uses defaultLocale fallback")
     class ResolveWithDefaultFallback {
 
         @Test
@@ -98,7 +98,7 @@ class DefaultLocaleResolverLanguageRangeTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-094 + FR-LOC-103/105/107: requireLanguageRange(value) has no fallback")
+    @DisplayName("requireLanguageRange(value) has no fallback")
     class RequireWithoutFallback {
 
         @Test
@@ -173,7 +173,7 @@ class DefaultLocaleResolverLanguageRangeTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-105: malformed range")
+    @DisplayName("malformed range")
     class MalformedRange {
 
         @Test
@@ -191,17 +191,17 @@ class DefaultLocaleResolverLanguageRangeTest {
             assertEquals(Reason.MALFORMED_LANGUAGE_RANGE, ex.reason());
             assertEquals("abc;q=999", ex.value());
             assertEquals(SUPPORTED, ex.supportedLocales());
-            // FR-LOC-104/105: cause is the IllegalArgumentException from Locale.LanguageRange.parse
+            // cause is the IllegalArgumentException from Locale.LanguageRange.parse
             assertInstanceOf(IllegalArgumentException.class, ex.getCause());
         }
     }
 
     @Nested
-    @DisplayName("FR-LOC-101: RFC 4647 wildcard '*'")
+    @DisplayName("RFC 4647 wildcard '*'")
     class Wildcard {
 
         @Test
-        @DisplayName("resolveLanguageRange(\"*\", fi) → fi via FR-LOC-106 fallback")
+        @DisplayName("resolveLanguageRange(\"*\", fi) → fi via the default-locale fallback")
         void wildcardWithFallback() {
             assertEquals(FI, resolver.resolveLanguageRange("*"));
         }

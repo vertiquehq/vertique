@@ -27,7 +27,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * TP-004: the same shared conformance vector set ({@code spec.md} §11.3) runs once against LOCAL
+ * The same shared conformance vector set runs once against LOCAL
  * and once against CLUSTERED, proving both modes agree on {@code outcome}, {@code remaining}, and
  * the presence/absence of {@code retryAfter}/{@code resetAfter} — not merely that each mode passes
  * its own separate suite. CLUSTERED configures no client clock on Bucket4j's Vert.x

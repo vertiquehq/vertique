@@ -58,7 +58,7 @@ class CircuitBreakerCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancel that arrives after the call was accepted and before the breaker
+     * A cancel that arrives after the call was accepted and before the breaker
      * starts it fails the execution with the reason and never invokes the operation.
      */
     @Test
@@ -92,7 +92,7 @@ class CircuitBreakerCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancellable execution that is not cancelled delivers its operation's value
+     * A cancellable execution that is not cancelled delivers its operation's value
      * and its operation's failure, and the failure counts against the breaker.
      */
     @Test
@@ -122,7 +122,7 @@ class CircuitBreakerCancellationTest {
     }
 
     /**
-     * Supporting FR-030: when the operation completes after the cancel took effect but before the
+     * When the operation completes after the cancel took effect but before the
      * breaker's own cancel listener ran, the execution still fails with the reason, and the late value is
      * not delivered.
      */

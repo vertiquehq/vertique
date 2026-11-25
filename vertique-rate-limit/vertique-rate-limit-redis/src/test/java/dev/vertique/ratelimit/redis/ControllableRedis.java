@@ -19,10 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Deterministic barrier-fake in front of a real {@code io.vertx.redis.client.Redis} connection
- * (mirroring {@code vertique-cache-redis}'s Barrier-style controllable-fake idiom, T009's
- * contracted seam). Every {@link Request} whose {@link Command} matches {@link #intercepted} is
- * captured as a {@link Held} call instead of being sent — held indefinitely until a test explicitly
- * {@link Held#release() releases} it, at which point the original request is forwarded verbatim to
+ * (mirroring {@code vertique-cache-redis}'s Barrier-style controllable-fake idiom). Every {@link
+ * Request} whose {@link Command} matches {@link #intercepted} is captured as a {@link Held} call
+ * instead of being sent — held indefinitely until a test explicitly {@link Held#release()
+ * releases} it, at which point the original request is forwarded verbatim to
  * the real delegate and the held call completes with that genuine response (or failure).
  *
  * <p>Every other command (notably {@code GET}, and any command issued by this module's own

@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * T017 TP-008 (i): {@link Bucket4jRedisRateLimitBackend}'s two log sites — {@code issueTtl}'s
+ * {@link Bucket4jRedisRateLimitBackend}'s two log sites — {@code issueTtl}'s
  * {@code PEXPIRE}-failure warn and {@code ambiguousFailureResult}'s pre-deadline debug — render
  * only the failure's simple class name, never the raw {@link Throwable} itself (which SLF4J would
  * otherwise render as a message plus stack trace, potentially echoing the physical Redis key).
@@ -81,7 +81,7 @@ class Bucket4jRedisRateLimitBackendLogHygieneTest {
 
             // --- Site 1 (issueTtl): a genuinely committed consumption whose immediately-following
             // PEXPIRE fails with an exception whose message carries this scenario's real physical
-            // key (the "physical-key-derived detail" TP-008 requires never be rendered).
+            // key (the physical-key-derived detail that must never be rendered).
             String pexpireStorageKey = RateLimitRedisTestFixture.storageKey("log-hygiene-pexpire");
             String pexpirePhysicalKey = RedisPhysicalKey.physicalKey(
                     RateLimitRedisTestFixture.NAMESPACE, RateLimitRedisTestFixture.SECRET, pexpireStorageKey);

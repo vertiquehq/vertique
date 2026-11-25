@@ -8,7 +8,7 @@ import io.vertx.core.Future;
 /**
  * Host for a nested {@code @ServiceContract} fixture used by {@link ServiceClientFactoryCompanionTest}
  * to prove that flattened companion-name selection composes through
- * {@link ServiceClientFactory#create(Class)} for nested contracts (CG-015 §4.2 step 3).
+ * {@link ServiceClientFactory#create(Class)} for nested contracts.
  *
  * <p>The nested {@link Inner} contract's generated companion is named
  * {@code NestedHolder_Inner_ServiceClientProxy} (using {@code _} as the separator), which matches

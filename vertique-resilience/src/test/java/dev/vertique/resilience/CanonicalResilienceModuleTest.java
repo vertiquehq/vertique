@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-001 Dagger ownership proof for the canonical resilience module.
+ * Dagger ownership proof for the canonical resilience module.
  *
  * <p>The component is intentionally minimal but real: Dagger constructs the application-scoped
  * {@link Resilience}, merges the module's {@link ApplicationShutdownStep} contribution into a

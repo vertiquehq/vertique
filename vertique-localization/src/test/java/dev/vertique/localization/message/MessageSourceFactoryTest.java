@@ -20,10 +20,10 @@ import org.junit.jupiter.api.Test;
  * Tests for {@link DefaultMessageSourceFactory}'s {@code create(String)} / {@code create(MessageSourceOptions)}
  * shapes and the classloader-precedence chain.
  *
- * <p>FR-LOC-060: {@code create(String basename)} is sugar for
+ * <p>{@code create(String basename)} is sugar for
  * {@code create(MessageSourceOptions.builder().basename(basename).build())}.
  *
- * <p>Classloader precedence per plan §"Slice 3":
+ * <p>Classloader precedence:
  * <ol>
  *   <li>{@code options.classLoader()} if non-null.</li>
  *   <li>Else {@code options.caller().getClassLoader()} when caller is non-null AND has a non-null classloader
@@ -44,7 +44,7 @@ class MessageSourceFactoryTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-060: create(basename) is sugar for create(options.basename(basename).build())")
+    @DisplayName("create(basename) is sugar for create(options.basename(basename).build())")
     void createByName() {
         MessageSource source = factory.create("messages");
 

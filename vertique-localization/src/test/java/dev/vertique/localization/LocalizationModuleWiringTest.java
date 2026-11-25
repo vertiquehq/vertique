@@ -57,7 +57,7 @@ class LocalizationModuleWiringTest {
         @VertxConfig
         @Singleton
         static JsonObject vertxConfig() {
-            // Minimal localization config — supportedLocales must include defaultLocale per FR-LOC-045.
+            // Minimal localization config — supportedLocales must include defaultLocale.
             return new JsonObject()
                     .put(
                             "localization",
@@ -138,14 +138,14 @@ class LocalizationModuleWiringTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-011/012: LocalizationModule source declares no MessageSource binding or multibinding")
+    @DisplayName("LocalizationModule source declares no MessageSource binding or multibinding")
     void noMessageSourceBindingInSource() throws Exception {
         Path moduleSource = Path.of("src/main/java/dev/vertique/localization/LocalizationModule.java");
         String code = stripCommentsAndStrings(Files.readString(moduleSource));
 
         // After stripping Javadoc/line-comments/string literals, the source must not contain
-        // a Set<MessageSource> multibinding (FR-LOC-012) or a @Multibinds declaration.
-        assertFalse(code.contains("Set<MessageSource>"), "Set<MessageSource> multibinding is forbidden (FR-LOC-012)");
+        // a Set<MessageSource> multibinding or a @Multibinds declaration.
+        assertFalse(code.contains("Set<MessageSource>"), "Set<MessageSource> multibinding is forbidden");
         assertFalse(code.contains("@Multibinds"), "@Multibinds must not appear in LocalizationModule");
         // Sanity: we found the module file
         assertTrue(code.contains("LocalizationModule"));

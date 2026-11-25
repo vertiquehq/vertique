@@ -10,7 +10,7 @@ import io.vertx.core.Vertx;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
-/** TP-003: an unknown policy name must fail {@code limiter(...)} synchronously, before any {@code Future} exists. */
+/** An unknown policy name must fail {@code limiter(...)} synchronously, before any {@code Future} exists. */
 class RateLimitersUnknownPolicyTest {
 
     @Test

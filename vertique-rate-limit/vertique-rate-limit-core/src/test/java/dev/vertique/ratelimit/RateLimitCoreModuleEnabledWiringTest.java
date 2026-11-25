@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * M2 (review repair): {@code rateLimit.enabled=false}, read from configuration through a real,
+ * {@code rateLimit.enabled=false}, read from configuration through a real,
  * minimal Dagger graph over {@link RateLimitCoreModule}, yields {@code DISABLED} decisions on
  * every handle this runtime resolves — not merely when the (7-argument) {@link RateLimiters}
  * constructor's {@code rateLimitEnabled} flag is poked directly.

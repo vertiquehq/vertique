@@ -29,7 +29,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * TP-005: {@code operationTimeoutMs} bounds the total elapsed time across every internal CAS
+ * {@code operationTimeoutMs} bounds the total elapsed time across every internal CAS
  * attempt Bucket4j's own unbounded retry loop would otherwise run — proven by holding the sole CAS
  * round-trip indefinitely (the strongest, most deterministic proof that an unbounded wait would
  * never resolve on its own) — and a Bucket4j completion delivered after the deadline has already

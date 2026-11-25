@@ -3,7 +3,7 @@
 
 package dev.vertique.cache.redis;
 
-import static dev.vertique.cache.aop.T011CacheCompositionFixtures.await;
+import static dev.vertique.cache.aop.CacheCompositionFixtures.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;

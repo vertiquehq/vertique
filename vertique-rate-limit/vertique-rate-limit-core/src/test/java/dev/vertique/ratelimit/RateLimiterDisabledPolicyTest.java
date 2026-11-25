@@ -23,13 +23,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 1: {@link RateLimiter#acquire(RateLimitKey, long)} only ever
- * checked the {@code rateLimit.enabled} root kill switch — it never checked this handle's own
- * bound {@link RateLimitPolicy#enabled()}, so a policy explicitly declared {@code enabled=false}
- * still consumed/enforced against a bound backend exactly like an enabled one. Mirrors the
- * existing {@code rateLimit.enabled} kill-switch path (M2 review repair, {@link
- * RateLimitCoreModuleEnabledWiringTest}): a disabled policy must yield {@code DISABLED} (decision
- * -first, {@code permitted()==true}), never touch the bound backend, and still emit exactly one
+ * {@link RateLimiter#acquire(RateLimitKey, long)} checks both the {@code rateLimit.enabled} root
+ * kill switch and this handle's own bound {@link RateLimitPolicy#enabled()}: a policy explicitly
+ * declared {@code enabled=false} is never consumed or enforced against a bound backend. Mirrors the
+ * {@code rateLimit.enabled} kill-switch path (see {@link RateLimitCoreModuleEnabledWiringTest}): a
+ * disabled policy must yield {@code DISABLED} (decision-first, {@code permitted()==true}), never
+ * touch the bound backend, and still emit exactly one
  * {@link dev.vertique.ratelimit.spi.event.RateLimitDecisionCompleted} event.
  */
 class RateLimiterDisabledPolicyTest {
@@ -76,11 +75,9 @@ class RateLimiterDisabledPolicyTest {
     }
 
     /**
-     * External deep-review finding 1, gap (a) residual: {@code RateLimiters#newLimiter}
-     * unconditionally resolved {@code backends.get(policy.mode())} and threw {@link
-     * IllegalStateException} when unbound — even for a disabled policy, whose {@link
-     * RateLimiter#acquire} never touches a backend at all. A disabled {@code CLUSTERED} policy in a
-     * LOCAL-only deployment (no Redis module installed, {@code backends} has no {@code CLUSTERED}
+     * {@code RateLimiters#newLimiter} does not require a bound backend for a disabled policy,
+     * whose {@link RateLimiter#acquire} never touches a backend at all. A disabled {@code CLUSTERED}
+     * policy in a LOCAL-only deployment (no Redis module installed, {@code backends} has no {@code CLUSTERED}
      * entry) must still resolve its handle and yield {@code DISABLED}, mirroring {@code
      * validateBackendCoverage}'s own {@code policy.enabled() &&} exemption.
      */

@@ -31,7 +31,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * TP-007, TP-008: the Vertique-issued {@code PEXPIRE} TTL bound after a committed consumption, and
+ * The Vertique-issued {@code PEXPIRE} TTL bound after a committed consumption, and
  * that a forced {@code PEXPIRE} failure never changes the already-produced admission decision.
  */
 @Testcontainers
@@ -144,7 +144,7 @@ class RateLimitRedisTtlMaintenanceIT {
 
     @Test
     void shouldNotChangeDecisionWhenTtlWriteFails() throws Exception {
-        // Given: the same policy shape as TP-007, driven through a controllable fake that lets the
+        // Given: the same policy shape as the TTL test, driven through a controllable fake that lets the
         // CAS write succeed but forces the immediately following PEXPIRE call to fail.
         long capacity = 5;
         long tokensPerPeriod = 5;
@@ -221,7 +221,7 @@ class RateLimitRedisTtlMaintenanceIT {
         public io.vertx.core.Future<Response> send(io.vertx.redis.client.Request request) {
             if (request.command() == failing) {
                 observedFailedCommand = true;
-                return io.vertx.core.Future.failedFuture(new RuntimeException("forced PEXPIRE failure for TP-008"));
+                return io.vertx.core.Future.failedFuture(new RuntimeException("forced PEXPIRE failure"));
             }
             return delegate.send(request);
         }

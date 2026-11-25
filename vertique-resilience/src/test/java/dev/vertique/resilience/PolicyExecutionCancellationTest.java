@@ -63,7 +63,7 @@ class PolicyExecutionCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancel that arrives after the call was accepted and before the retry
+     * A cancel that arrives after the call was accepted and before the retry
      * execution starts fails it with the reason, without an attempt.
      */
     @Test
@@ -94,7 +94,7 @@ class PolicyExecutionCancellationTest {
     }
 
     /**
-     * Supporting FR-030: an attempt that fails after the execution was cancelled is not retried and no
+     * An attempt that fails after the execution was cancelled is not retried and no
      * retry is reported for it.
      */
     @Test
@@ -128,7 +128,7 @@ class PolicyExecutionCancellationTest {
     }
 
     /**
-     * Supporting FR-021: a retry delay hint is found in the first 32 links of the cause chain, counting
+     * A retry delay hint is found in the first 32 links of the cause chain, counting
      * the failure itself, and not beyond.
      */
     @Test
@@ -159,7 +159,7 @@ class PolicyExecutionCancellationTest {
     }
 
     /**
-     * Supporting FR-030: once a retry execution settles with a value, the cancellation no longer holds
+     * Once a retry execution settles with a value, the cancellation no longer holds
      * the execution, so it does not keep the operation alive.
      */
     @Test
@@ -179,7 +179,7 @@ class PolicyExecutionCancellationTest {
     }
 
     /**
-     * Supporting FR-030: once a retry execution settles with a failure, the cancellation no longer holds
+     * Once a retry execution settles with a failure, the cancellation no longer holds
      * the execution, so it does not keep the operation alive.
      */
     @Test

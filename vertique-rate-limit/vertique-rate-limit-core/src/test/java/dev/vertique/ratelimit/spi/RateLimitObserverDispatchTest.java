@@ -32,7 +32,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001: every completed rate-limit decision dispatches synchronously to each bound {@link
+ * Every completed rate-limit decision dispatches synchronously to each bound {@link
  * RateLimitObserver}; a throwing observer never affects the admission decision or later
  * observers; every emitted event carries only bounded policy-level fields, never the raw key,
  * caller identity, or an exception.
@@ -43,7 +43,7 @@ class RateLimitObserverDispatchTest {
     private static final String SENSITIVE_KEY_COMPONENT = "tenant-42-secret";
     private static final String OBSERVER_FAILURE_MESSAGE = "observer-failure-must-never-leak-into-an-event";
 
-    static Stream<MatrixRow> t005ContractMatrix() {
+    static Stream<MatrixRow> contractMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldReturnTheDecisionUnaffectedWhenNoObserverIsBound",
@@ -62,9 +62,9 @@ class RateLimitObserverDispatchTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t005ContractMatrix")
-    @DisplayName("enforces the T005 observer-dispatch contract matrix")
-    void shouldEnforceT005ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("contractMatrix")
+    @DisplayName("enforces the observer-dispatch contract matrix")
+    void shouldEnforceContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
@@ -149,7 +149,7 @@ class RateLimitObserverDispatchTest {
         }
     }
 
-    // --- Row 4 (Carried-3, review repair): a fatal observer failure propagates, never swallowed ---
+    // --- Row 4: a fatal observer failure propagates, never swallowed ---
 
     private static void shouldRethrowAFatalObserverFailureInsteadOfSwallowingIt() throws Exception {
         Vertx vertx = Vertx.vertx();

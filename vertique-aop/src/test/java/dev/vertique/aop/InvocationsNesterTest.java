@@ -21,10 +21,6 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Behavior tests for the {@link Invocations} continuation nester.
- *
- * <p>These tests are RED in slice 1.1: {@link Invocations#run} is a failing stub, so each test that
- * actually drives the nester throws {@link UnsupportedOperationException}. The green step (slice 1.1
- * implementation) supplies the continuation-passing fold and turns them green.
  */
 class InvocationsNesterTest {
 

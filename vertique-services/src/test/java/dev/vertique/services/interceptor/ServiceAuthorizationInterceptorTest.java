@@ -80,7 +80,7 @@ import org.mockito.ArgumentCaptor;
  * <p>Verifies the runtime gate in {@link ServiceAuthorizationInterceptor#beforeDispatch}
  * (permit/deny/pass-through, fail-closed on missing identity and on engine errors, exactly one
  * emitted event per gated attempt, ambient {@link InvocationOrigin} propagation into the decision
- * request and the emitted event — identity-002 P2.S5b-ii) and the construction-time startup scan
+ * request and the emitted event) and the construction-time startup scan
  * that rejects unparseable / unregistered actions and the absence of the authz engine when a
  * {@code @RequiresAction} is declared.
  */

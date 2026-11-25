@@ -31,7 +31,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * TP-002: an ambiguous mid-CAS timeout, forced via Redis's own {@code DEBUG SLEEP}, classifies as
+ * An ambiguous mid-CAS timeout, forced via Redis's own {@code DEBUG SLEEP}, classifies as
  * a failure (never a committed consumption, never {@code CONTENTION_EXHAUSTED}) with no additional
  * logical attempt initiated by Vertique.
  */

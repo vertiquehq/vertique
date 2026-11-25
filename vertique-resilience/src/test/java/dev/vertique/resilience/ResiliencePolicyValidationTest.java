@@ -46,11 +46,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.function.Executable;
 
 /**
- * TP-002 red proof for eager policy validation and fail-safe retry callbacks.
+ * Proof for eager policy validation and fail-safe retry callbacks.
  *
- * <p>T002 production types are deliberately loaded reflectively until the policy implementation
- * exists. This follows the T011 proof convention: the test remains compilable against the
- * dependency baseline while still freezing the public API and its observable behavior.
+ * <p>The production types are deliberately loaded reflectively: the test stays compilable
+ * independently of the policy implementation while still pinning the public API and its
+ * observable behavior.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -793,7 +793,7 @@ class ResiliencePolicyValidationTest {
         try {
             return Class.forName(typeName);
         } catch (ClassNotFoundException e) {
-            throw new AssertionError("Required T002 type is absent: " + typeName, e);
+            throw new AssertionError("Required type is absent: " + typeName, e);
         }
     }
 

@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-005: {@link RateLimiters#close()} is idempotent under concurrent shutdown and fences any
+ * {@link RateLimiters#close()} is idempotent under concurrent shutdown and fences any
  * in-flight {@code execute(...)}, mirroring {@code CanonicalResilienceModuleTest}'s {@code
  * firstStop == secondStop} proof for {@code ResilienceModule}. The component is a real,
  * Dagger-composed {@link RateLimitCoreModule} graph — the shutdown step under test is the module's

@@ -31,7 +31,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * TP-006: application teardown runs {@link ApplicationShutdownStep}s in the <em>reverse</em> of
+ * Application teardown runs {@link ApplicationShutdownStep}s in the <em>reverse</em> of
  * {@link LifecycleOrdered#comparator()} startup order (the same ordering {@code
  * dev.vertique.application.VertiqueApplicationHandle#teardown()} applies) — so {@code
  * vertique-rate-limit-redis}'s {@link RedisRateLimitFenceLifecycle} ({@code INFRA}, priority

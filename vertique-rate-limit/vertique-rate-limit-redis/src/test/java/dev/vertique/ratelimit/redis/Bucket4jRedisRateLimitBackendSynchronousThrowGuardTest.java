@@ -25,7 +25,7 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 8: {@link Bucket4jRedisRateLimitBackend#consume} guards a
+ * {@link Bucket4jRedisRateLimitBackend#consume} guards a
  * synchronous throw from consume setup ({@code bucket.tryConsumeAndReturnRemaining} throwing
  * before ever returning a {@link CompletableFuture}) and from {@code issueTtl} (e.g. {@code
  * RedisAPI#pexpire} throwing synchronously instead of returning a failed future) — catching, always
@@ -115,9 +115,9 @@ class Bucket4jRedisRateLimitBackendSynchronousThrowGuardTest {
     }
 
     /**
-     * External deep-review finding 8 residual: the earlier two guards above only exercise a
-     * synchronous throw that happens on the <em>calling</em> thread (a {@code completedFuture}'s
-     * {@code whenComplete} lambda runs inline, inside the outer {@code try} that wraps {@code
+     * The earlier two guards above only exercise a synchronous throw that happens on the
+     * <em>calling</em> thread (a {@code completedFuture}'s {@code whenComplete} lambda runs inline,
+     * inside the outer {@code try} that wraps {@code
      * bucket.tryConsumeAndReturnRemaining(...).whenComplete(...)}). This row instead completes the
      * Bucket4j future asynchronously, from a non-caller thread, so the {@code whenComplete} lambda
      * body runs outside that outer {@code try} entirely — exercising the settlement branch's own

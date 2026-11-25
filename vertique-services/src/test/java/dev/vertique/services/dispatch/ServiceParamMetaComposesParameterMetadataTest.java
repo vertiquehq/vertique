@@ -16,8 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Phase-0 SPI proof: demonstrates that {@link ServiceMethodMeta.ParamMeta} can expose a
- * {@link ParameterMetadata} view (the new {@code dev.vertique.core.codegen} SPI) without replacing
+ * Proves that {@link ServiceMethodMeta.ParamMeta} can expose a
+ * {@link ParameterMetadata} view (the {@code dev.vertique.core.codegen} SPI) without replacing
  * the record's existing public shape — composition, not replacement.
  *
  * <p>The view supplies {@code index()} positionally (the parameter's position in the method's
@@ -25,9 +25,6 @@ import org.junit.jupiter.api.Test;
  * lookups are empty (services tracks no per-parameter annotations); and {@code genericType()} is
  * outside the reflection-free core, so it throws {@link UnsupportedOperationException}. The
  * domain-only fields {@code source()}/{@code lookupKey()} remain directly on {@code ParamMeta}.
- *
- * <p>This is a RED test: it references the not-yet-existing {@code ParamMeta#asParameterMetadata(int)}
- * producer, so it must fail to compile until the GREEN step adds the view.
  */
 class ServiceParamMetaComposesParameterMetadataTest {
 

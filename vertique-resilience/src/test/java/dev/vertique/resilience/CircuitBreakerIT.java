@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** T003 TP-001 proof for local breaker admission, accounting, and half-open behavior. */
+/** Proof for local breaker admission, accounting, and half-open behavior. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class CircuitBreakerIT {

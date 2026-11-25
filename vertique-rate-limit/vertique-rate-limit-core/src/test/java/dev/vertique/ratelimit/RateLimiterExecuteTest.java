@@ -28,7 +28,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-003/TP-004: {@link RateLimiter#execute}/{@link KeyedRateLimiter#execute}'s guarded-wrapper
+ * {@link RateLimiter#execute}/{@link KeyedRateLimiter#execute}'s guarded-wrapper
  * mapping and the cost-vs-capacity pre-engine validation.
  */
 class RateLimiterExecuteTest {
@@ -41,10 +41,10 @@ class RateLimiterExecuteTest {
         VERTX.close();
     }
 
-    // --- TP-003 ---
+    // --- execute mapping ---
 
     @Test
-    void shouldEnforceT004ExecuteMappingMatrix() {
+    void shouldEnforceExecuteMappingMatrix() {
         shouldRunActionExactlyOnceWhenPermitted();
         shouldFailWithExceededExceptionWhenQuotaExceeded();
         shouldFailWithUnavailableExceptionWhenBackendFailureClosed();
@@ -176,7 +176,7 @@ class RateLimiterExecuteTest {
                 });
     }
 
-    // --- M2 (review repair): kill-switch row ---
+    // --- kill-switch row ---
 
     private static void shouldRunActionExactlyOnceWhenDisabled() {
         RateLimitPolicy policy = policy("disabled-switch-quota", 10L, RateLimitFailureMode.OPEN);
@@ -222,7 +222,7 @@ class RateLimiterExecuteTest {
                 .hasSize(1);
     }
 
-    // --- B2 (review repair): cost < 1 fails synchronously, before any engine call ---
+    // --- cost < 1 fails synchronously, before any engine call ---
 
     @Test
     void shouldRejectCostBelowOneSynchronouslyOnBothAcquireAndExecute() {
@@ -250,7 +250,7 @@ class RateLimiterExecuteTest {
                 .isEqualTo(0);
     }
 
-    // --- TP-004 ---
+    // --- cost above capacity ---
 
     @Test
     void shouldFailCostAboveCapacityBeforeEngineOnBothAcquireAndExecute() {
@@ -292,7 +292,7 @@ class RateLimiterExecuteTest {
                 .isEqualTo(0);
     }
 
-    // --- m5 (review repair minor): cost > capacity dispatches on the calling context, like sibling paths ---
+    // --- cost > capacity dispatches on the calling context, like sibling paths ---
 
     @Test
     void shouldDispatchCostAboveCapacityFailureOnTheCallingContextLikeSiblingPaths() throws Exception {

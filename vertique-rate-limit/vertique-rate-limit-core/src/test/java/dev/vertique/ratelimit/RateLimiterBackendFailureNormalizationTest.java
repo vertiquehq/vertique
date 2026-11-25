@@ -22,7 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * M1 (review repair): {@link RateLimiter#acquire(RateLimitKey, long)} must always yield a
+ * {@link RateLimiter#acquire(RateLimitKey, long)} must always yield a
  * decision (decision-first) even when the bound backend fails outright — a rejected future, or a
  * synchronous throw before any future is even returned. Both normalize into the same {@code
  * BACKEND_FAILURE_OPEN}/{@code BACKEND_FAILURE_CLOSED} shape {@code classifyOutcome} already

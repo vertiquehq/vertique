@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for AC-LOC-006: a bound {@link LocalizationContext} propagates through service
+ * Unit tests that a bound {@link LocalizationContext} propagates through service
  * dispatch to a downstream handler.
  *
  * <p>Exercises the real inbound path through {@link ServiceMethodInvoker} with a
@@ -53,9 +53,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Two scenarios are verified:
  * <ul>
- *   <li><b>Positive (AC-LOC-006):</b> a {@link LocalizationContext} placed in the envelope's
+ *   <li><b>Positive:</b> a {@link LocalizationContext} placed in the envelope's
  *       dispatch-context map is decoded and observable to the handler.</li>
- *   <li><b>Negative (FR-LOC-232):</b> an envelope with no localization entry results in the
+ *   <li><b>Negative:</b> an envelope with no localization entry results in the
  *       handler observing {@link Optional#empty()} — nothing is rebound.</li>
  * </ul>
  */
@@ -174,7 +174,7 @@ class LocalizationDispatchPropagationTest {
     // --- Tests ---
 
     @Test
-    @DisplayName("AC-LOC-006: LocalizationContext in envelope dispatch context is observable in the handler")
+    @DisplayName("LocalizationContext in envelope dispatch context is observable in the handler")
     void shouldPropagateLocalizationContextToHandler(Vertx vertx, VertxTestContext ctx) throws Exception {
         CAPTURED.clear();
         String address = uniqueAddress("process-with-loc");
@@ -217,7 +217,7 @@ class LocalizationDispatchPropagationTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-232: absent LocalizationContext results in empty Optional in the handler")
+    @DisplayName("absent LocalizationContext results in empty Optional in the handler")
     void shouldObserveEmptyWhenNoLocalizationContextInEnvelope(Vertx vertx, VertxTestContext ctx) throws Exception {
         CAPTURED.clear();
         String address = uniqueAddress("process-without-loc");

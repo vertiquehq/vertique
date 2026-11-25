@@ -37,13 +37,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-003: {@link RateLimiters}'s constructor eagerly walks every declared policy against the
+ * {@link RateLimiters}'s constructor eagerly walks every declared policy against the
  * bound backend map and fails application startup, at construction time and before any handle is
  * requested. Proven here by direct
  * construction, independent of the Dagger shutdown-step machinery that later forces this
- * constructor to run eagerly at bootstrap (T004).
+ * constructor to run eagerly at bootstrap.
  *
- * <p>M5 (review repair): {@code rateLimit.local.maxTrackedKeys}/{@code cleanupIntervalMs}
+ * <p>{@code rateLimit.local.maxTrackedKeys}/{@code cleanupIntervalMs}
  * (default and per-policy override) are eagerly validated too — that validation lives inside
  * {@code RateLimitCoreModule}'s LOCAL backend provider (a Dagger dependency of {@link
  * RateLimiters} itself), so those rows are proven through a real, minimal Dagger graph rather
@@ -63,7 +63,7 @@ class RateLimitersEagerValidationTest {
         VERTX.close();
     }
 
-    static Stream<MatrixRow> t003ValidationMatrix() {
+    static Stream<MatrixRow> validationMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldFailForDuplicatePolicyNamesAcrossSources",
@@ -114,9 +114,9 @@ class RateLimitersEagerValidationTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t003ValidationMatrix")
-    @DisplayName("enforces the T003 startup-validation matrix")
-    void shouldEnforceT003StartupValidationMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("validationMatrix")
+    @DisplayName("enforces the startup-validation matrix")
+    void shouldEnforceStartupValidationMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
@@ -207,7 +207,7 @@ class RateLimitersEagerValidationTest {
                 .doesNotThrowAnyException();
     }
 
-    // --- Row 5b (external deep-review finding 1): a disabled CLUSTERED policy needs no bound
+    // --- Row 5b: a disabled CLUSTERED policy needs no bound
     // CLUSTERED backend -- eager backend-coverage validation must exempt disabled policies. ---
 
     private static void shouldSucceedForDisabledClusteredPolicyWithNoClusteredBackendBound() {
@@ -313,7 +313,7 @@ class RateLimitersEagerValidationTest {
                 .doesNotThrowAnyException();
     }
 
-    // --- Row 9 (m4): an unrecognized rateLimit.defaultMode wraps into ConfigurationException ---
+    // --- Row 9: an unrecognized rateLimit.defaultMode wraps into ConfigurationException ---
 
     private static void shouldFailForUnrecognizedDefaultMode() {
         JsonObject config = new JsonObject().put("rateLimit", new JsonObject().put("defaultMode", "NOT_A_MODE"));

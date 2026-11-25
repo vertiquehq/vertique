@@ -27,8 +27,8 @@ import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 
 /**
- * §11.2 message-source tests plus FR-LOC-060..089 (formatting, candidate-locale order,
- * findMessage, useCodeAsDefaultMessage, fallback chain, ROOT bundle resolution).
+ * Message-source tests (formatting, candidate-locale order, findMessage,
+ * useCodeAsDefaultMessage, fallback chain, ROOT bundle resolution).
  *
  * <p>JVM time zone is pinned to {@code Europe/Helsinki} for the duration of this class so
  * {@code MessageFormat}'s {@code {n,date,...}} / {@code {n,time,...}} subformats produce the
@@ -76,7 +76,7 @@ class DefaultMessageSourceTest {
     }
 
     @Nested
-    @DisplayName("§11.2 formatting matrix (JVM zone pinned to Europe/Helsinki)")
+    @DisplayName("formatting matrix (JVM zone pinned to Europe/Helsinki)")
     class FormattingMatrix {
 
         private final BigDecimal amount = new BigDecimal("10.01");
@@ -116,7 +116,7 @@ class DefaultMessageSourceTest {
         @DisplayName("requested lv (unsupported), default fi → Finnish pattern, lv formatting")
         void lvWithFiDefault() {
             // Pattern comes from messages_fi.properties (fallback locale), but formatting uses
-            // requested locale lv (FR-LOC-082). lv uses comma decimal separator like Finnish.
+            // requested locale lv. lv uses comma decimal separator like Finnish.
             MessageSource src = source(FI, "messages");
             assertEquals(
                     "Testi summa 10,01 päivänä 29.02.2024 klo 01:59",
@@ -143,7 +143,7 @@ class DefaultMessageSourceTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-080: raw pattern (no args, alwaysUseMessageFormat=false)")
+    @DisplayName("raw pattern (no args, alwaysUseMessageFormat=false)")
     class RawPatternNoArgs {
 
         @Test
@@ -175,7 +175,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-080a: alwaysUseMessageFormat=true round-trips pattern through MessageFormat even with no args")
+    @DisplayName("alwaysUseMessageFormat=true round-trips pattern through MessageFormat even with no args")
     void alwaysUseMessageFormatNoArgs() {
         // Pattern in messages_en.properties: quoted=Hello '{name}'
         // With alwaysUseMessageFormat=true, MessageFormat unescapes '{' → output is Hello {name}
@@ -185,7 +185,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-080: alwaysUseMessageFormat=false leaves quoted pattern literal")
+    @DisplayName("alwaysUseMessageFormat=false leaves quoted pattern literal")
     void noFormatNoArgsLeavesQuotedLiteral() {
         MessageSource src = source(EN, "messages");
         // Without round-tripping through MessageFormat the raw pattern's "'{name}'" stays escaped.
@@ -193,11 +193,11 @@ class DefaultMessageSourceTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-085/086/086a: findMessage")
+    @DisplayName("findMessage")
     class FindMessage {
 
         @Test
-        @DisplayName("Missing code with useCodeAsDefaultMessage=true returns Optional.empty (FR-LOC-086a)")
+        @DisplayName("Missing code with useCodeAsDefaultMessage=true returns Optional.empty")
         void missingCodeWithCodeAsDefaultStillEmpty() {
             // useCodeAsDefaultMessage flag MUST NOT affect findMessage — it's reserved for the throwing overloads.
             MessageSource src = factoryWithDefault(EN, false, true, false).create("messages");
@@ -214,14 +214,14 @@ class DefaultMessageSourceTest {
         }
 
         @Test
-        @DisplayName("Null code throws NullPointerException (FR-LOC-086)")
+        @DisplayName("Null code throws NullPointerException")
         void nullCodeThrowsNpe() {
             MessageSource src = source(EN, "messages");
             assertThrows(NullPointerException.class, () -> src.findMessage(null, EN));
         }
 
         @Test
-        @DisplayName("Blank code throws NoSuchMessageException (FR-LOC-062 alignment)")
+        @DisplayName("Blank code throws NoSuchMessageException")
         void blankCodeThrows() {
             MessageSource src = source(EN, "messages");
             assertThrows(NoSuchMessageException.class, () -> src.findMessage("  ", EN));
@@ -236,7 +236,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-071: useCodeAsDefaultMessage=true returns the code from the throwing overload")
+    @DisplayName("useCodeAsDefaultMessage=true returns the code from the throwing overload")
     void useCodeAsDefaultMessageReturnsCode() {
         MessageSource src = factoryWithDefault(EN, false, true, false).create("messages");
 
@@ -244,7 +244,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-070: defaultMessage takes precedence over useCodeAsDefaultMessage")
+    @DisplayName("defaultMessage takes precedence over useCodeAsDefaultMessage")
     void defaultMessageWinsOverCodeAsDefault() {
         MessageSource src = factoryWithDefault(EN, false, true, false).create("messages");
 
@@ -252,7 +252,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-070: defaultMessage with args is formatted through MessageFormat")
+    @DisplayName("defaultMessage with args is formatted through MessageFormat")
     void defaultMessageFormatted() {
         MessageSource src = source(EN, "messages");
 
@@ -260,7 +260,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-072: missing code with no defaultMessage and no code-as-default throws NoSuchMessageException")
+    @DisplayName("missing code with no defaultMessage and no code-as-default throws NoSuchMessageException")
     void missingCodeThrows() {
         MessageSource src = source(EN, "messages");
 
@@ -268,7 +268,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-068: ROOT bundle (messages.properties) provides codes not in any locale variant")
+    @DisplayName("ROOT bundle (messages.properties) provides codes not in any locale variant")
     void rootBundleEntry() {
         MessageSource src = source(EN, "messages");
 
@@ -302,7 +302,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-069: missing variant locale falls through to default-locale candidate")
+    @DisplayName("missing variant locale falls through to default-locale candidate")
     void missingVariantFallsThrough() {
         // No messages_de bundle exists; default locale is fi; greet has only fi/en/sv entries.
         // Request de → no de bundle → falls to fi (default) → returns Finnish.
@@ -312,7 +312,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-087..089: MessageResolvable iterates codes in order and uses first hit")
+    @DisplayName("MessageResolvable iterates codes in order and uses first hit")
     void resolvableFirstMatchWins() {
         MessageSource src = source(EN, "messages");
 
@@ -323,7 +323,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-088: MessageResolvable.defaultMessage used when no code matches")
+    @DisplayName("MessageResolvable.defaultMessage used when no code matches")
     void resolvableDefaultMessage() {
         MessageSource src = source(EN, "messages");
 
@@ -334,7 +334,7 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-089: MessageResolvable with no match and no default throws NoSuchMessageException")
+    @DisplayName("MessageResolvable with no match and no default throws NoSuchMessageException")
     void resolvableNoMatchNoDefaultThrows() {
         MessageSource src = source(EN, "messages");
 
@@ -344,30 +344,30 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-083: null args treated like no args (no MessageFormat invocation)")
+    @DisplayName("null args treated like no args (no MessageFormat invocation)")
     void nullArgsTreatedAsNoArgs() {
         MessageSource src = source(EN, "messages");
 
-        // greet=Hello {0} — with null args, FR-LOC-080 returns raw pattern unchanged
+        // greet=Hello {0} — with null args, the raw pattern is returned unchanged
         assertEquals("Hello {0}", src.getMessage("greet", EN, (Object[]) null));
     }
 
     @Test
-    @DisplayName("FR-LOC-061..063: null code → NPE")
+    @DisplayName("null code → NPE")
     void nullCodeThrowsNpe() {
         MessageSource src = source(EN, "messages");
         assertThrows(NullPointerException.class, () -> src.getMessage(null, EN));
     }
 
     @Test
-    @DisplayName("FR-LOC-062: blank code → NoSuchMessageException")
+    @DisplayName("blank code → NoSuchMessageException")
     void blankCodeThrows() {
         MessageSource src = source(EN, "messages");
         assertThrows(NoSuchMessageException.class, () -> src.getMessage("   ", EN));
     }
 
     @Test
-    @DisplayName("FR-LOC-063: null locale → NPE")
+    @DisplayName("null locale → NPE")
     void nullLocaleThrowsNpe() {
         MessageSource src = source(EN, "messages");
         assertThrows(NullPointerException.class, () -> src.getMessage("plain", (Locale) null));
@@ -384,7 +384,7 @@ class DefaultMessageSourceTest {
 
     @Test
     @DisplayName(
-            "FR-LOC-068: base-bundle-only app — defaultLocale=en, supportedLocales=[en], no _en variant — must resolve from ROOT")
+            "base-bundle-only app — defaultLocale=en, supportedLocales=[en], no _en variant — must resolve from ROOT")
     void baseBundleOnlyDefaultLocale() {
         // App ships ONLY root-only-messages.properties (no _en variant). Candidate chain is [en]
         // (the single supported locale), and JDK falls back to ROOT because no messages_en exists.
@@ -399,9 +399,9 @@ class DefaultMessageSourceTest {
     }
 
     @Test
-    @DisplayName("System fallback must NOT steal precedence from configured-default ROOT (FR-LOC-064)")
+    @DisplayName("System fallback must NOT steal precedence from configured-default ROOT")
     void configuredDefaultRootBeatsSystemFallbackSpecificBundle() {
-        // FR-LOC-064 priority: requested → configured default → system fallback. When the
+        // Priority: requested → configured default → system fallback. When the
         // configured default has only the ROOT base bundle (no defaultLocale-specific variant)
         // AND the system locale happens to have its own bundle, the configured default's ROOT
         // match must win — system fallback is strictly last-resort.

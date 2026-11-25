@@ -13,9 +13,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Behavior tests for {@link ObserverRegistry#match(Class)} subtype routing.
  *
- * <p>These tests are RED in slice 3.1: {@link ObserverRegistry#match(Class)} is a failing stub that
- * throws {@link UnsupportedOperationException}. The green step (slice 3.1 implementation) supplies the
- * superclass-chain plus interface walk and turns them green.
+ * <p>{@link ObserverRegistry#match(Class)} walks the superclass chain and the implemented interfaces.
  */
 class SubtypeRoutingTest {
 

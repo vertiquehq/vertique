@@ -14,7 +14,7 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.cache.aop.T011CacheCompositionFixtures;
+import dev.vertique.cache.aop.CacheCompositionFixtures;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.ObjectCacheConfig;
 import dev.vertique.cache.spi.CacheObserver;
@@ -59,7 +59,7 @@ class ObjectCacheTest {
         // Given: a graph with cache.enabled=false and a recording observer, and an object cache built from
         // that graph's observers
         DisabledComponent graph = DaggerObjectCacheTest_DisabledComponent.builder()
-                .configModule(new T011CacheCompositionFixtures.ConfigModule(
+                .configModule(new CacheCompositionFixtures.ConfigModule(
                         new JsonObject().put("cache", cacheSectionDisabled())))
                 .build();
         assertFalse(graph.config().enabled(), "the graph must really run with caching disabled");
@@ -442,7 +442,7 @@ class ObjectCacheTest {
             modules = {
                 CacheCaffeineModule.class,
                 ConfigParsingModule.class,
-                T011CacheCompositionFixtures.ConfigModule.class,
+                CacheCompositionFixtures.ConfigModule.class,
                 ObserverModule.class
             })
     interface DisabledComponent {

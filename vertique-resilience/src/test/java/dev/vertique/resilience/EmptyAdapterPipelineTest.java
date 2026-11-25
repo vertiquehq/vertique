@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * AC-092: a pipeline built through the adapter context from a resolved policy that enables no concern
+ * A pipeline built through the adapter context from a resolved policy that enables no concern
  * runs the supplier as one recorded attempt, while every other construction path still refuses it.
  */
 @ExtendWith(VertxExtension.class)

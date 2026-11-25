@@ -60,11 +60,11 @@ class PublicBuilderOptionsTest {
     }
 
     /**
-     * AC-093: the public retry builder honors a Retry-After hint up to {@code retryAfterMaxMs},
+     * The public retry builder honors a Retry-After hint up to {@code retryAfterMaxMs},
      * refuses a larger one, and keeps the plain backoff when no maximum is set.
      */
     @Test
-    @DisplayName("AC-093: the public retry builder honors Retry-After up to its maximum")
+    @DisplayName("The public retry builder honors Retry-After up to its maximum")
     void retryBuilderHonorsRetryAfterUpToItsMaximum(Vertx vertx) throws Exception {
         // Given a pipeline with 1 retry, fixed 10 ms backoff and a hint maximum of 5000 ms
         resilience = Resilience.create(vertx, Set.of(recorder));
@@ -126,11 +126,11 @@ class PublicBuilderOptionsTest {
     }
 
     /**
-     * AC-094: the public circuit breaker builder counts only the failures its predicate accepts;
+     * The public circuit breaker builder counts only the failures its predicate accepts;
      * without a predicate every failure counts.
      */
     @Test
-    @DisplayName("AC-094: the public breaker counts only the failures its predicate accepts")
+    @DisplayName("The public breaker counts only the failures its predicate accepts")
     void breakerCountsOnlyTheFailuresItsPredicateAccepts(Vertx vertx) throws Exception {
         // Given a breaker with 2 max failures that does not count IllegalArgumentException
         resilience = Resilience.create(vertx);
@@ -187,7 +187,7 @@ class PublicBuilderOptionsTest {
 
     /** A predicate that throws counts the failure, so two failures open a breaker with 2 max failures. */
     @Test
-    @DisplayName("AC-094: a throwing breaker predicate counts the failure")
+    @DisplayName("A throwing breaker predicate counts the failure")
     void throwingPredicateCountsTheFailure(Vertx vertx) throws Exception {
         // Given a breaker with 2 max failures whose predicate throws
         resilience = Resilience.create(vertx);
@@ -214,7 +214,7 @@ class PublicBuilderOptionsTest {
 
     /** An adapter classifier on a shared breaker decides over the predicate the breaker carries. */
     @Test
-    @DisplayName("AC-094: an adapter classifier takes precedence over the breaker's predicate")
+    @DisplayName("An adapter classifier takes precedence over the breaker's predicate")
     void adapterClassifierTakesPrecedenceOverBreakerPredicate(Vertx vertx) throws Exception {
         // Given a shared breaker whose predicate counts nothing, and an adapter pipeline whose classifier counts
         // everything

@@ -216,7 +216,7 @@ class ServicesConfigTest {
         assertNull(absent.sendTimeoutMs());
     }
 
-    // --- W2: fail-fast on malformed structure (no silent skip / default fallback) ---
+    // --- fail-fast on malformed structure (no silent skip / default fallback) ---
 
     @Test
     @DisplayName("a namespace group bound to a non-object (scalar/array) fails fast rather than being silently skipped")
@@ -258,7 +258,7 @@ class ServicesConfigTest {
         assertNotNull(service(config, "default", "orders"));
     }
 
-    // --- W4: per-operation override bounds validation (each rule applies only when the field is present) ---
+    // --- per-operation override bounds validation (each rule applies only when the field is present) ---
 
     @Test
     @DisplayName("a non-positive operation sendTimeoutMs is rejected; a positive value is accepted")

@@ -22,13 +22,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * SPI contract assertions for FR-LOC-020..025 plus the FR-LOC-011 source-grep that the
+ * SPI contract assertions plus the source-grep check that the
  * Dagger module does not declare a {@link MessageSource} binding.
  */
 class MessageSourceContractTest {
 
     @Test
-    @DisplayName("FR-LOC-020: MessageSource exposes the four required overloads")
+    @DisplayName("MessageSource exposes the four required overloads")
     void messageSourceContract() throws NoSuchMethodException {
         Method m1 = MessageSource.class.getMethod("getMessage", String.class, Locale.class, Object[].class);
         Method m2 =
@@ -45,7 +45,7 @@ class MessageSourceContractTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-021: MessageSourceFactory exposes create(String) and create(MessageSourceOptions)")
+    @DisplayName("MessageSourceFactory exposes create(String) and create(MessageSourceOptions)")
     void messageSourceFactoryContract() throws NoSuchMethodException {
         Method byName = MessageSourceFactory.class.getMethod("create", String.class);
         Method byOptions = MessageSourceFactory.class.getMethod("create", MessageSourceOptions.class);
@@ -55,7 +55,7 @@ class MessageSourceContractTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-025: MessageCoded is a one-method SPI returning MessageResolvable")
+    @DisplayName("MessageCoded is a one-method SPI returning MessageResolvable")
     void messageCodedContract() throws NoSuchMethodException {
         assertTrue(MessageCoded.class.isInterface());
         Method m = MessageCoded.class.getMethod("message");
@@ -73,7 +73,7 @@ class MessageSourceContractTest {
     void messageSourceExceptionHierarchy() {
         // MessageSourceException extends LocalizationException; LocalizationException itself does
         // NOT extend TechnicalException (semantic-neutral base). The 500-default behavior arrives
-        // via REST-side mapper policy, not inheritance — see plan §"Framework exception alignment".
+        // via REST-side mapper policy, not inheritance.
         // Therefore we assert ONLY that MessageSourceException extends LocalizationException.
         assertTrue(LocalizationException.class.isAssignableFrom(MessageSourceException.class));
         // Defensive: MessageSourceException should NOT directly extend TechnicalException
@@ -98,7 +98,7 @@ class MessageSourceContractTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-011/012: LocalizationModule source declares no MessageSource binding or multibinding")
+    @DisplayName("LocalizationModule source declares no MessageSource binding or multibinding")
     void localizationModuleDoesNotProvideMessageSource() throws Exception {
         Path moduleSource = Path.of("src/main/java/dev/vertique/localization/LocalizationModule.java");
         if (!Files.exists(moduleSource)) {
@@ -113,11 +113,11 @@ class MessageSourceContractTest {
 
         assertFalse(
                 code.contains("Set<MessageSource>"),
-                "LocalizationModule must not declare a Set<MessageSource> multibinding (FR-LOC-012)");
-        // FR-LOC-011: detect "@Provides ... MessageSource <method>(" patterns in code only.
+                "LocalizationModule must not declare a Set<MessageSource> multibinding");
+        // Detect "@Provides ... MessageSource <method>(" patterns in code only.
         assertFalse(
                 code.matches("(?s).*@Provides[^{]*MessageSource\\s+\\w+\\(.*"),
-                "LocalizationModule must not declare a @Provides MessageSource (FR-LOC-011)");
+                "LocalizationModule must not declare a @Provides MessageSource");
     }
 
     @Test

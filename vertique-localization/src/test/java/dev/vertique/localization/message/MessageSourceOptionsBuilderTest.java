@@ -14,14 +14,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for {@link MessageSourceOptions} builder shape and compact-constructor validation
- * per FR-LOC-030..036. The duplicate-basename check (FR-LOC-035) MUST be insensitive to
- * builder call order.
+ * Tests for {@link MessageSourceOptions} builder shape and compact-constructor validation.
+ * The duplicate-basename check MUST be insensitive to builder call order.
  */
 class MessageSourceOptionsBuilderTest {
 
     @Test
-    @DisplayName("FR-LOC-036: basename only builds successfully")
+    @DisplayName("basename only builds successfully")
     void basenameOnly() {
         MessageSourceOptions options =
                 MessageSourceOptions.builder().basename("messages").build();
@@ -33,7 +32,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-036: basename + fallbacks via singular adder")
+    @DisplayName("basename + fallbacks via singular adder")
     void basenameWithFallbacks() {
         MessageSourceOptions options = MessageSourceOptions.builder()
                 .basename("customer-messages")
@@ -46,7 +45,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-033: null basename throws IAE")
+    @DisplayName("null basename throws IAE")
     void nullBasenameRejected() {
         assertThrows(
                 IllegalArgumentException.class,
@@ -54,7 +53,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-033: blank basename throws IAE")
+    @DisplayName("blank basename throws IAE")
     void blankBasenameRejected() {
         assertThrows(
                 IllegalArgumentException.class,
@@ -62,7 +61,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-034: blank fallback throws IAE")
+    @DisplayName("blank fallback throws IAE")
     void blankFallbackRejected() {
         assertThrows(IllegalArgumentException.class, () -> MessageSourceOptions.builder()
                 .basename("messages")
@@ -71,7 +70,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-035: duplicate primary+fallback (.basename then .fallbackBasename) throws IAE")
+    @DisplayName("duplicate primary+fallback (.basename then .fallbackBasename) throws IAE")
     void duplicateBasenameOrderOne() {
         assertThrows(IllegalArgumentException.class, () -> MessageSourceOptions.builder()
                 .basename("x")
@@ -80,7 +79,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-035: duplicate primary+fallback (.fallbackBasename then .basename) throws IAE")
+    @DisplayName("duplicate primary+fallback (.fallbackBasename then .basename) throws IAE")
     void duplicateBasenameOrderTwo() {
         assertThrows(IllegalArgumentException.class, () -> MessageSourceOptions.builder()
                 .fallbackBasename("x")
@@ -89,7 +88,7 @@ class MessageSourceOptionsBuilderTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-035: duplicate fallback-fallback throws IAE")
+    @DisplayName("duplicate fallback-fallback throws IAE")
     void duplicateFallbackFallback() {
         assertThrows(IllegalArgumentException.class, () -> MessageSourceOptions.builder()
                 .basename("a")
