@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link IdentitySnapshotConfig}'s {@code carriageRequirements} startup validation
- * and lookup (expected-but-absent carriage detection, P2.S0 commit 5b).
+ * and lookup (expected-but-absent carriage detection).
  *
  * <p>Verifies: a {@link CarriageRequirement#REQUIRED} target-kind fails config construction (fails
  * fast at startup) unless both freshness budgets are finite; the same config parses cleanly once

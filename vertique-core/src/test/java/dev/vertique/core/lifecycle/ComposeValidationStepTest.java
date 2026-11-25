@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  * <p>The step injects a {@link Provider Provider&lt;Set&lt;ComposeValidator&gt;&gt;} so that
  * <em>constructing</em> the step does not materialize the validators — materialization (and thus the
  * fail-fast validation) is deferred to {@link ComposeValidationStep#start() start()}, which the
- * runner drives in the VALIDATE phase (after CONFIGURE). The AC-4 mechanism tests use a real Dagger
+ * runner drives in the VALIDATE phase (after CONFIGURE). The mechanism tests use a real Dagger
  * component so the proof exercises the same materialization path the framework relies on: resolving
  * {@code ComposeValidationStep} yields a step whose {@code start()} resolves the
  * {@code Set<ComposeValidator>} multibinding, constructing every contributed validator — and a
@@ -56,7 +56,7 @@ class ComposeValidationStepTest {
     }
 
     @Test
-    @DisplayName("AC-4: constructing the step does NOT materialize the validators")
+    @DisplayName("constructing the step does NOT materialize the validators")
     void constructionDoesNotMaterializeValidators() {
         // A provider whose get() would throw if invoked. Constructing the step must not call it —
         // materialization is deferred to start(). If construction materialized the set, this would
@@ -72,7 +72,7 @@ class ComposeValidationStepTest {
     }
 
     @Test
-    @DisplayName("AC-4: start() materializes the set and a throwing validator yields a failed future")
+    @DisplayName("start() materializes the set and a throwing validator yields a failed future")
     void startMaterializesAndFailingValidatorYieldsFailedFuture() {
         // Resolving the step from the real component does NOT throw (no validator is built yet) —
         // it is start() that materializes Set<ComposeValidator>, constructing ThrowingComposeValidator

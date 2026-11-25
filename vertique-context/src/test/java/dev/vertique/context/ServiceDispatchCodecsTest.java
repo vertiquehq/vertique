@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link ServiceDispatchCodecs}.
  *
  * <p>Verifies snapshot encoder/decoder and pass-through encoder/decoder factory methods including
- * happy paths, null rejection (FR-CTX-050), type mismatch failure results, and empty results on
+ * happy paths, null rejection, type mismatch failure results, and empty results on
  * null input.
  */
 class ServiceDispatchCodecsTest {
@@ -48,7 +48,7 @@ class ServiceDispatchCodecsTest {
     }
 
     @Test
-    @DisplayName("snapshotEncoder.encode() throws NPE when snapshotFn returns null (FR-CTX-050)")
+    @DisplayName("snapshotEncoder.encode() throws NPE when snapshotFn returns null")
     void snapshotEncoderNullResultThrowsNpe() {
         ServiceDispatchContextEncoder<StringCtx> encoder =
                 ServiceDispatchCodecs.snapshotEncoder(StringCtx.class, sc -> null);

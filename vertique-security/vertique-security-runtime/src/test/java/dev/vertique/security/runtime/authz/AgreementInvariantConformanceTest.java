@@ -63,14 +63,14 @@ import org.junit.jupiter.api.Test;
  * outside that equivalence entirely: {@link NarrowingIntrospector} rejects introspection of one
  * outright with {@link ReconstructedContextIntrospectionUnsupportedException} (see
  * {@link #introspectionRejectsReconstructedContext()}), since a reconstructed context's current
- * authority is resolved live at authorize-time (Mode 2) rather than read off the context's currently
+ * authority is resolved live at authorize time rather than read off the context's currently
  * held claims — there is no stable capability set to annotate.
  *
  * <p><strong>Design note (annotate, not exclude).</strong> {@link NarrowingIntrospector#capabilities}
  * is an <em>annotation</em> over the base introspector's allowed-action set — a narrower can only
  * attach {@link RequirementDescriptor}s to a capability, it can never remove the capability from the
- * result (the Contract Appendix pins {@code allowedActions(ctx) == capabilities(ctx).map(action)},
- * which only holds if capabilities never filters). Introspection has no concrete
+ * result (the invariant {@code allowedActions(ctx) == capabilities(ctx).map(action)}
+ * only holds if capabilities never filters). Introspection has no concrete
  * {@link ResourceRef} to evaluate a narrower's {@link AuthorizationNarrower#narrow} decision against,
  * so a non-empty requirement set means "this capability exists but is conditionally gated" — a caller
  * still calls {@link NarrowingAuthorizer#authorize} for the resource-specific verdict. This test pins
@@ -220,7 +220,7 @@ class AgreementInvariantConformanceTest {
     /**
      * A real {@link AssuranceRequirementNarrower} gating {@link #GATED_ACTION} with a minimum
      * assurance requirement, used to prove {@link AgreementInvariantConformanceTest}'s invariant
-     * holds for the concrete identity-002 narrower, not just the test-only stub above.
+     * holds for the concrete assurance-requirement narrower, not just the test-only stub above.
      *
      * @return an {@link AssuranceRequirementNarrower} over a fixed clock
      */

@@ -37,8 +37,8 @@ import org.junit.jupiter.api.Test;
  *   <li>Empty observer set: all emit() overloads succeed immediately</li>
  *   <li>Single happy observer: correct method invoked, future succeeds</li>
  *   <li>Two happy observers: both receive the event, future succeeds</li>
- *   <li>Sync exception from one observer: other observer still runs, future succeeds (AC-SE-6)</li>
- *   <li>Failed future from one observer: other observer still runs, future succeeds (AC-SE-6)</li>
+ *   <li>Sync exception from one observer: other observer still runs, future succeeds</li>
+ *   <li>Failed future from one observer: other observer still runs, future succeeds</li>
  *   <li>Null future returned by observer: treated as success, no NPE</li>
  *   <li>All four event types fan-out correctly with isolation</li>
  * </ul>
@@ -250,10 +250,10 @@ class SecurityEventEmitterTest {
         }
     }
 
-    // --- Failure isolation — AC-SE-6 ---
+    // --- Failure isolation ---
 
     @Nested
-    @DisplayName("Failure isolation (AC-SE-6) — one bad observer cannot break the aggregate")
+    @DisplayName("Failure isolation — one bad observer cannot break the aggregate")
     class FailureIsolation {
 
         @Test

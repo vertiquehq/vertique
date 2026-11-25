@@ -26,11 +26,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link IdentitySnapshotDurableEncoder}'s F5 doomed-expiry degrade path
- * (P2.S0 security review): a delayed-job row scheduled beyond the
- * signed envelope's effective expiry must be caught at encode time and policy-mirrored, rather than
- * persisting a snapshot that is guaranteed to fail closed at first decode with no signal at
- * schedule time.
+ * Unit tests for {@link IdentitySnapshotDurableEncoder}'s doomed-expiry degrade path: a
+ * delayed-job row scheduled beyond the signed envelope's effective expiry must be caught at encode time
+ * and policy-mirrored, rather than persisting a snapshot that is guaranteed to fail closed at first
+ * decode with no signal at schedule time.
  */
 class IdentitySnapshotDurableEncoderFireTimeTest {
 
@@ -78,7 +77,7 @@ class IdentitySnapshotDurableEncoderFireTimeTest {
     }
 
     @Test
-    @DisplayName("F5: a fire time beyond the signed effective expiry is rejected under FAIL policy")
+    @DisplayName("a fire time beyond the signed effective expiry is rejected under FAIL policy")
     void doomedExpirySnapshotRejectedUnderFail() {
         IdentitySnapshotDurableEncoder encoder =
                 new IdentitySnapshotDurableEncoder(newCodec(), IdentitySnapshotDegradationPolicy.FAIL);
@@ -98,7 +97,7 @@ class IdentitySnapshotDurableEncoderFireTimeTest {
     }
 
     @Test
-    @DisplayName("F5: a fire time beyond the signed effective expiry enqueues without identity metadata "
+    @DisplayName("a fire time beyond the signed effective expiry enqueues without identity metadata "
             + "under CONTINUE_WITHOUT_IDENTITY policy")
     void doomedExpiryEnqueuesWithoutIdentity() {
         IdentitySnapshotDurableEncoder encoder = new IdentitySnapshotDurableEncoder(
@@ -119,7 +118,7 @@ class IdentitySnapshotDurableEncoderFireTimeTest {
     }
 
     @Test
-    @DisplayName("F5: a fire time within the signed effective expiry encodes normally (no false-positive rejection)")
+    @DisplayName("a fire time within the signed effective expiry encodes normally (no false-positive rejection)")
     void fireTimeWithinExpirySignsNormally() {
         IdentitySnapshotDurableEncoder encoder =
                 new IdentitySnapshotDurableEncoder(newCodec(), IdentitySnapshotDegradationPolicy.FAIL);
@@ -135,7 +134,7 @@ class IdentitySnapshotDurableEncoderFireTimeTest {
     }
 
     @Test
-    @DisplayName("F5: no fireTime on the encode context runs no doomed-window check (current behavior preserved)")
+    @DisplayName("no fireTime on the encode context runs no doomed-window check")
     void absentFireTimeSkipsDoomedCheck() {
         IdentitySnapshotDurableEncoder encoder =
                 new IdentitySnapshotDurableEncoder(newCodec(), IdentitySnapshotDegradationPolicy.FAIL);

@@ -54,12 +54,12 @@ import software.amazon.awssdk.services.secretsmanager.model.CreateSecretRequest;
  *
  * <p>Covers:
  * <ul>
- *   <li>AC: prefix mode end-to-end — JSON blob flattened, nested dot-path, factory-level lookup</li>
- *   <li>AC: key mode — plain string stored as-is under declared key</li>
- *   <li>AC: end-to-end through {@link BootstrapConfigLoader} with placeholder resolution</li>
- *   <li>AC: missing secret → {@code create()} fails closed; secret ID named; sentinel absent</li>
- *   <li>AC: binary secret → {@code create()} fails closed; secret ID named</li>
- *   <li>AC: non-JSON string in prefix mode → {@code create()} fails closed; content not echoed</li>
+ *   <li>prefix mode end-to-end — JSON blob flattened, nested dot-path, factory-level lookup</li>
+ *   <li>key mode — plain string stored as-is under declared key</li>
+ *   <li>end-to-end through {@link BootstrapConfigLoader} with placeholder resolution</li>
+ *   <li>missing secret → {@code create()} fails closed; secret ID named; sentinel absent</li>
+ *   <li>binary secret → {@code create()} fails closed; secret ID named</li>
+ *   <li>non-JSON string in prefix mode → {@code create()} fails closed; content not echoed</li>
  * </ul>
  *
  * <p>Image: {@code localstack/localstack:4.4}, single shared container for all tests.

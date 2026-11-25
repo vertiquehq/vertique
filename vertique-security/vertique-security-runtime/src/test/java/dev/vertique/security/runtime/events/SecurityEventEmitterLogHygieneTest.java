@@ -37,8 +37,6 @@ import org.slf4j.LoggerFactory;
  * Log-hygiene for {@link SecurityEventEmitter#safe}: observer-failure WARN lines must carry the
  * failure class name only — never {@link Throwable#toString()} / message content that may embed
  * event payloads (JWT claims, introspection fields).
- *
- * <p>Pins the exit criterion for {@code vertique-security-runtime} (issue #182).
  */
 class SecurityEventEmitterLogHygieneTest {
 

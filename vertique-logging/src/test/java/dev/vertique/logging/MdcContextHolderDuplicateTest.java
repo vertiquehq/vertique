@@ -22,9 +22,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * against the substrate's {@link ContextLocalServiceProvider} duplicator.
  *
  * <p>These tests live in {@code vertique-logging} (rather than {@code vertique-context}) because
- * {@link MDCContexts} was moved to this module as part of the context-substrate split.
- * The tests remain in package {@code dev.vertique.core.context} to retain access to the
- * package-private duplicator and Vert.x context internals.
+ * {@link MDCContexts} is defined in this module. The tests are in package
+ * {@code dev.vertique.core.context} to retain access to the package-private duplicator and Vert.x
+ * context internals.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

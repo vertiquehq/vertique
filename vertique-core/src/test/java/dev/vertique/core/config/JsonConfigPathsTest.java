@@ -221,8 +221,8 @@ class JsonConfigPathsTest {
         @Test
         @DisplayName("explicit-null intermediate node returns INVALID_SHAPE — distinct from MISSING")
         void invalidShapeAtNullIntermediate() {
-            // FR-CG011-009 requires distinguishing absent intermediate (MISSING → matchIfMissing)
-            // from present-but-malformed intermediate (INVALID_SHAPE → throw). An explicit-null
+            // The lookup must distinguish an absent intermediate (MISSING → matchIfMissing)
+            // from a present-but-malformed intermediate (INVALID_SHAPE → throw). An explicit-null
             // intermediate is malformed: traversal cannot continue into a non-object node.
             JsonObject root = new JsonObject().putNull("feature");
             LookupResult result = JsonConfigPaths.resolve(root, "feature.enabled");

@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link ReconstructedAuthorityResolvingAuthorizer} — the Mode-2/Mode-3 outermost
+ * Unit tests for {@link ReconstructedAuthorityResolvingAuthorizer} — the LIVE_RESOLVED/CAPTURED outermost
  * {@link Authorizer} decorator that re-resolves a reconstructed context's current authority live,
  * at authorization time, unless the context's own marker carries the {@code CAPTURED} disposition.
  *
@@ -59,7 +59,7 @@ class ReconstructedAuthorityResolvingAuthorizerTest {
     private static final PrincipalKey PRINCIPAL = new PrincipalKey(PrincipalType.USER, "user-1");
     private static final String REQUIRED_ROLE = "admin";
 
-    // --- Mode-2 live resolution on permit ---
+    // --- live resolution on permit ---
 
     @Nested
     @DisplayName("reconstructedContextResolvesLiveClaims")
@@ -83,7 +83,7 @@ class ReconstructedAuthorityResolvingAuthorizerTest {
         }
     }
 
-    // --- Mode-2 resolves the actor, never the subject-of-record ---
+    // --- live resolution resolves the actor, never the subject-of-record ---
 
     @Nested
     @DisplayName("resolvesActorNotSubject")
@@ -91,8 +91,8 @@ class ReconstructedAuthorityResolvingAuthorizerTest {
 
         @Test
         @DisplayName("a deferred-style reconstructed context (actor=SERVICE, subject=USER) resolves the "
-                + "actor/service key — never the subject's — per FR-ID-DG-006 (subject-authority evaluation, "
-                + "i.e. impersonation, is out of v1 scope)")
+                + "actor/service key — never the subject's (subject-authority evaluation, "
+                + "i.e. impersonation, is out of scope)")
         void resolvesActorNotSubject() {
             PrincipalRef serviceActor = new PrincipalRef(PrincipalType.SERVICE, "svc-1", Map.of());
             PrincipalRef userSubject = new PrincipalRef(PrincipalType.USER, "user-99", Map.of());
@@ -226,7 +226,7 @@ class ReconstructedAuthorityResolvingAuthorizerTest {
             assertSame(
                     fixedDecision,
                     decision,
-                    "a string-only identity.reconstructed attribute must not trigger Mode-2 resolution");
+                    "a string-only identity.reconstructed attribute must not trigger live resolution");
         }
     }
 
@@ -255,7 +255,7 @@ class ReconstructedAuthorityResolvingAuthorizerTest {
         }
     }
 
-    // --- Mode 3: a CAPTURED-marked reconstruction is never live-resolved ---
+    // --- CAPTURED: a CAPTURED-marked reconstruction is never live-resolved ---
 
     @Nested
     @DisplayName("capturedMarkerNotLiveResolved")
@@ -279,7 +279,7 @@ class ReconstructedAuthorityResolvingAuthorizerTest {
         }
     }
 
-    // --- Mode-2 rebuild preserves the incoming invocation origin ---
+    // --- live-resolved rebuild preserves the incoming invocation origin ---
 
     @Nested
     @DisplayName("originPreservedThroughLiveResolveRebuild")

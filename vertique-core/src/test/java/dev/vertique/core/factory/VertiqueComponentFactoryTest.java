@@ -17,10 +17,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * AC-12 positive proof for the neutral graph-input seam: a fake embedded host builds its Dagger
+ * Positive case for the neutral graph-input seam: a fake embedded host builds its Dagger
  * graph through a {@link VertiqueComponentFactory} fed only a {@link VertiqueRuntime}, and a
  * host-native bean ({@link FakeDataSource}) reaches a framework consumer by <em>typed</em> Dagger
- * injection — no host-bean locator (FR-APP-004).
+ * injection — no host-bean locator.
  *
  * <p>This test lives in {@code vertique-core} test scope, which structurally has no
  * {@code vertique-launcher} on its classpath, proving the seam is launcher-free.

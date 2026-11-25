@@ -60,7 +60,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * reconstruction-re-verify-failed) snapshot fails closed, minting a service-only context plus a
  * {@link SnapshotDegradationMarker} <em>only when</em> a {@link DeferredExecutionOrigin} proves
  * the dispatch is deferred execution — otherwise only the marker is bound, no context, per the
- * origin-or-verified mint evidence rule (A9); a snapshot-less dispatch carrying a
+ * origin-or-verified mint evidence rule; a snapshot-less dispatch carrying a
  * {@link DeferredExecutionOrigin} mints a bounded service context (SYSTEM via {@code system(...)} or
  * SERVICE via {@code unauthenticated(...)}); and a snapshot-less dispatch with <em>no</em> origin
  * fails closed and binds nothing. The bounded-mint / fail-closed split is the provenance gate: only
@@ -91,7 +91,7 @@ class IdentitySnapshotReconstructionInitializerTest {
     /**
      * Builds a minimal valid {@link IdentitySnapshotConfig} with no configured
      * {@link CarriageRequirement} entries — every target-kind resolves to
-     * {@link CarriageRequirement#OPTIONAL}, matching the pre-P2.S0-commit-5b behavior.
+     * {@link CarriageRequirement#OPTIONAL}.
      *
      * @return a config with an empty {@code carriageRequirements} map
      */
@@ -708,7 +708,7 @@ class IdentitySnapshotReconstructionInitializerTest {
         });
     }
 
-    // --- Expected-but-absent carriage detection (§14.6 A9, P2.S0 commit 5b) ---
+    // --- Expected-but-absent carriage detection ---
 
     @Test
     @DisplayName("REQUIRED target-kind, no snapshot, no origin: binds only the EXPECTED_ABSENT marker, no context")
@@ -821,7 +821,7 @@ class IdentitySnapshotReconstructionInitializerTest {
     }
 
     @Test
-    @DisplayName("F4 security review: FORBIDDEN target-kind with a PRESENT verified snapshot refuses — no "
+    @DisplayName("FORBIDDEN target-kind with a PRESENT verified snapshot refuses — no "
             + "SecurityContext is minted, only the degradation marker is bound")
     void forbiddenTargetWithPresentSnapshotRefuses(Vertx vertx, VertxTestContext ctx) {
         ContextInternal dup = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
@@ -859,7 +859,7 @@ class IdentitySnapshotReconstructionInitializerTest {
     }
 
     @Test
-    @DisplayName("F4 security review: FORBIDDEN target-kind with a PRESENT unverifiable snapshot refuses — "
+    @DisplayName("FORBIDDEN target-kind with a PRESENT unverifiable snapshot refuses — "
             + "verification status is irrelevant once the target is FORBIDDEN")
     void forbiddenTargetWithUnverifiableSnapshotRefuses(Vertx vertx, VertxTestContext ctx) {
         ContextInternal dup = ((ContextInternal) vertx.getOrCreateContext()).duplicate();

@@ -49,7 +49,7 @@ import org.junit.jupiter.api.Test;
  * actor with no roles gets an empty set, that wildcard policies expand to every covered registered
  * action, and that the result is immutable.
  *
- * <p>The load-bearing test is {@link #allowedActions_agreesWithAuthorizer()} (AC-22): for the default
+ * <p>The load-bearing test is {@link #allowedActions_agreesWithAuthorizer()}: for the default
  * engine and a shared engine state, an action is in {@code allowedActions(ctx)} <strong>iff</strong>
  * {@link DefaultAuthorizer#authorize(SecurityContext, ActionRef, ResourceRef)} permits it. It asserts
  * this equivalence across the <em>whole</em> registry for several role/policy fixtures, so the
@@ -120,10 +120,10 @@ class DefaultAuthorizationIntrospectorTest {
         assertEquals(Set.of(CMS_CONTENT_READ, CMS_CONTENT_WRITE, CMS_MEDIA_READ), allowed);
     }
 
-    // --- AC-22: agreement with the authorizer across the whole registry ---
+    // --- agreement with the authorizer across the whole registry ---
 
     @Test
-    @DisplayName("AC-22: for every registered action, allowedActions agrees with authorizer.authorize")
+    @DisplayName("for every registered action, allowedActions agrees with authorizer.authorize")
     void allowedActions_agreesWithAuthorizer() {
         // Several distinct role/policy fixtures, each exercised against the SAME full registry so the
         // equivalence is checked over every registered action, not just the allowed ones.
@@ -185,7 +185,7 @@ class DefaultAuthorizationIntrospectorTest {
     // --- helpers ---
 
     /**
-     * Asserts the AC-22 equivalence for one fixture: built on the same engine state, the introspector's
+     * Asserts the equivalence for one fixture: built on the same engine state, the introspector's
      * allowed set must contain a registered action exactly when the authorizer permits that action.
      *
      * @param registry the shared action registry whose every action is checked

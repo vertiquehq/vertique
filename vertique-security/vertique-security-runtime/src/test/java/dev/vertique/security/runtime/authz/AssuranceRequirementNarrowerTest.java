@@ -44,9 +44,9 @@ import org.junit.jupiter.api.Test;
  * <p>Pins: the no-requirement/existing-deny passthroughs, the below-minimum-level deny, the
  * reconstructed-context deny (even when the snapshot's own assurance would otherwise pass), the
  * freshness-decay deny driven purely by the injected {@link Clock}, the annotate-only
- * {@code requirementFor} introspection contract, and the FR-ID-AR-003 action-PATTERN authoring
+ * {@code requirementFor} introspection contract, and the action-PATTERN authoring
  * contract — a wildcard action pattern (e.g. {@code "payments.refund.*"}) gates every action it
- * matches (the C1 spec-conformance fix: a previous exact-string-keyed lookup silently matched
+ * matches (an exact-string-keyed lookup would silently match
  * nothing for a wildcard key), an exact pattern still gates its exact action, and a non-matching
  * action is unaffected even when other patterns are configured.
  */
@@ -92,7 +92,7 @@ class AssuranceRequirementNarrowerTest {
         }
     }
 
-    // --- FR-ID-AR-003 action-PATTERN authoring contract ---
+    // --- action-PATTERN authoring contract ---
 
     @Nested
     @DisplayName("wildcardPatternGatesMatchingActions")
@@ -101,7 +101,7 @@ class AssuranceRequirementNarrowerTest {
         @Test
         @DisplayName("a wildcard action-pattern key (\"payments.refund.*\") gates a matching action with "
                 + "STEP_UP_REQUIRED when assurance is below the configured minimum — proves the wildcard "
-                + "actually matches (the C1 regression: an exact-string-keyed lookup would silently ungate "
+                + "actually matches (an exact-string-keyed lookup would silently ungate "
                 + "this)")
         void wildcardPatternGatesMatchingActions() {
             ActionRef refundApprove = ActionRef.of("payments", "refund", "approve");

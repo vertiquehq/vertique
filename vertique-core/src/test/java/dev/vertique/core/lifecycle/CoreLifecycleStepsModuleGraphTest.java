@@ -15,20 +15,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves {@link CoreLifecycleStepsModule} is <em>self-contained</em> after the retirement of the
- * Jackson customizer mechanism (TP-003): a Dagger {@code @Component} that lists it as its only module
- * resolves the complete {@code Set<ApplicationStartupStep>} multibinding without the application
- * having to co-list any other module.
+ * Proves {@link CoreLifecycleStepsModule} is <em>self-contained</em>: a Dagger {@code @Component} that lists
+ * it as its only module resolves the complete {@code Set<ApplicationStartupStep>} multibinding without the
+ * application having to co-list any other module.
  *
  * <p>The proof is a real, compiled Dagger component ({@link CoreLifecycleGraphComponent}) rather than
  * a hand-built fixture: if the module still needed a foreign binding, annotation processing — not an
  * assertion — would be the red signal.
  *
- * <p>The reflection test pins the wiring contract itself: the module now includes <em>nothing</em>.
- * {@code JsonModule} existed only to supply {@code JacksonConfigureStep}'s
- * {@code Set<ObjectMapperCustomizer>} dependency; with the step and the customizer set deleted, the
- * process JSON mapper is installed by {@code vertique-json}'s own {@code CONFIGURE} step, so a
- * re-appearing {@code includes()} entry here is a regression.
+ * <p>The reflection test pins the wiring contract itself: the module includes <em>nothing</em>. The
+ * process JSON mapper is installed by {@code vertique-json}'s own {@code CONFIGURE} step, so an
+ * {@code includes()} entry here is a regression.
  */
 class CoreLifecycleStepsModuleGraphTest {
 

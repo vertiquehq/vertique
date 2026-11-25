@@ -106,7 +106,7 @@ class CorrelationKafkaIngressSeedingTest {
             // CorrelationContext into the holder before the seeder runs.
             try (ContextHolder.Scope outer = holder.bind(CorrelationContext.class, decoded);
                     ContextHolder.Scope inner = scope.installDurable(DurableMetadata.empty(), DispatchBoundary.KAFKA)) {
-                // The bound value must be the decoded one (decoded wins per FR-COR-125).
+                // The bound value must be the decoded one.
                 assertSame(
                         decoded,
                         holder.current(CorrelationContext.class).orElseThrow(),

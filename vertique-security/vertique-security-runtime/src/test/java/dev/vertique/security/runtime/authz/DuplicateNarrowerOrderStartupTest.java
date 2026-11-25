@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Startup-validation tests for the {@link AuthorizationNarrower} duplicate-order guard.
  *
- * <p>Mirrors {@code dev.vertique.rest.security.IdentityResolutionMiddleware}'s NFR-ID-003 guard for
+ * <p>Mirrors {@code dev.vertique.rest.security.IdentityResolutionMiddleware}'s guard for
  * {@code SecurityIdentityResolver}: two narrowers sharing the same {@code (priority, orderKey)} pair
  * is a configuration error that must fail component construction, not silently pick one.
  */

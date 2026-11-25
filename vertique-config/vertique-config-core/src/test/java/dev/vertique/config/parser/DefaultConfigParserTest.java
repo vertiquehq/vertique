@@ -27,17 +27,16 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the relocated config parser implementation ({@link DefaultConfigParser} over
- * {@link DefaultConfigMapper#lenient()}) preserves every behavior the static {@code ConfigParser}
- * facade had:
+ * Verifies the config parser implementation ({@link DefaultConfigParser} over
+ * {@link DefaultConfigMapper#lenient()}):
  *
  * <ul>
  *   <li><strong>default parity</strong> — the lenient default mapper round-trips Vert.x JSON types,
- *       keyed collections, JDK8 and JSR310 types exactly as before, and keeps an open
+ *       keyed collections, JDK8 and JSR310 types, and keeps an open
  *       {@link JsonObject}/{@link JsonArray} bag non-empty (the data-loss guard);
  *   <li><strong>lenient coercion</strong> — string-encoded scalars coerce and unknown properties are
  *       tolerated, isolated from any separate strict mapper in the same process;
- *   <li><strong>SEC-1 non-leakage</strong> — parse failures never embed the offending config value,
+ *   <li><strong>secret non-leakage</strong> — parse failures never embed the offending config value,
  *       while a framework {@link ConfigurationException} validation message (value-free by
  *       convention) is surfaced as-is;
  *   <li><strong>cause-chain cycle safety</strong> — {@link DefaultConfigParser#findConfigCause} does
@@ -215,7 +214,7 @@ class DefaultConfigParserTest {
     }
 
     @Nested
-    @DisplayName("secret non-leakage — parse failures don't embed the offending config value (SEC-1)")
+    @DisplayName("secret non-leakage — parse failures don't embed the offending config value")
     class SecretNonLeakage {
 
         /** A secret-like config value that must never surface in a user-facing exception message. */

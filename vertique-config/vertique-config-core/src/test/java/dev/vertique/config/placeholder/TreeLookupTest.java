@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  *       (even for keys that contain dots) unless the key is absent or its value is JSON null.</li>
  *   <li><em>Dot-path walk</em> — if the flat probe misses, the key is split on {@code '.'} and
  *       the path is descended through nested {@link JsonObject} entries only (no array indexing,
- *       no non-object intermediates in V1).</li>
+ *       no non-object intermediates).</li>
  * </ol>
  *
  * <p>Also verifies {@link TreeLookup#stringify(Object)}: scalars via {@code String.valueOf},
@@ -125,7 +125,7 @@ class TreeLookupTest {
         }
 
         @Test
-        @DisplayName("intermediate JsonArray is not descended (no array indexing in V1) returns empty")
+        @DisplayName("intermediate JsonArray is not descended (no array indexing) returns empty")
         void intermediateJsonArray() {
             JsonObject tree = new JsonObject().put("a", new JsonArray().add("item"));
             Optional<Object> result = TreeLookup.find(tree, "a.b");

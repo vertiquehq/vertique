@@ -37,8 +37,7 @@ class DelegationGrantTest {
         assertEquals(
                 expectedComponents.size(),
                 components.length,
-                "DelegationGrant must carry exactly the frozen §14.3 component set — no additional "
-                        + "fields were added");
+                "DelegationGrant must carry exactly the frozen component set — no additional " + "fields were added");
 
         for (RecordComponent component : components) {
             assertTrue(

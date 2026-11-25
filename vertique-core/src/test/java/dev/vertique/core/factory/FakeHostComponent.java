@@ -17,7 +17,7 @@ import jakarta.inject.Singleton;
  * a {@link dev.vertique.core.VertiqueRuntime}) and a typed {@link FakeHostAdapterModule} that wires
  * a host-native {@link FakeDataSource}. It exposes the {@link FakeDataSourceConsumer} (which
  * received the host bean by injection) plus the runtime's {@link Vertx} and {@link VertxConfig}
- * config, so the AC-12 positive test can assert both the typed-adapter delivery and that the
+ * config, so the positive test can assert both the typed-adapter delivery and that the
  * runtime inputs flowed through unchanged.
  *
  * <p>Crucially this component lives in {@code vertique-core} test scope, which has <em>no</em>

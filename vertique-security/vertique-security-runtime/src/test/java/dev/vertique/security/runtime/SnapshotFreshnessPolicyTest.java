@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link SnapshotFreshnessPolicy} — the fail-closed freshness gate applied at snapshot
- * decode (the F5 replay defense). Verifies the three-term effective-expiry
+ * decode (the replay defense). Verifies the three-term effective-expiry
  * minimum (signed {@code expiresAt}, carrier budget, capture-anchored snapshot budget), future-dating and
  * malformed-temporal-ordering rejection, and the clock-skew tolerance — all against an injected fixed
  * {@link Clock} so freshness is deterministic.

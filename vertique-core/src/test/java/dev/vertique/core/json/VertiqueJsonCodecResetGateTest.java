@@ -11,7 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Second half of TP-001: {@link VertiqueJson#resetForTests()} is reachable only when the JVM was
+ * {@link VertiqueJson#resetForTests()} is reachable only when the JVM was
  * <em>started</em> with {@code -Dvertique.json.codec.allowReset=true}.
  *
  * <p>This class runs in its own surefire execution ({@code reset-gate} in {@code vertique-core/pom.xml})
@@ -29,7 +29,7 @@ class VertiqueJsonCodecResetGateTest {
     private static final String ALLOW_RESET = "vertique.json.codec.allowReset";
 
     @Test
-    @DisplayName("TP-001: resetForTests() is refused when the flag was absent at JVM start")
+    @DisplayName("resetForTests() is refused when the flag was absent at JVM start")
     void resetIsRefusedWhenTheFlagWasAbsentAtStartup() {
         assumeFalse(
                 Boolean.getBoolean(ALLOW_RESET), "this proof only means anything in the flagless surefire execution");

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for the {@link JsonProfile} annotation meta-annotations: runtime retention so the
  * annotation is reflectively readable at router-build, and {@code TYPE}/{@code METHOD} targets so it
- * may be placed on a JAX-RS resource class or method (FR-JSON-042).
+ * may be placed on a JAX-RS resource class or method.
  */
 class JsonProfileAnnotationTest {
 

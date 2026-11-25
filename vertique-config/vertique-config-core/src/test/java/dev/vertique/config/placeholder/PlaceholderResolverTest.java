@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  * <p>Each nested group covers one named rule of the placeholder engine. Tests assert
  * on semantics (values in/out, failure keys, ordering) and never on internal implementation shape.
  *
- * <h2>NFR-CONF-002 guard</h2>
+ * <h2>Value-free diagnostics</h2>
  * <p>Tests that seed sentinel values explicitly verify that the sentinel does NOT appear in any
  * exception message or unresolved reference list.
  */
@@ -110,7 +110,7 @@ class PlaceholderResolverTest {
         }
 
         @Test
-        @DisplayName("NFR-CONF-002: sentinel value 's3cret-sentinel' must not appear in any failure")
+        @DisplayName("sentinel value 's3cret-sentinel' must not appear in any failure")
         void sentinelNotInFailures() {
             // No source serves the key → unresolved; the sentinel must not leak into exception
             JsonObject tree = new JsonObject().put("db.password", "${db.password}");

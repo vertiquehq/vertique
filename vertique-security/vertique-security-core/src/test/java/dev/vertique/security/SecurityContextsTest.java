@@ -23,14 +23,14 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link SecurityContexts}.
  *
- * <p>Verifies the transport-neutral static assembly contract (identity-002 §14.3, Amendment A2): a
+ * <p>Verifies the transport-neutral static assembly contract: a
  * {@code system(...)} preset that carries a preassembled service identity as-is, an
  * {@code assemble(...)} path used outside any REST middleware, and an {@code unauthenticated(...)}
  * preset carrying {@code none()} authentication with no origin.
  *
  * <p>Because {@link SecurityContexts} is a plain static utility class with no injected
  * collaborator, it cannot invoke a {@link dev.vertique.security.events.SecurityEventObserver} by
- * construction — the CA-007 "emits no events" guarantee is structural here, not something a test
+ * construction — the "emits no events" guarantee is structural here, not something a test
  * needs to exercise via a counting observer (contrast with the injected-emitter design the prior
  * {@code DefaultSecurityContextFactory} required).
  */

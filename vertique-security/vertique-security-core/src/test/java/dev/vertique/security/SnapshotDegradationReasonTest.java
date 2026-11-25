@@ -13,8 +13,8 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link SnapshotDegradationReason}.
  *
  * <p>Verifies: every enum constant exists (including {@link SnapshotDegradationReason#EXPECTED_ABSENT},
- * added for expected-but-absent carriage detection, P2.S0 commit 5b); {@code valueOf} round-trips for
- * each constant; the enum has exactly seven constants.
+ * added for expected-but-absent carriage detection); {@code valueOf} round-trips for each constant;
+ * the enum has exactly seven constants.
  */
 class SnapshotDegradationReasonTest {
 

@@ -344,7 +344,7 @@ class InboundExecutionContextScopeTest {
 
     @Test
     @DisplayName("installDurableAndRun converts a synchronous action throw into a failed Future and still closes"
-            + " the scope (CORE-001 sync-throw lesson)")
+            + " the scope")
     void installDurableAndRunHandlesSynchronousThrow(Vertx vertx, VertxTestContext ctx) {
         InboundExecutionContextScope scope =
                 new InboundExecutionContextScope(inboundDispatchScope, durablePropagator, Set.of());

@@ -29,7 +29,7 @@ class DurableContextMetadataRegistryTest {
     // --- Empty sets ---
 
     @Test
-    @DisplayName("empty encoder and decoder sets construct successfully (FR-CTX-112)")
+    @DisplayName("empty encoder and decoder sets construct successfully")
     void emptySetsConstructOk() {
         assertDoesNotThrow(() -> new DurableContextMetadataRegistry(Set.of(), Set.of()));
     }
@@ -37,7 +37,7 @@ class DurableContextMetadataRegistryTest {
     // --- Encoder duplicate type ---
 
     @Test
-    @DisplayName("duplicate encoder type fails construction (FR-CTX-113)")
+    @DisplayName("duplicate encoder type fails construction")
     void duplicateEncoderTypeFails() {
         // Both encoders register the same type (StringCtx) — duplicate type must be rejected.
         DurableContextMetadataEncoder<StringCtx> enc1 = new DurableContextMetadataEncoder<>() {
@@ -80,7 +80,7 @@ class DurableContextMetadataRegistryTest {
     // --- Encoder duplicate namespace ---
 
     @Test
-    @DisplayName("duplicate encoder namespace fails construction (FR-CTX-113)")
+    @DisplayName("duplicate encoder namespace fails construction")
     void duplicateEncoderNamespaceFails() {
         // Two distinct types (StringCtx vs IntCtx) sharing the same namespace — must be rejected.
         DurableContextMetadataEncoder<StringCtx> enc1 = new DurableContextMetadataEncoder<>() {
@@ -173,7 +173,7 @@ class DurableContextMetadataRegistryTest {
     // --- Decoder duplicate type ---
 
     @Test
-    @DisplayName("duplicate decoder type fails construction (FR-CTX-114)")
+    @DisplayName("duplicate decoder type fails construction")
     void duplicateDecoderTypeFails() {
         // Both decoders register the same type (StringCtx) — duplicate type must be rejected.
         DurableContextMetadataDecoder<StringCtx> dec1 = new DurableContextMetadataDecoder<>() {
@@ -216,7 +216,7 @@ class DurableContextMetadataRegistryTest {
     // --- Decoder duplicate namespace ---
 
     @Test
-    @DisplayName("duplicate decoder namespace fails construction (FR-CTX-114)")
+    @DisplayName("duplicate decoder namespace fails construction")
     void duplicateDecoderNamespaceFails() {
         // Two distinct types (StringCtx vs IntCtx) sharing the same namespace — must be rejected.
         DurableContextMetadataDecoder<StringCtx> dec1 = new DurableContextMetadataDecoder<>() {

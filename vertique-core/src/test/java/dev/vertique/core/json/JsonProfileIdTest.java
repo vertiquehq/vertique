@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link JsonProfileId} construction, normalization, equality, and the reserved
- * {@code system} constant (FR-JSON-003A).
+ * {@code system} constant.
  */
 class JsonProfileIdTest {
 

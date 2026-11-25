@@ -22,8 +22,8 @@ import org.junit.jupiter.api.Test;
  * <p>Verifies:
  * <ul>
  *   <li>Pass 3 always runs — even with zero declared sources, tree-only placeholders resolve</li>
- *   <li>AC-3 precedence: sys-prop layer dominates at merge time; placeholders see the winner</li>
- *   <li>AC-4 grammar end-to-end: {@code ${key}}, default, multi-placeholder concat, escape
+ *   <li>Precedence: sys-prop layer dominates at merge time; placeholders see the winner</li>
+ *   <li>Grammar end-to-end: {@code ${key}}, default, multi-placeholder concat, escape
  *       passthrough, whole-value type preservation</li>
  *   <li>Declared {@code config.propertySources} — sources instantiated in order, first-hit-wins</li>
  *   <li>Pass-1 tree-ref resolution of source entry fields; source-requiring ref in entry fails with
@@ -131,10 +131,10 @@ class BootstrapConfigLoaderResolutionTest {
         }
     }
 
-    // ── Test 2: AC-3 precedence end-to-end ────────────────────────────────────────────
+    // ── Test 2: precedence end-to-end ────────────────────────────────────────────
 
     @Nested
-    @DisplayName("Test 2 — AC-3 precedence: sys-prop + --conf overlay; placeholder sees winner")
+    @DisplayName("Test 2 — precedence: sys-prop + --conf overlay; placeholder sees winner")
     class PrecedenceEndToEndTests {
 
         private static final String MULTI_LAYER_KEY = "vertique.restest.multilayer";
@@ -193,14 +193,14 @@ class BootstrapConfigLoaderResolutionTest {
         }
     }
 
-    // ── Test 3: AC-4 grammar end-to-end ───────────────────────────────────────────────
+    // ── Test 3: grammar end-to-end ───────────────────────────────────────────────
 
     @Nested
-    @DisplayName("Test 3 — AC-4 grammar: ${key}, default, concat, escape, type preservation")
+    @DisplayName("Test 3 — grammar: ${key}, default, concat, escape, type preservation")
     class GrammarEndToEndTests {
 
         /**
-         * Verifies all five AC-4 grammar forms in a single combined deployment tree:
+         * Verifies all five grammar forms in a single combined deployment tree:
          * simple key reference, URL-like default, multi-placeholder concat, escape passthrough,
          * and whole-value type preservation. The per-form engine semantics are exhaustively
          * proven Vert.x-free in {@code PlaceholderResolverTest}; this test confirms that
@@ -470,7 +470,7 @@ class BootstrapConfigLoaderResolutionTest {
         @DisplayName(
                 "placeholder ${unreachable.secret} unresolvable: exception propagates; stub closed; sentinel absent")
         void unresolvedPlaceholderPropagatesAndClosesSource() {
-            // Seed a sentinel value that must NEVER appear in exception message (NFR-CONF-002)
+            // Seed a sentinel value that must NEVER appear in exception message
             String sentinel = "VERY_SECRET_VALUE_SENTINEL_XYZ";
 
             JsonObject deployment = deploymentWithSources(
@@ -487,7 +487,7 @@ class BootstrapConfigLoaderResolutionTest {
                     ex.unresolvedReferences().contains("unreachable.secret"),
                     "Unresolved references must contain the key: " + ex.unresolvedReferences());
 
-            // NFR-CONF-002: sentinel must NOT appear in exception message
+            // The sentinel must NOT appear in exception message
             assertFalse(ex.getMessage().contains(sentinel), "Sentinel value must not appear in exception message");
 
             // The stub source must have been closed
@@ -609,9 +609,9 @@ class BootstrapConfigLoaderResolutionTest {
      *   <li>Two-entry declaration: entry 0 is a valid stub-source, entry 1 has an unknown type.
      *       After the validation error {@code StubSourceFactory.State.createCount} must be 0
      *       (no source was created for entry 0 before the validation failure on entry 1).</li>
-     *   <li>Existing create-failure close path (Test 7 regression guard): entry 0 creates
+     *   <li>Create-failure close path (see Test 7): entry 0 creates
      *       successfully, entry 1 fails during {@code factory.create()} — the first source is
-     *       closed exactly once. This tests the separate create-failure path that still applies
+     *       closed exactly once. This covers the separate create-failure path that applies
      *       close-then-throw for {@code create()} exceptions.</li>
      * </ul>
      */

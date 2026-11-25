@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Pins the composition of the default config mapper ({@link DefaultConfigMapper#lenient()}) by
  * parsing one fixture that exercises <em>every</em> mandatory capability the framework guarantees on
- * the config-parsing seam (FR-CFGI-010c / AC-7). If a future change to {@code lenient()} drops a
+ * the config-parsing seam. If a future change to {@code lenient()} drops a
  * module or relaxes a policy, a capability assertion here fails.
  *
  * <p>Capabilities pinned, one per registered module / configured policy:

@@ -54,10 +54,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link DefaultCapturedAuthorityReconstruction} and {@link
- * CapturedAuthorityReconstructionModule} — Mode 3 of captured-authority
- * reconstruction. Covers the captured-claims-as-current-authority inversion, the per-target-kind
+ * CapturedAuthorityReconstructionModule} — the {@code CAPTURED} mode of
+ * captured-authority reconstruction. Covers the captured-claims-as-current-authority inversion, the per-target-kind
  * allowlist fail-closed gate, the startup REQUIRED-carriage validation, and the structural
- * never-default binding boundary (§14.6 P2.S4) — including that the opt-in module exposes only
+ * never-default binding boundary — including that the opt-in module exposes only
  * the audited {@link CapturedAuthorityActivation} seam, never the raw, event-silent {@link
  * CapturedAuthorityReconstruction} as an injectable binding.
  */
@@ -96,7 +96,7 @@ class CapturedAuthorityReconstructionTest {
 
     @Test
     @DisplayName("captured claims are presented as the reconstructed context's current authority under the "
-            + "Mode-3 opt-in — contrast Mode 1's always-empty authorization")
+            + "CAPTURED opt-in — contrast ATTRIBUTION_ONLY's always-empty authorization")
     void capturedClaimsAuthorizeUnderOptIn() {
         IdentitySnapshotCodec codec =
                 new IdentitySnapshotCodec(new SnapshotHmac(Map.of(ACTIVE_KEY_ID, HMAC_SECRET), ACTIVE_KEY_ID));
@@ -117,7 +117,7 @@ class CapturedAuthorityReconstructionTest {
         assertEquals(
                 ReconstructedAuthorityMode.CAPTURED,
                 resumed.reconstruction().get().mode(),
-                "the marker's authority mode must be CAPTURED for a Mode-3 reconstruction");
+                "the marker's authority mode must be CAPTURED for a captured-authority reconstruction");
         assertEquals(ACTOR, resumed.identity().actor());
         assertTrue(resumed.identity().subject().isPresent());
         assertEquals(SUBJECT, resumed.identity().subject().get());
@@ -136,14 +136,14 @@ class CapturedAuthorityReconstructionTest {
         assertTrue(deferred.identity().subject().isPresent());
         assertEquals(SUBJECT, deferred.identity().subject().get());
 
-        // Contrast Mode 1: DefaultIdentityReconstruction never presents the same snapshot's claims as
+        // Contrast ATTRIBUTION_ONLY: DefaultIdentityReconstruction never presents the same snapshot's claims as
         // current authority — its authorization dimension is always empty.
-        DefaultIdentityReconstruction mode1 = new DefaultIdentityReconstruction(codec);
-        SecurityContext mode1Ctx = mode1.resumeAsPrincipal(snapshot, matching(snapshot));
+        DefaultIdentityReconstruction attributionOnly = new DefaultIdentityReconstruction(codec);
+        SecurityContext attributionOnlyCtx = attributionOnly.resumeAsPrincipal(snapshot, matching(snapshot));
         assertEquals(
                 AuthorizationClaims.empty(),
-                mode1Ctx.authorization(),
-                "Mode 1's reconstruction must never present the snapshot's claims as current authority");
+                attributionOnlyCtx.authorization(),
+                "ATTRIBUTION_ONLY reconstruction must never present the snapshot's claims as current authority");
     }
 
     @Test
@@ -248,7 +248,7 @@ class CapturedAuthorityReconstructionTest {
     void reconstructionHasNoInjectableBinding_onlyActivationIsBound() {
         assertNoProviderReturns(PrivilegedIdentityModule.class, CapturedAuthorityReconstruction.class);
         assertNoProviderReturns(SecurityAuthzModule.class, CapturedAuthorityReconstruction.class);
-        // W_c fix: the opt-in module itself must not expose the raw, event-silent reconstruction as
+        // The opt-in module itself must not expose the raw, event-silent reconstruction as
         // an injectable binding — otherwise a caller could inject it directly and bypass the
         // CapturedAuthorityActivatedEvent audit trail CapturedAuthorityActivation guarantees.
         assertNoProviderReturns(CapturedAuthorityReconstructionModule.class, CapturedAuthorityReconstruction.class);

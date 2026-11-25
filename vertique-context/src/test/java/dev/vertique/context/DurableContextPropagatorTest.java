@@ -41,8 +41,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Unit tests for {@link DurableContextPropagator}.
  *
- * <p>Verifies capture, merge, and bindFrom semantics including collision rules, FR-CTX-141, and
- * FR-CTX-156 (one decoder failure does not block others).
+ * <p>Verifies capture, merge, and bindFrom semantics including collision rules, the always-bound propagation
+ * metadata, and isolation of decoder failures (one decoder failure does not block others).
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -108,8 +108,8 @@ class DurableContextPropagatorTest {
     }
 
     @Test
-    @DisplayName("F1: an encoder that returns DurableMetadata.empty() for a BOUND type is skipped — "
-            + "no merge, no FR-CTX-120 violation thrown")
+    @DisplayName("an encoder that returns DurableMetadata.empty() for a BOUND type is skipped — "
+            + "no merge, no violation thrown")
     void captureSkipsEncoderThatSignalsNothingToEncode(Vertx vertx, VertxTestContext ctx) {
         DurableContextMetadataEncoder<StringCtx> nothingToEncode = new DurableContextMetadataEncoder<>() {
             @Override
@@ -151,7 +151,7 @@ class DurableContextPropagatorTest {
     // --- mergeCaptured ---
 
     @Test
-    @DisplayName("mergeCaptured fails if caller has colliding namespace and type is currently bound (FR-CTX-153)")
+    @DisplayName("mergeCaptured fails if caller has colliding namespace and type is currently bound")
     void mergeCapturedCollisionWithBoundTypeFails(Vertx vertx, VertxTestContext ctx) {
         DurableContextMetadataEncoder<StringCtx> enc = stringEncoder("vertique-locale", "test-locale-key");
         DurableContextMetadataRegistry registry = new DurableContextMetadataRegistry(Set.of(enc), Set.of());
@@ -170,7 +170,7 @@ class DurableContextPropagatorTest {
     }
 
     @Test
-    @DisplayName("mergeCaptured passes caller namespace through if type is NOT currently bound (FR-CTX-154)")
+    @DisplayName("mergeCaptured passes caller namespace through if type is NOT currently bound")
     void mergeCapturedPassesThroughWhenTypeNotBound(Vertx vertx, VertxTestContext ctx) {
         DurableContextMetadataEncoder<StringCtx> enc = stringEncoder("vertique-locale", "test-locale-key");
         DurableContextMetadataRegistry registry = new DurableContextMetadataRegistry(Set.of(enc), Set.of());
@@ -197,7 +197,7 @@ class DurableContextPropagatorTest {
     // --- bindFrom ---
 
     @Test
-    @DisplayName("bindFrom always binds DurablePropagationMetadata even with zero typed decoders (FR-CTX-141)")
+    @DisplayName("bindFrom always binds DurablePropagationMetadata even with zero typed decoders")
     void bindFromAlwaysBindsDurablePropagationMetadata(Vertx vertx, VertxTestContext ctx) {
         DurableContextMetadataRegistry registry = new DurableContextMetadataRegistry(Set.of(), Set.of());
         DurableContextPropagator propagator = new DurableContextPropagator(registry, holder, binder);
@@ -259,7 +259,7 @@ class DurableContextPropagatorTest {
     }
 
     @Test
-    @DisplayName("one decoder failure does not block other decoders from binding (FR-CTX-156)")
+    @DisplayName("one decoder failure does not block other decoders from binding")
     void oneDecoderFailureDoesNotBlockOthers(Vertx vertx, VertxTestContext ctx) {
         // Decoder A (StringCtx) always throws an exception
         DurableContextMetadataDecoder<StringCtx> failingDecoder = new DurableContextMetadataDecoder<>() {
@@ -563,12 +563,12 @@ class DurableContextPropagatorTest {
     }
 
     @Test
-    @DisplayName("bindFrom on a non-duplicated Vert.x context throws IllegalStateException (FR-CTX-157b)")
+    @DisplayName("bindFrom on a non-duplicated Vert.x context throws IllegalStateException")
     void bindFromOnNonDuplicatedContextThrows(Vertx vertx, VertxTestContext ctx) {
         DurableContextMetadataRegistry registry = new DurableContextMetadataRegistry(Set.of(), Set.of());
         DurableContextPropagator propagator = new DurableContextPropagator(registry, holder, binder);
 
-        // bindFrom is the durable-consumer API for installing holder values. Per FR-CTX-157b it
+        // bindFrom is the durable-consumer API for installing holder values. It
         // must run on a duplicated Vert.x context; callers that cannot guarantee that (transport
         // relays whose callbacks land on a non-duplicated context) must use
         // decodeToDispatchContext instead. A non-duplicated Vert.x context is treated as a
@@ -629,10 +629,10 @@ class DurableContextPropagatorTest {
         });
     }
 
-    // --- carrier threading (F5 row binding) ---
+    // --- carrier threading ---
 
     @Test
-    @DisplayName("mergeCaptured threads the supplied carrier into the DurableEncodeContext (F5 row binding)")
+    @DisplayName("mergeCaptured threads the supplied carrier into the DurableEncodeContext")
     void mergeCapturedThreadsCarrierIntoEncodeContext(Vertx vertx, VertxTestContext ctx) {
         AtomicReference<DurableEncodeContext> observed = new AtomicReference<>();
         DurableContextMetadataEncoder<StringCtx> recordingEncoder = new DurableContextMetadataEncoder<>() {
@@ -673,7 +673,7 @@ class DurableContextPropagatorTest {
 
     @Test
     @DisplayName("mergeCaptured(carrier, fireTime) threads the supplied fireTime into the DurableEncodeContext "
-            + "(F5 doomed-expiry detection)")
+            + "for doomed-expiry detection")
     void mergeCapturedThreadsFireTimeIntoEncodeContext(Vertx vertx, VertxTestContext ctx) {
         AtomicReference<DurableEncodeContext> observed = new AtomicReference<>();
         DurableContextMetadataEncoder<StringCtx> recordingEncoder = new DurableContextMetadataEncoder<>() {
@@ -755,7 +755,7 @@ class DurableContextPropagatorTest {
     }
 
     @Test
-    @DisplayName("decodeToDispatchContext threads the supplied carrier into the DurableDecodeContext (F5 row binding)")
+    @DisplayName("decodeToDispatchContext threads the supplied carrier into the DurableDecodeContext")
     void decodeToDispatchContextThreadsCarrierIntoDecodeContext() {
         AtomicReference<DurableDecodeContext> observed = new AtomicReference<>();
         DurableContextMetadataDecoder<StringCtx> recordingDecoder = new DurableContextMetadataDecoder<>() {

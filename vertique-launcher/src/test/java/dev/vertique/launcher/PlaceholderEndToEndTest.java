@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Timeout;
  * from its static map; a real launch resolves placeholders in the {@code --conf} tree; the
  * verticle's deployment config and the {@link BootstrapContext} both reflect the resolved values.
  *
- * <p>Also verifies the AC-8 property-source lifecycle contract:
+ * <p>Also verifies the property-source lifecycle contract:
  * <ul>
  *   <li>Sources are closed exactly once after launch, even when {@link #runShutdownSequence()}
  *       is called multiple times (idempotent).</li>
@@ -85,10 +85,10 @@ class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
         }
     }
 
-    // --- AC-8: source closed exactly once; reverse order; idempotent ---
+    // --- source closed exactly once; reverse order; idempotent ---
 
     @Nested
-    @DisplayName("AC-8 — property sources closed exactly once in reverse declaration order")
+    @DisplayName("property sources closed exactly once in reverse declaration order")
     class SourceLifecycle {
 
         @Test
@@ -179,7 +179,7 @@ class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
         @DisplayName("abort after a successful load still closes property sources (malformed vertx.options)")
         void abortAfterLoadClosesSources() {
             // The bootstrap load succeeds and creates the stub source. The vertx.options overlay
-            // is now computed in beforeStartingVertx (after processVertxOptions), which fires
+            // is computed in beforeStartingVertx (after processVertxOptions), which fires
             // AFTER the eager BootstrapShutdown is already constructed in createVertxBuilder.
             // When the overlay fails (non-object section), startupFailure is stored and the
             // exception is rethrown; launch() then runs the shutdown via the already-built

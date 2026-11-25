@@ -165,7 +165,7 @@ public final class CorrelationContextDurableDecoder implements DurableContextMet
      * traceState} additively: a payload written before those trailing components existed
      * carries neither key, and this method defaults them ({@code sampled=false}, {@code
      * traceState=null}) rather than failing or inferring them from other fields — the exact
-     * backward-compatibility property {@code R51DurableTraceCompatFixtureTest} pins.
+     * backward-compatibility property {@code DurableTraceCompatFixtureTest} pins.
      */
     private static TraceReference readTrace(JsonNode node) {
         if (node == null || node.isNull()) {
