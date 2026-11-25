@@ -190,7 +190,8 @@ method and does not depend on declaration order:
 
 1. more literal characters first: every character of the template outside a `{…}` variable,
    separators included;
-2. at equal literal characters, a template without variables first;
+2. at equal literal characters, a template without variables first (a plain path ending in `*`,
+   which Vert.x matches as a prefix, counts as having one);
 3. then more path variables;
 4. then more variables that declare a regular expression (`{id:\d+}`, even `{x:[^/]+}`).
 
@@ -209,8 +210,9 @@ Two refinements apply:
     route of the operation.
 
   Alternatives that contribute equally to the key stay together. A constraint is not split when it
-  contains `\Q`, a backreference, an inline flag, its own named group or a nested character class,
-  or when an alternative does not compile on its own. A template with *k* such variables of *n* distinct ranks each registers
+  contains `\Q`, an inline flag, its own named group or a nested character class, when an
+  alternative does not compile on its own, or when any variable of the template uses a
+  backreference. A template with *k* such variables of *n* distinct ranks each registers
   up to *n*<sup>*k*</sup> routes, and each one is tried in turn on every request that reaches it.
   A variant route matches only paths the full template matches, and binds parameters exactly as the
   full template does.

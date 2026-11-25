@@ -409,5 +409,22 @@ class RoutePathSpecificityTest {
             assertMoreSpecific("/files", "/files{ext:(\\.json)?}");
             assertMoreSpecific("/a/b", "/a/b{p:.*}");
         }
+
+        @Test
+        @DisplayName("a plain path ending in '*' is a Vert.x wildcard, not a template without variables")
+        void trailingWildcardIsNotVariableFree() {
+            assertMoreSpecific("/files/{id}", "/files*");
+        }
+
+        @Test
+        @DisplayName("a template with a backreference anywhere is not split into alternative routes")
+        void backreferenceAnywhereKeepsOneRoute() {
+            assertEquals(
+                    List.of("/{a:(\\w)+}/{p:b/c|[^/]+}/{c:\\1}"),
+                    RoutePathSpecificity.variants("/{a:(\\w)+}/{p:b/c|[^/]+}/{c:\\1}"));
+            assertEquals(
+                    List.of("/{a:\\w+}/{p:b/c|[^/]+}/{c:\\k<a>}"),
+                    RoutePathSpecificity.variants("/{a:\\w+}/{p:b/c|[^/]+}/{c:\\k<a>}"));
+        }
     }
 }

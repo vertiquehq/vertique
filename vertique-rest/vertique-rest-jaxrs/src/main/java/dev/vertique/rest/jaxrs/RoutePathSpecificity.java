@@ -95,6 +95,13 @@ final class RoutePathSpecificity {
     private static final Pattern INLINE_FLAG = Pattern.compile("\\(\\?[a-zA-Z-]");
 
     /**
+     * A numeric or named backreference anywhere in a template. Groups inside an alternative route's
+     * lookahead are numbered ahead of the full template's, so a backreference in another variable
+     * would point at the wrong group; such a template is not split.
+     */
+    private static final Pattern BACKREFERENCE = Pattern.compile("\\\\(?:[1-9]|k<)");
+
+    /**
      * The rank key of a template, or the contribution of one variable to it: literal characters,
      * variables, and constrained variables.
      *
@@ -264,7 +271,13 @@ final class RoutePathSpecificity {
             last = matcher.end();
             index++;
         }
-        return key.plus(literalText(template.substring(last), !constrained));
+        key = key.plus(literalText(template.substring(last), !constrained));
+        if (!constrained && template.endsWith("*")) {
+            // Vert.x registers a plain path ending in '*' as a prefix wildcard: it matches like a
+            // variable, so it never counts as a template without variables.
+            key = key.plus(new Key(-1, 1, 0));
+        }
+        return key;
     }
 
     /** Counts the literal text between variables; a colon segment is a variable in a plain template. */
@@ -314,6 +327,9 @@ final class RoutePathSpecificity {
      * @return the variants with their ranks, most specific first; never empty
      */
     static List<Rank> rankedVariants(String template) {
+        if (BACKREFERENCE.matcher(template).find()) {
+            return List.of(rankOf(template));
+        }
         List<VariableSpan> variables = new ArrayList<>();
         Matcher matcher = PathTemplateVariables.VARIABLE.matcher(template);
         boolean splittable = false;
