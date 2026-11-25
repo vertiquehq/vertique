@@ -209,6 +209,10 @@ carve-out documented on `RestRequestCompletedEvent`.
 5. Invoke        the resource method, with processed and validated arguments
 ```
 
+When an application decoder claims the body ahead of the framework decoders, steps 2 and 3 cannot both
+run: a route that declares a chain on such a body fails startup (see "A body an application decoder claims
+cannot carry a declared chain" below).
+
 Step 4 is skipped when `ValidationModule` is absent. Step 3 is skipped when `SanitizationModule`
 is absent and no route declares a chain; a route that declares one fails startup instead (see
 [Startup failures](#startup-failures)).
@@ -260,6 +264,33 @@ falls through to the decoder chain, which answers a shape mismatch with `null` e
 without the engine installed. A raw binary body (`byte[]`, `io.vertx.core.buffer.Buffer`) is the one
 shape the engine cannot process at all; declaring a chain on one is rejected at startup rather than
 skipped (see [Startup failures](#startup-failures)).
+
+**A body an application decoder claims cannot carry a declared chain.** The decoder chain is tried in priority
+order and the first decoder that claims the body decodes it. The engine binds a JSON, form-urlencoded or
+`String` body inline, standing in for the framework's own decoders, so an application decoder that sorts ahead
+of them (the default priority `0` does) and claims the body decodes it instead, and a decoder for any other
+content type, such as XML or CSV, decodes it as well; in every case the engine never sees the result, so a
+route-, parameter- or type-level `@Canonicalize` or `@Sanitize` would not run on it. Rather than skip the chain
+silently, the framework refuses in two places.
+
+- **At startup**, when the engine is bound and a body parameter declares a chain (on the route, the parameter,
+  or the fields of its type) and an application decoder claims that body for any content type the route
+  accepts, startup fails with a `ConfigurationException` naming each such route and the decoder. The probe
+  covers the route's declared `@Consumes` types (also without parameters and in lower case; a wildcard adds
+  the common types below), or, when none is declared, an absent type plus `application/json`,
+  `application/x-www-form-urlencoded`, `application/xml`, `text/xml`, `text/plain`, `text/csv` and
+  `application/octet-stream`. A probe value a decoder cannot answer is ignored.
+- **At request time** the same refusal is the backstop, for a content type the startup probe did not try: a
+  request whose body such a decoder claims, in any content type, fails with a generic 500 problem response
+  before the decoder runs. The exception message is constant; the reason, which names the decoder and the route and
+  never the request's content type, is logged once per distinct reason at `WARN`; each refused request adds only the usual one-line mapped-error
+  warning. A decoder whose `canDecode` throws is treated as not claiming the body, except on a route that
+  declares a chain, where the request is refused the same way.
+
+To resolve a refusal, narrow the decoder's `canDecode` so it no longer claims these bodies, give it a priority
+above `1100` (which helps only where a framework decoder claims the body), or remove the declared policies and
+clean the value inside `decode`. A route that declares no chain is unaffected, and so is an application with no
+engine bound.
 
 A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
 parameter, or a raw multipart `FileUpload` / `EntityPart` parameter (including a `@FormParam` of those

@@ -158,6 +158,17 @@ class RestModuleDefaultMappingTest {
     }
 
     @Test
+    @DisplayName("a refused decoder claim maps to a generic 500 without echoing its message")
+    void decoderChainRefusalMapsToGeneric500() {
+        Response response = RestModule.defaultExceptionMapper()
+                .toResponse(new DecoderChainRefusedException("decoder com.example.Xml refused (operationId=create)"));
+
+        assertEquals(500, response.getStatus());
+        ProblemDetail body = assertInstanceOf(ProblemDetail.class, response.getEntity());
+        assertEquals("Internal Server Error", body.detail());
+    }
+
+    @Test
     @DisplayName("ConflictException should map to 409 Conflict")
     void conflictExceptionShouldMapTo409() {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();

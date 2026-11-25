@@ -75,7 +75,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -790,6 +792,126 @@ public class JaxRsRouteRegistrar {
         // Shape gate: a chain declared on a raw binary body cannot run under any graph, so it is
         // rejected whether or not the engine is bound.
         checkBinaryBodyPolicies(allMethods);
+        // Decoder gate: a body an application decoder claims is not run through the engine, so a chain
+        // declared on that route could never run.
+        checkApplicationDecoderPolicies(allMethods, objectProcessor, decoders);
+    }
+
+    /**
+     * Fails startup when a route declares canonicalization or sanitization on a body that an application
+     * {@link RequestBodyDecoder} claims.
+     *
+     * <p>With the engine bound, a JSON, form or {@code String} body is bound inline so a declared chain can
+     * run; when an application decoder sorts ahead of the framework decoders and claims the body, it decodes
+     * it instead and the engine never sees it. The declaration would then be silently inert, which is the
+     * failure {@link #checkInputProcessingComposition} already refuses for an unbound engine. The check runs
+     * only when the engine is bound (otherwise that gate applies) and probes the route's declared
+     * {@code @Consumes} types, or the JSON, form and absent types when none is declared.
+     *
+     * @param methods         every scanned resource method
+     * @param objectProcessor the optional input-processing engine; {@code null} when unbound
+     * @param decoders        the priority-sorted request body decoders
+     * @throws ConfigurationException if any route declares a chain on a body an application decoder claims
+     */
+    private static void checkApplicationDecoderPolicies(
+            List<ResourceMethodMeta> methods,
+            @Nullable InputObjectProcessor objectProcessor,
+            List<RequestBodyDecoder> decoders) {
+        if (objectProcessor == null) {
+            return;
+        }
+        List<String> offendingRoutes = new ArrayList<>();
+        for (ResourceMethodMeta meta : methods) {
+            List<ResourceMethodMeta.ParamMeta> params = meta.params();
+            EffectiveInputPolicies[] policies = ParameterExtractor.invocationPolicies(meta);
+            for (int i = 0; i < params.size(); i++) {
+                ResourceMethodMeta.ParamMeta param = params.get(i);
+                if (param.source() != ResourceMethodMeta.ParamSource.BODY
+                        || ParameterExtractor.isBinaryBodyTarget(param.type())) {
+                    continue;
+                }
+                Type declaredType = param.genericType() != null ? param.genericType() : param.type();
+                if (policies[i].isEmpty() && !InputObjectProcessor.declaresPolicies(declaredType)) {
+                    continue;
+                }
+                RequestBodyDecoder claiming = claimingApplicationDecoder(meta, param, decoders);
+                if (claiming != null) {
+                    offendingRoutes.add("  - " + meta.httpMethod() + " " + meta.path() + " (operationId="
+                            + meta.operationId() + "): parameter '" + param.name() + "' of type "
+                            + param.type().getSimpleName() + " is decoded by "
+                            + claiming.getClass().getName());
+                }
+            }
+        }
+        if (offendingRoutes.isEmpty()) {
+            return;
+        }
+        throw new ConfigurationException(offendingRoutes.size()
+                + " route(s) declare input canonicalization or sanitization on a body that an application "
+                + "RequestBodyDecoder claims, so the declaration would never run:\n"
+                + String.join("\n", offendingRoutes)
+                + "\nNarrow the decoder's canDecode so it no longer claims these bodies, raise its priority above "
+                + "1100 where a framework decoder claims them, or remove the declared policies and clean the "
+                + "value inside the decoder.");
+    }
+
+    /** Content types probed for a route that declares no {@code @Consumes} or declares a wildcard. */
+    private static final List<String> UNCONSTRAINED_PROBE_TYPES = List.of(
+            "application/json",
+            "application/x-www-form-urlencoded",
+            "application/xml",
+            "text/xml",
+            "text/plain",
+            "text/csv",
+            "application/octet-stream");
+
+    @Nullable
+    private static RequestBodyDecoder claimingApplicationDecoder(
+            ResourceMethodMeta meta, ResourceMethodMeta.ParamMeta param, List<RequestBodyDecoder> decoders) {
+        Set<String> probes = new LinkedHashSet<>();
+        List<String> consumes = meta.mediaTypes().consumes();
+        // An absent type reaches a decoder on a method the consumes gate does not check (GET, DELETE).
+        probes.add(null);
+        if (consumes.isEmpty()) {
+            // The route admits any application/* or text/* type; the request-time refusal covers the rest.
+            probes.addAll(UNCONSTRAINED_PROBE_TYPES);
+        }
+        for (String declared : consumes) {
+            probes.add(declared);
+            int parameters = declared.indexOf(';');
+            String bare = (parameters < 0 ? declared : declared.substring(0, parameters))
+                    .trim()
+                    .toLowerCase(Locale.ROOT);
+            probes.add(bare);
+            if (bare.contains("*")) {
+                // A wildcard admits the common types of its family: "*/*" all, "text/*" the text types.
+                String family = bare.startsWith("*") ? "" : bare.substring(0, bare.indexOf('/') + 1);
+                for (String common : UNCONSTRAINED_PROBE_TYPES) {
+                    if (common.startsWith(family)) {
+                        probes.add(common);
+                    }
+                }
+            }
+        }
+        for (String contentType : probes) {
+            RequestBodyDecoder claiming = claimingDecoderOrNull(decoders, param.type(), contentType);
+            if (claiming != null) {
+                return claiming;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static RequestBodyDecoder claimingDecoderOrNull(
+            List<RequestBodyDecoder> decoders, Class<?> type, @Nullable String contentType) {
+        try {
+            return ParameterExtractor.claimingApplicationDecoder(decoders, type, contentType);
+        } catch (RuntimeException e) {
+            // A decoder that cannot answer for a probe value does not claim it; the request-time check
+            // is the enforcement.
+            return null;
+        }
     }
 
     /**

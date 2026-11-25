@@ -86,6 +86,8 @@ final class ParameterExtractor {
     private final List<RequestBodyDecoder> decoders;
     private final RestContextResolution restContextResolution;
     private final @Nullable InputObjectProcessor objectProcessor;
+    private final ConcurrentHashMap<java.lang.reflect.Type, Boolean> declaresBodyPolicies = new ConcurrentHashMap<>();
+    private final Set<String> decoderRefusalLogged = ConcurrentHashMap.newKeySet();
 
     /**
      * The wire &rarr; Java property-name projection applied to every OBJECT body this route processes.
@@ -1100,6 +1102,10 @@ final class ParameterExtractor {
      * itself the intermediate the engine walks. Only raw binary targets are excluded — see
      * {@link #isStructuredBodyTarget}.
      *
+     * <p>The engine binds a body inline in place of the framework's own decoders, so an application
+     * decoder that the priority order places ahead of them and that claims the body decodes it
+     * instead, and the engine does not see that body.
+     *
      * <p>This overload is used by {@link GeneratedJaxRsSupport} so that generated execution
      * plans can pass policies computed at codegen time.
      *
@@ -1125,6 +1131,32 @@ final class ParameterExtractor {
             log.warn(
                     "Unexpected multipart body on operation '{}'; use @FormParam or List<EntityPart> instead of a body parameter",
                     meta.operationId());
+        }
+
+        // The decoder chain is ordered by priority and the first decoder that claims the body decodes it.
+        // The inline binding below stands in for the built-in decoders only; an application decoder that
+        // sorts ahead of them is the one the chain would have picked, so it decodes the body.
+        if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
+            RequestBodyDecoder applicationDecoder;
+            try {
+                applicationDecoder = claimingApplicationDecoder(decoders, targetType, contentType);
+            } catch (RuntimeException e) {
+                // A decoder that cannot answer for this header does not claim it, unless a declared chain
+                // would then be left to an unknown outcome: that is refused like a claim.
+                if (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType)) {
+                    throw refuseDecoder(
+                            "An application RequestBodyDecoder failed while deciding whether it claims a body"
+                                    + " on a route that declares a canonicalizer or sanitizer chain (operationId="
+                                    + meta.operationId() + ")");
+                }
+                applicationDecoder = null;
+            }
+            if (applicationDecoder != null) {
+                if (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType)) {
+                    throw refuseDecoder(decoderRefusalMessage(applicationDecoder));
+                }
+                return applicationDecoder.decode(ctx, body, targetType, genericType);
+            }
         }
 
         // Two-phase processing for structured bodies when a processor is active
@@ -1280,6 +1312,11 @@ final class ParameterExtractor {
 
         for (RequestBodyDecoder decoder : decoders) {
             if (decoder.canDecode(targetType, contentType)) {
+                if (objectProcessor != null
+                        && !isFrameworkDecoder(decoder)
+                        && (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType))) {
+                    throw refuseDecoder(decoderRefusalMessage(decoder));
+                }
                 return decoder.decode(ctx, body, targetType, genericType);
             }
         }
@@ -1287,6 +1324,71 @@ final class ParameterExtractor {
         // No decoder found — fail with 415 so the error pipeline produces a proper response
         // The message is fixed: the request's Content-Type is the caller's and must not be reflected.
         throw new jakarta.ws.rs.NotSupportedException("No RequestBodyDecoder for the request Content-Type");
+    }
+
+    /**
+     * Returns the decoder the chain would pick for this body when that decoder is an application
+     * decoder, or {@code null} when the first decoder to claim it is one of the four framework decoders
+     * (or none claims it).
+     *
+     * <p>The chain is walked in priority order and stops at the first claim, so an application decoder
+     * registered behind a framework decoder that claims the same body is never returned — it stays the
+     * fallback its priority makes it.
+     *
+     * @param decoders    the priority-sorted decoder list
+     * @param targetType  the raw target class
+     * @param contentType the request {@code Content-Type}, or {@code null}
+     * @return the claiming application decoder, or {@code null}
+     */
+    @Nullable
+    static RequestBodyDecoder claimingApplicationDecoder(
+            List<RequestBodyDecoder> decoders, Class<?> targetType, @Nullable String contentType) {
+        for (RequestBodyDecoder decoder : decoders) {
+            if (decoder.canDecode(targetType, contentType)) {
+                return isFrameworkDecoder(decoder) ? null : decoder;
+            }
+        }
+        return null;
+    }
+
+    private String decoderRefusalMessage(RequestBodyDecoder decoder) {
+        return "A declared canonicalizer or sanitizer chain cannot run on a body decoded by "
+                + decoder.getClass().getName() + " (operationId=" + meta.operationId()
+                + "): narrow its canDecode, give it a priority above 1100 where a framework decoder claims the body,"
+                + " or remove the declared policies";
+    }
+
+    /**
+     * Logs each distinct refusal once per route, at WARN with the decoder and route, and returns the exception that
+     * fails the request. The message carries no request value.
+     */
+    private DecoderChainRefusedException refuseDecoder(String message) {
+        if (decoderRefusalLogged.add(message)) {
+            log.warn("{}; requests whose body it claims are refused", message);
+        }
+        // The exception carries a constant message: the decoder and route are in the log only, so a mapper
+        // that echoes an exception message cannot publish them.
+        return new DecoderChainRefusedException("Request body refused");
+    }
+
+    /**
+     * Returns whether the body type's own graph declares a canonicalizer or sanitizer chain, computed once
+     * per type: the query walks the type graph with a throw-away metadata cache.
+     *
+     * @param targetType  the raw body class
+     * @param genericType the generic body type, or {@code null}
+     * @return {@code true} when the type or a type reachable from it declares a chain
+     */
+    private boolean bodyDeclaresPolicies(Class<?> targetType, @Nullable java.lang.reflect.Type genericType) {
+        java.lang.reflect.Type declared = genericType != null ? genericType : targetType;
+        return declaresBodyPolicies.computeIfAbsent(declared, InputObjectProcessor::declaresPolicies);
+    }
+
+    private static boolean isFrameworkDecoder(RequestBodyDecoder decoder) {
+        return decoder instanceof JsonRequestBodyDecoder
+                || decoder instanceof FormUrlencodedRequestBodyDecoder
+                || decoder instanceof TextRequestBodyDecoder
+                || decoder instanceof BinaryRequestBodyDecoder;
     }
 
     /**
