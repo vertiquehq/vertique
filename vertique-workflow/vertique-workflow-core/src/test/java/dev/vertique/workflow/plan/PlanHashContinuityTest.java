@@ -12,24 +12,25 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression guard for plan-hash continuity across workflow DSL cycle additions.
+ * Regression guard for plan-hash continuity as workflow DSL fields are added.
  *
- * <p><strong>Purpose:</strong> Every cycle that adds new fields to plan nodes must prove that
+ * <p><strong>Purpose:</strong> Every change that adds new fields to plan nodes must prove that
  * plans built without those new fields hash identically to the hash produced before the field was
  * added. This test file serves as the authoritative record of that guarantee.
  *
- * <p><strong>Golden hash:</strong> The literal in {@link #CYCLE3_REFERENCE_HASH} was computed from
- * the first run of this test <em>before</em> the cycle-4 reminder canonicalization was wired in.
+ * <p><strong>Golden hash:</strong> The literal in {@link #REFERENCE_PLAN_HASH} was computed from
+ * the first run of this test <em>before</em> reminder canonicalization was wired in.
  * It must never change without a deliberate, version-bumped override.
  *
  * <p><strong>Tests:</strong>
  * <ol>
- *   <li>{@code goldenHashUnchangedAfterCycle4} — hard-coded reference hash equals the computed
- *       hash for a cycle-3-equivalent plan (no reminders). Catches accidental canonicalization
- *       drift across all future cycles.</li>
- *   <li>{@code nullRemindersProducesSameHashAsCycle3} — explicit {@code reminders=null} on a
- *       direct {@link HumanTaskNode} construction produces the same hash as the DSL path
- *       (neither calls reminderAt nor reminderEvery).</li>
+ *   <li>{@code goldenHashUnchangedWithReminderSupport} — hard-coded reference hash equals the computed
+ *       hash for a plan without reminders. Catches accidental canonicalization
+ *       drift in later changes.</li>
+ *   <li>{@code twoEquivalentBuildsAreEqual} — two independent DSL builds that call neither
+ *       reminderAt nor reminderEvery produce the same hash.</li>
+ *   <li>{@code explicitNullRemindersFieldIsNull} — explicit {@code reminders=null} on a direct
+ *       {@link HumanTaskNode} construction is a valid node shape with no reminders.</li>
  *   <li>{@code remindersParticipateInHash} — a plan with reminders differs from the same plan
  *       without reminders.</li>
  *   <li>{@code reminderSpecVariantSensitivity} — different reminder spec shapes and values
@@ -51,32 +52,29 @@ class PlanHashContinuityTest {
     record SignalPayload(String data) {}
 
     // -------------------------------------------------------------------------
-    // Golden hash — cycle-3 reference plan (no reminders)
+    // Golden hash — reference plan without reminders
     // -------------------------------------------------------------------------
 
     /**
-     * Hard-coded SHA-256 hex digest for the cycle-3 reference plan built by
-     * {@link #buildCycle3ReferencePlan()}.
+     * Hard-coded SHA-256 hex digest for the reference plan built by
+     * {@link #buildReferencePlan()}.
      *
      * <p><strong>Do not change this constant without a deliberate, versioned override.</strong>
      * If you change it, document the reason and the commit that changed it in a comment below.
      *
-     * <p>Change history:
-     * <ul>
-     *   <li>Cycle 4, Slice 2 — initial value computed from the cycle-3-equivalent DSL before
-     *       reminder canonicalization was wired into {@code computePlanHash}. Adding {@code
-     *       reminders=null} to {@link HumanTaskNode} MUST NOT change this value.</li>
-     * </ul>
+     * <p>Origin: the initial value was computed from a plan without reminders, before reminder
+     * canonicalization was wired into {@code computePlanHash}. Adding {@code reminders=null} to
+     * {@link HumanTaskNode} MUST NOT change this value.
      */
-    private static final String CYCLE3_REFERENCE_HASH =
-            // Computed on first run (2026-05-09) before cycle-4 reminder canonicalization was
+    private static final String REFERENCE_PLAN_HASH =
+            // Computed on first run (2026-05-09) before reminder canonicalization was
             // wired in. Adding reminders=null to HumanTaskNode MUST NOT change this value.
             // If this constant ever needs to change, document the reason and the commit here.
             "20e187ce4cb264bfc1fe5f5683032f5bd3cf4691d8979e41cdb0102727fb8718";
 
     /**
-     * Builds a representative cycle-3-equivalent plan that exercises all the node kinds and all
-     * the {@link HumanTaskNode} fields that existed before cycle 4. No reminder calls are made.
+     * Builds a representative plan that exercises all the node kinds and all the
+     * {@link HumanTaskNode} fields that exist apart from reminders. No reminder calls are made.
      * The plan shape is intentionally broad to catch drift in any node kind's canonicalization.
      *
      * <p>Plan structure (in declaration order):
@@ -96,7 +94,7 @@ class PlanHashContinuityTest {
      *   <li>Terminal nodes: complete, fail, compensate.</li>
      * </ol>
      */
-    private static WorkflowPlan buildCycle3ReferencePlan() {
+    private static WorkflowPlan buildReferencePlan() {
         WorkflowBuilder<ReviewState> wf = new WorkflowBuilder<>();
         wf.init(StartReviewCmd.class, cmd -> new ReviewState(cmd.orderId(), "unassigned"))
                 .initialStep("dispatch-review");
@@ -134,16 +132,16 @@ class PlanHashContinuityTest {
     // --- (a) Golden hash test ---
 
     @Nested
-    @DisplayName("(a) golden hash — cycle-3 reference plan continuity")
+    @DisplayName("(a) golden hash — reference plan continuity")
     class GoldenHash {
 
         @Test
-        @DisplayName("cycle-3-equivalent plan hashes to the hard-coded golden value")
-        void goldenHashUnchangedAfterCycle4() {
-            WorkflowPlan plan = buildCycle3ReferencePlan();
+        @DisplayName("reference plan hashes to the hard-coded golden value")
+        void goldenHashUnchangedWithReminderSupport() {
+            WorkflowPlan plan = buildReferencePlan();
             assertThat(plan.planHash())
-                    .as("golden hash must remain '%s'; actual = '%s'", CYCLE3_REFERENCE_HASH, plan.planHash())
-                    .isEqualTo(CYCLE3_REFERENCE_HASH);
+                    .as("golden hash must remain '%s'; actual = '%s'", REFERENCE_PLAN_HASH, plan.planHash())
+                    .isEqualTo(REFERENCE_PLAN_HASH);
         }
     }
 
@@ -199,7 +197,7 @@ class PlanHashContinuityTest {
 
         @Test
         @DisplayName("two independent DSL builds (no reminderAt/reminderEvery) produce equal hashes")
-        void twoCycle3EquivalentBuildsAreEqual() {
+        void twoEquivalentBuildsAreEqual() {
             WorkflowBuilder<ReviewState> wf1 = new WorkflowBuilder<>();
             wf1.init(StartReviewCmd.class, cmd -> new ReviewState(cmd.orderId(), "unassigned"))
                     .initialStep("review-task")
@@ -226,9 +224,9 @@ class PlanHashContinuityTest {
             String hash2 =
                     wf2.build("equiv-test", 1L, ReviewState.class.getName()).planHash();
 
-            // Both are cycle-3-equivalent paths — must produce identical hashes
+            // Both are equivalent paths — must produce identical hashes
             assertThat(hash1)
-                    .as("two cycle-3-equivalent DSL builds must produce the same hash")
+                    .as("two equivalent DSL builds must produce the same hash")
                     .isEqualTo(hash2);
         }
 
@@ -252,7 +250,7 @@ class PlanHashContinuityTest {
                     );
 
             assertThat(node.reminders())
-                    .as("reminders=null must be a valid node shape (cycle-3 equivalence)")
+                    .as("reminders=null must be a valid node shape (no-reminder equivalence)")
                     .isNull();
         }
     }
@@ -335,7 +333,7 @@ class PlanHashContinuityTest {
         @Test
         @DisplayName("reminderAt(2h, 30m) hashes the same as reminderAt(30m, 2h) — declaration order doesn't matter")
         void reminderAtDeclarationOrderDoesNotAffectHash() {
-            // Cycle-4 codex round-1 fix: ReminderSpec.OneShotOffsets canonicalizes its input list to
+            // ReminderSpec.OneShotOffsets canonicalizes its input list to
             // ascending order at construction time. Two declarations with the same offsets in
             // different order produce identical specs and identical plan hashes. This locks the
             // canonicalization contract — any future change to OneShotOffsets that loses this

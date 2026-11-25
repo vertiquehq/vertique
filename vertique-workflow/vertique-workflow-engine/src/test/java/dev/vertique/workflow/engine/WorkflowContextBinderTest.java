@@ -71,7 +71,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>Uses the {@code runOnDuplicated} pattern plus the shared {@link TenantCtx} /
  * {@link TenantCtxCodec} test fixture to bind ambient context, and the real
- * {@link CorrelationContext} type / {@link CorrelationContextSeeder} initializer for the AC-9
+ * {@link CorrelationContext} type / {@link CorrelationContextSeeder} initializer for the
  * fill-before-seeding ordering tests — a test double is deliberately not used there.
  */
 @ExtendWith({VertxExtension.class, MockitoExtension.class})
@@ -669,7 +669,7 @@ class WorkflowContextBinderTest {
                 })));
     }
 
-    // --- Fill-before-seeding ordering (AC-9) ---
+    // --- Fill-before-seeding ordering ---
 
     @Test
     @DisplayName("instance fill happens before initializers run, so instance correlation beats seeding")
@@ -751,7 +751,7 @@ class WorkflowContextBinderTest {
                 })));
     }
 
-    // --- NFR-WF-CTX-008 debug log ---
+    // --- Debug log ---
 
     @Test
     @DisplayName("a fill that contributes a namespace emits a debug-level log naming it")
@@ -786,7 +786,7 @@ class WorkflowContextBinderTest {
                                 .anyMatch(event -> event.getLevel() == Level.DEBUG
                                         && event.getFormattedMessage().contains(TenantCtxCodec.NAMESPACE));
                         assertThat(foundDebugLine)
-                                .as("a debug log naming the filled namespace must be emitted (NFR-WF-CTX-008)")
+                                .as("a debug log naming the filled namespace must be emitted")
                                 .isTrue();
                         ctx.completeNow();
                     } finally {

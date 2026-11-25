@@ -33,11 +33,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Start workflow → engine creates the fork ({@code reserve-order}) and three branch tokens
  *       ({@code inventory}, {@code payment}, {@code fraud}), each with a {@code RUNNING} status
  *       and a pending outbox entry for its service dispatch.</li>
- *   <li>Drive relay (cycle 1) → all three service stubs called → three branch signals posted with
+ *   <li>Drive relay (first cycle) → all three service stubs called → three branch signals posted with
  *       branch identity → engine receives each signal, advances the matching branch token to
  *       {@code COMPLETED}, evaluates the join after each completion, and advances the workflow to
  *       {@code ship-order} once all three are done.</li>
- *   <li>Drive relay (cycle 2) → shipping.create-shipment dispatched → shipment reply
+ *   <li>Drive relay (second cycle) → shipping.create-shipment dispatched → shipment reply
  *       recorded (instance-level) → workflow reaches {@code COMPLETED}.</li>
  * </ol>
  *
@@ -87,7 +87,7 @@ public class FanOutOrderFulfillmentIT extends SagaTestBase {
         String orderId = "fanout-happy-1";
 
         // Fan-out branch drives hit DurableContextPropagator.bindFrom which is strict on
-        // non-duplicated contexts (FR-CTX-157b). Run the entire async chain on a freshly-
+        // non-duplicated contexts. Run the entire async chain on a freshly-
         // duplicated context so the substrate's write guard accepts the bind, matching how
         // production dispatch (event-bus / Kafka / cron) always reaches the engine.
         runOnDuplicatedContext(() -> startFanOutOrder(orderId)

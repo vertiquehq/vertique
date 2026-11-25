@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Verifies plan-hash determinism requirements (FR-WF-DEF-006):
+ * Verifies plan-hash determinism requirements:
  *
  * <ul>
  *   <li>Compiling the same document object twice produces the same plan hash.</li>
@@ -46,7 +46,7 @@ import org.mockito.Mockito;
  *   <li>A different {@code to} target in a route produces a different plan hash.</li>
  *   <li>A different default route produces a different plan hash.</li>
  *   <li>The {@code when:} prefix in the fingerprint is stable — re-compiling the same document
- *       produces the same hash across JVM runs (FR-WF-DEF-006 determinism AC #8).</li>
+ *       produces the same hash across JVM runs.</li>
  * </ul>
  *
  * <p>Tests build {@link WorkflowDefinitionDocument} records directly rather than parsing YAML
@@ -54,12 +54,12 @@ import org.mockito.Mockito;
  * Source-format equivalence (YAML vs JSON producing the same document) is tested at the parser
  * layer in {@code WorkflowDefinitionParserTest}.
  *
- * <p><strong>Whitespace-only expression changes (AC #8):</strong> Whether two expressions that
+ * <p><strong>Whitespace-only expression changes:</strong> Whether two expressions that
  * differ only in whitespace produce the same fingerprint depends on whether the CEL canonical form
- * collapses that whitespace. If the CEL unparser normalises the forms, AC #8 holds fully. The
- * semantically-different cases tested here are deterministic regardless of whitespace behaviour.
+ * collapses that whitespace. If the CEL unparser normalises the forms, whitespace-only differences hash
+ * identically. The semantically-different cases tested here are deterministic regardless of whitespace behaviour.
  *
- * <p><strong>Fingerprint format (S6):</strong> The route fingerprint uses a symmetric
+ * <p><strong>Fingerprint format:</strong> The route fingerprint uses a symmetric
  * {@code when:} / {@code condition:} prefix. Compiling the same document twice must produce
  * the same hash; this test also acts as a stability anchor for the format. If the format changes,
  * the determinism test catches it immediately.
@@ -315,10 +315,10 @@ class PlanHashDeterminismTest {
     }
 
     @Test
-    @DisplayName("when: fingerprint prefix is stable — same doc compiled three times produces identical hash (S6)")
+    @DisplayName("when: fingerprint prefix is stable — same doc compiled three times produces identical hash")
     void whenFingerprintPrefixIsStableAcrossRecompiles() {
         // This test acts as a stability anchor for the symmetric when:/condition: fingerprint
-        // format introduced in S6. If the format changes again, this test catches it immediately.
+        // format. If the format changes, this test catches it immediately.
         WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
                 "order-fulfillment",
                 1L,

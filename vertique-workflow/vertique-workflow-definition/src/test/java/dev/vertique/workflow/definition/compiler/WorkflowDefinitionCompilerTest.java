@@ -62,8 +62,8 @@ import org.mockito.Mockito;
  * {@link WorkflowPlan#nodes()} shape is asserted.
  *
  * <p>Each test builds the same plan both via the document compiler and via the code-first DSL and
- * asserts the node types match. Because FR-WF-DEF-011 does NOT require plan-hash equivalence
- * between code-first and document-defined plans, only node count and node class are asserted here.
+ * asserts the node types match. Plan-hash equivalence between code-first and document-defined plans
+ * is not required, so only node count and node class are asserted here.
  * The plan-hash determinism across re-compilations is verified in {@link PlanHashDeterminismTest}.
  */
 class WorkflowDefinitionCompilerTest {

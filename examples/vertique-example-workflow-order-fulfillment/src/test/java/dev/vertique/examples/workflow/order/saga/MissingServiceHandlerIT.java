@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Missing-SERVICE-handler startup contract test (§9.4 test 22).
+ * Missing-SERVICE-handler startup contract test.
  *
  * <p>Verifies that an application composed WITHOUT {@link
  * dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule} passes Dagger component

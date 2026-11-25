@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the cycle-5 DSL sugar on {@link WorkflowBuilder}:
+ * Verifies the DSL sugar on {@link WorkflowBuilder}:
  * {@code .publishAt(...)} and {@code .expireAt(...)} both lower to a {@link TimerNode} with the
  * appropriate {@link TimerSpec} variant, and are indistinguishable from equivalent hand-rolled
  * {@code .timer(...)} / {@code .timerAt(...)} calls at the plan level.

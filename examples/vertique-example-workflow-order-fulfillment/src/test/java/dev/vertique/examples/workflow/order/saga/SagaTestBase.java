@@ -65,7 +65,7 @@ import org.slf4j.LoggerFactory;
  * {@code x-workflow-branch-id} to route via
  * {@link dev.vertique.workflow.ops.TransactionalWorkflowOperations#signal} with branch identity.
  *
- * <p>Cycle-2 timer tests use {@link #waitForStatus(WorkflowInstanceId, WorkflowStatus, long)}
+ * <p>Timer tests use {@link #waitForStatus(WorkflowInstanceId, WorkflowStatus, long)}
  * to poll until a workflow reaches the expected status (or a deadline is exceeded).
  */
 public abstract class SagaTestBase {
@@ -252,17 +252,17 @@ public abstract class SagaTestBase {
 
         // The graph runs no deployer, so after the startup steps this harness deploys the workflow executor entry
         // of the graph's deployments alone, never a whole phase.
-        // The production AppComponent is now a @VertiqueApp VertiqueApplicationComponent: its
+        // The production AppComponent is a @VertiqueApp VertiqueApplicationComponent: its
         // CONFIGURE/VALIDATE/MIGRATE choreography lives in framework lifecycle steps, not in
         // hand-written accessors. This harness deliberately does NOT deploy the application's
         // verticles (it drives the outbox relay synchronously via driveRelay()), and it runs its
         // own multi-history-table Flyway migrations above — the framework's single-history-table
         // FlywayMigrationRunner cannot express those, so flyway.mode=DISABLED keeps the MIGRATE
         // step a no-op. We therefore run only the non-verticle startup steps directly, in
-        // lifecycle order, which reproduces the former choreography exactly:
+        // lifecycle order:
         //   • CONFIGURE → nothing in this graph (no JSON runtime module, so no process-codec install)
         //   • VALIDATE  → ComposeValidationStep (forces construction of the three workflow
-        //                 ComposeValidators: §3.11 outbox, cycle-2 timer, cycle-3 task)
+        //                 ComposeValidators: outbox, timer, task)
         //   • MIGRATE   → FlywayMigrationStartupStep (no-op under flyway.mode=DISABLED)
         return runNonVerticleStartupSteps(component)
                 .compose(v -> WorkflowExecutorHarness.deploy(vertx, component.verticleDeployments()))
@@ -511,13 +511,13 @@ public abstract class SagaTestBase {
 
     /**
      * Re-enters the given async action on a freshly-duplicated Vert.x context so the substrate's
-     * holder write guard (FR-CTX-021 / FR-CTX-157b) accepts any bindFrom / holder.bind calls that
+     * holder write guard accepts any bindFrom / holder.bind calls that
      * land inside the action's chain.
      *
      * <p>Production dispatch (event-bus, Kafka per-record, cron, service-method invoker) always
      * reaches the engine via a duplicated context; this helper provides the same isolation for ITs
      * that drive the engine directly from a JUnit thread (no Vert.x context). Fan-out branch
-     * drives reach {@code DurableContextPropagator.bindFrom} per FR-CTX-157b and would otherwise
+     * drives reach {@code DurableContextPropagator.bindFrom} and would otherwise
      * throw on the non-duplicated context.
      *
      * @param action a supplier of a Future to run on the duplicated context

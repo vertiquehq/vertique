@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Happy-path saga integration test (§9.4 test 16).
+ * Happy-path saga integration test.
  *
  * <p>Drives the full order-fulfillment saga end-to-end:
  * <ol>

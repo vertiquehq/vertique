@@ -79,16 +79,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * delivered under ambient correlation B (no explicit carrier). The binder-row bind must observe
  * ambient correlation B as authoritative over the instance's persisted correlation A, while the
  * instance-fill half of the merge supplies tenant T for the namespace ambient lacks — proving the
- * base-wins/instance-fill contract (Contract Appendix C2) on the live (non-recovery) signal path.
+ * base-wins/instance-fill contract on the live (non-recovery) signal path.
  *
  * <p>A signal is applied by the segment that runs its recorded command, not by the call that records it, so the test
- * drives that segment with the ambient correlation bound around it. The ambient context of the recording call itself is
- * captured onto the command by a later change; until then the binder merges what is bound around the segment, which is
- * what this test pins down.
+ * drives that segment with the ambient correlation bound around it. The binder merges what is bound around the
+ * segment, which is what this test pins down.
  *
  * <p>Uses the {@code runOnDuplicated} pattern plus the shared {@link TenantCtx} /
  * {@link TenantCtxCodec} test fixture, extended with the real {@link CorrelationContext}
- * encoder/decoder pair (as {@link WorkflowContextBinderTest} does for its AC-9 ordering tests) so
+ * encoder/decoder pair (as {@link WorkflowContextBinderTest} does for its ordering tests) so
  * both namespaces are exercised through the real binder wiring assembled via
  * {@link WorkflowEngineFactory#create}.
  */

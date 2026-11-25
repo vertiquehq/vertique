@@ -16,9 +16,9 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link WorkflowSignalRequest}.
  *
  * <p>Verifies that the existing {@code instance(...)}/{@code branch(...)} factory arities remain
- * source-compatible (NFR-WF-CTX-006) after the additive {@code metadata} component, that the new
+ * source-compatible after the additive {@code metadata} component, that the new
  * metadata-bearing overloads set the carrier correctly, and that a non-null {@code metadata} carrier
- * survives a Jackson wire round-trip unchanged (FR-WF-CTX-041).
+ * survives a Jackson wire round-trip unchanged.
  */
 class WorkflowSignalRequestTest {
 
@@ -75,7 +75,7 @@ class WorkflowSignalRequestTest {
         assertThat(req.branchId()).isEqualTo("branch-a");
     }
 
-    // --- Wire round-trip (FR-WF-CTX-041) ---
+    // --- Wire round-trip ---
 
     @Test
     @DisplayName("wire round-trip: a non-null metadata context object survives Jackson serialize/deserialize")
