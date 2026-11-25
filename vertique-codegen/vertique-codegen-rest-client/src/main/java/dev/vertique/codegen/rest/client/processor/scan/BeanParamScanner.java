@@ -35,10 +35,12 @@ import javax.lang.model.type.TypeMirror;
  * <p>Access-path resolution for {@link BeanModel#fullyGeneratable()}:
  * <ol>
  *   <li>Record component → record accessor method ({@code name()}) is always accessible.</li>
- *   <li>Public no-argument getter ({@code getName()}, {@code isName()}, or fluent {@code name()})
- *       declared on the type or a superclass → accessible.</li>
  *   <li>Public field, or non-private (package-private or protected) field declared in the same
- *       package as the bean → accessible (the generated accessor lives in the bean's package).</li>
+ *       package as the bean → read directly (the generated accessor lives in the bean's package);
+ *       a getter is not consulted.</li>
+ *   <li>Otherwise (a private field, or a non-public field declared in another package) a public
+ *       no-argument getter ({@code getName()}, {@code isName()}, or fluent {@code name()})
+ *       declared on the type or a superclass → accessible.</li>
  *   <li>None of the above → not generatable; the entire bean falls back to the reflective
  *       accessor.</li>
  * </ol>
