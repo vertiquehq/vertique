@@ -28,25 +28,22 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * FR-013 (T004): which walked properties the input direction describes.
+ * Which walked properties the input direction describes.
  *
  * <p>Three proofs share one fixture family, each fixture named for the shape it stands for:
  *
  * <ul>
- *   <li><strong>TP-001</strong> — the shapes the profiled input direction stopped describing: a
- *       private field behind a getter, a Lombok {@code @Builder @Jacksonized @Getter} type, a
- *       field-backed getter-only {@code List<String>} and {@code Map<String, String>}, and a type
- *       holding the first as a property. {@code @Getter} on the builder fixture is load-bearing: the
- *       same class without it stays {@code {"type":"object"}} even after the change, the gap
- *       {@code spec.md} § Known description gaps records as BG1, so a builder fixture without a
- *       getter would prove nothing about this rule.
- *   <li><strong>TP-002</strong> — an any-accessor's backing storage is excluded by member and only by
- *       member: a record component carrying {@code @JsonAnySetter} is not a named property, while a
- *       real property whose name a method any-setter merely implies stays described with its
- *       constraint.
- *   <li><strong>TP-003</strong> — behavior preservation: {@code @JsonIgnore} and read-only stay
- *       absent, write-only stays described with {@code writeOnly: true}, and every output-direction
- *       document is byte-identical to the one the generator produces at T004's parent commit.
+ *   <li>Described shapes: a private field behind a getter, a Lombok {@code @Builder @Jacksonized
+ *       @Getter} type, a field-backed getter-only {@code List<String>} and {@code Map<String,
+ *       String>}, and a type holding the first as a property. {@code @Getter} on the builder fixture
+ *       is load-bearing: the same class without it stays {@code {"type":"object"}}, so a builder
+ *       fixture without a getter would prove nothing about this rule.
+ *   <li>An any-accessor's backing storage is excluded by member and only by member: a record
+ *       component carrying {@code @JsonAnySetter} is not a named property, while a real property
+ *       whose name a method any-setter merely implies stays described with its constraint.
+ *   <li>Access exclusions and the output direction: {@code @JsonIgnore} and read-only stay absent,
+ *       write-only stays described with {@code writeOnly: true}, and every output-direction document
+ *       equals its pinned expected document.
  * </ul>
  *
  * <p>Every document is generated under the registry's built-in {@code vertique} profile — the floor
@@ -88,7 +85,7 @@ class ProfilePropertyDiscoveryTest {
 
     /**
      * Returns the document's {@code properties} member, failing when the document describes none at
-     * all — the bare object shape this task corrects.
+     * all — the bare object shape.
      *
      * @param document the parsed document
      * @param subject  the fixture name, for the failure message
@@ -102,7 +99,7 @@ class ProfilePropertyDiscoveryTest {
         return document.get("properties");
     }
 
-    // --- TP-001: the restored shapes are described ---
+    // --- The shapes are described ---
 
     @Test
     @DisplayName("A private field behind a getter is described with its type and format")
@@ -148,18 +145,18 @@ class ProfilePropertyDiscoveryTest {
     }
 
     @Test
-    @DisplayName("A restored shape held as a property is described at the nested position")
-    void nestedRestoredShapeIsDescribed() {
-        JsonNode document = inputDocument(NestedRestoredShape.class);
+    @DisplayName("A shape held as a property is described at the nested position")
+    void nestedShapeIsDescribed() {
+        JsonNode document = inputDocument(NestedShape.class);
 
-        JsonNode detail = properties(document, "NestedRestoredShape").path("detail");
+        JsonNode detail = properties(document, "NestedShape").path("detail");
         assertEquals("object", detail.path("type").asText(null), "the nested property's type must be described");
         JsonNode due = detail.path("properties").path("due");
         assertEquals("string", due.path("type").asText(null), "the nested private LocalDate field's type");
         assertEquals("date", due.path("format").asText(null), "the nested private LocalDate field's format");
     }
 
-    // --- TP-002: backing storage is excluded by member, and only by member ---
+    // --- Backing storage is excluded by member, and only by member ---
 
     @Test
     @DisplayName("A record component carrying @JsonAnySetter is not described as a named property")
@@ -190,7 +187,7 @@ class ProfilePropertyDiscoveryTest {
                         + "setAttribute(String, Object) any-setter merely implies must hide nothing");
     }
 
-    // --- TP-003: access exclusions and the output direction are unchanged ---
+    // --- Access exclusions and the output direction ---
 
     @Test
     @DisplayName("An @JsonIgnore property and a read-only property stay absent from the input document")
@@ -216,56 +213,56 @@ class ProfilePropertyDiscoveryTest {
     }
 
     /**
-     * The output direction is byte-identical to T004's parent commit ({@code 3e50529d}). Each
-     * expected document below was generated by that commit's generator for the same fixture and the
-     * same profile, so applying the input-direction condition to the output direction — or changing
-     * the output direction at all — fails here.
+     * The output direction equals a pinned document per fixture. Each expected document below is the
+     * generator's output for the same fixture and the same profile, so applying the input-direction
+     * discovery condition to the output direction — or changing the output direction at all — fails
+     * here.
      */
     @Test
-    @DisplayName("Every restored shape's output document is byte-identical to the parent commit's")
+    @DisplayName("Every shape's output document equals its pinned expected document")
     void outputDirectionIsUnchanged() {
         assertEquals(
-                PARENT_OUTPUT_PRIVATE_FIELD,
+                EXPECTED_OUTPUT_PRIVATE_FIELD,
                 outputDocument(PrivateFieldBehindAGetter.class),
                 "the private-field shape's output document must be unchanged");
         assertEquals(
-                PARENT_OUTPUT_LOMBOK_BUILDER,
+                EXPECTED_OUTPUT_LOMBOK_BUILDER,
                 outputDocument(LombokBuilderType.class),
                 "the Lombok builder's output document must be unchanged");
         assertEquals(
-                PARENT_OUTPUT_GETTER_ONLY_LIST,
+                EXPECTED_OUTPUT_GETTER_ONLY_LIST,
                 outputDocument(FieldBackedGetterOnlyList.class),
                 "the getter-only list's output document must be unchanged");
         assertEquals(
-                PARENT_OUTPUT_GETTER_ONLY_MAP,
+                EXPECTED_OUTPUT_GETTER_ONLY_MAP,
                 outputDocument(FieldBackedGetterOnlyMap.class),
                 "the getter-only map's output document must be unchanged");
         assertEquals(
-                PARENT_OUTPUT_NESTED,
-                outputDocument(NestedRestoredShape.class),
+                EXPECTED_OUTPUT_NESTED,
+                outputDocument(NestedShape.class),
                 "the nested shape's output document must be unchanged");
     }
 
-    // --- Parent-commit output documents (TP-003) ---
+    // --- Pinned output documents ---
 
-    /** {@link PrivateFieldBehindAGetter}'s output document at T004's parent. */
-    private static final String PARENT_OUTPUT_PRIVATE_FIELD =
+    /** {@link PrivateFieldBehindAGetter}'s output document. */
+    private static final String EXPECTED_OUTPUT_PRIVATE_FIELD =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"due\":{\"format\":\"date\",\"type\":\"string\"}},\"type\":\"object\"}";
 
-    /** {@link LombokBuilderType}'s output document at T004's parent. */
-    private static final String PARENT_OUTPUT_LOMBOK_BUILDER =
+    /** {@link LombokBuilderType}'s output document. */
+    private static final String EXPECTED_OUTPUT_LOMBOK_BUILDER =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\":\"string\"},\"quantity\":{\"type\":\"integer\"}},\"type\":\"object\"}";
 
-    /** {@link FieldBackedGetterOnlyList}'s output document at T004's parent. */
-    private static final String PARENT_OUTPUT_GETTER_ONLY_LIST =
+    /** {@link FieldBackedGetterOnlyList}'s output document. */
+    private static final String EXPECTED_OUTPUT_GETTER_ONLY_LIST =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tags\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}";
 
-    /** {@link FieldBackedGetterOnlyMap}'s output document at T004's parent. */
-    private static final String PARENT_OUTPUT_GETTER_ONLY_MAP =
+    /** {@link FieldBackedGetterOnlyMap}'s output document. */
+    private static final String EXPECTED_OUTPUT_GETTER_ONLY_MAP =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"labels\":{\"type\":\"object\"}},\"type\":\"object\"}";
 
-    /** {@link NestedRestoredShape}'s output document at T004's parent. */
-    private static final String PARENT_OUTPUT_NESTED =
+    /** {@link NestedShape}'s output document. */
+    private static final String EXPECTED_OUTPUT_NESTED =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"detail\":{\"properties\":{\"due\":{\"format\":\"date\",\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"object\"}";
 
     // --- Fixtures: one per shape, named for it ---
@@ -288,7 +285,7 @@ class ProfilePropertyDiscoveryTest {
     /**
      * A builder type filled through its builder, whose getters the real Lombok annotation processor
      * generates. Without {@code @Getter} nothing is visible to introspection and the document stays
-     * the bare object (BG1).
+     * the bare object.
      */
     @Builder
     @Jacksonized
@@ -330,8 +327,8 @@ class ProfilePropertyDiscoveryTest {
         }
     }
 
-    /** A restored shape held as a property, so the nested position is proven too. */
-    static final class NestedRestoredShape {
+    /** A shape held as a property, so the nested position is proven too. */
+    static final class NestedShape {
 
         private PrivateFieldBehindAGetter detail;
 

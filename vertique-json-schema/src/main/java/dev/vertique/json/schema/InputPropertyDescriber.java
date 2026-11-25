@@ -2038,7 +2038,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * schema library's own Jakarta module, or {@link WalkConstraintSource} for an unscoped member)
      * embeds no flags, and this correction is the flag-aware rendering of that identical regexp. The
      * more complete rendering replaces the floor's own outright (proven by
-     * {@code MetadataConstraintSourceCoverageTest#sharp606Shapes}), rather than being combined with it
+     * {@code MetadataConstraintSourceCoverageTest#renderGapShapes}), rather than being combined with it
      * into a redundant {@code allOf}.
      *
      * <p>Appends to an existing {@code allOf} array rather than replacing it, so a genuine two-source

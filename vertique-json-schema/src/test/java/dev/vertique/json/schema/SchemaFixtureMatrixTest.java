@@ -45,8 +45,8 @@ import org.junit.jupiter.api.Test;
  * <p>Every matrix row asserts three things: generation succeeds through {@link
  * AnnotationJsonSchemaGenerator#withVictoolsDefaults()}, the canonical output is byte-identical to a
  * committed golden file under {@code src/test/resources/golden/matrix/} (this doubles as the
- * cross-JVM determinism proof NFR-JSON-014 requires — CI re-executes the same generation and compares
- * against the same committed bytes), and one targeted semantic spot-check for that row's concern.
+ * cross-JVM determinism proof: CI re-executes the same generation and compares against the same
+ * committed bytes), and one targeted semantic spot-check for that row's concern.
  *
  * <p>{@link #anchoredPatternValidatorSemanticsPinned()} additionally pins, empirically, which
  * pattern-matching semantics (find vs. match) the real {@code vertx-json-schema} validator applies to
@@ -54,7 +54,7 @@ import org.junit.jupiter.api.Test;
  */
 class SchemaFixtureMatrixTest {
 
-    // --- FR-JSON-081 baseline matrix ---
+    // --- Baseline matrix ---
 
     @Test
     @DisplayName("ordinaryPojo: required and length constraints survive")
@@ -117,7 +117,7 @@ class SchemaFixtureMatrixTest {
     }
 
     @Test
-    @DisplayName("resolvedMap: Map<String, Integer> generates a bare object type (pinned S4 fact)")
+    @DisplayName("resolvedMap: Map<String, Integer> generates a bare object type (pinned fact)")
     void resolvedMap() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.MapHolder.class);
@@ -264,7 +264,7 @@ class SchemaFixtureMatrixTest {
         assertGolden("recursive-graph.json", canonical);
     }
 
-    // --- FR-JSON-078: divergence is asserted explicitly, never cross-config equality ---
+    // --- Divergence is asserted explicitly, never cross-config equality ---
 
     @Test
     @DisplayName("Different mapper property models produce documents that explicitly differ")
@@ -286,7 +286,7 @@ class SchemaFixtureMatrixTest {
 
         // Then: the documents explicitly differ — the field-detecting mapper's property model exposes
         // the field-only property; the field-hiding mapper's does not. No cross-config equality is
-        // asserted (FR-JSON-078).
+        // asserted.
         assertNotEquals(visibleDocument, hiddenDocument, "different Jackson property models must not converge");
         assertTrue(visibleDocument.contains("visibleField"), "the field-detecting mapper must expose the property");
         assertFalse(hiddenDocument.contains("visibleField"), "the field-hiding mapper must not expose the property");
@@ -394,13 +394,13 @@ class SchemaFixtureMatrixTest {
                         + canonical);
     }
 
-    // --- §2 finding 12: validator pattern-matching semantics for the anchored strict-decimal pattern ---
+    // --- Validator pattern-matching semantics for the anchored strict-decimal pattern ---
 
     /**
      * Pins the actual pattern-matching semantics the real {@code vertx-json-schema} validator applies
-     * to the anchored strict-decimal pattern committed in {@code strict-input-amount.json} (S3).
+     * to the anchored strict-decimal pattern committed in {@code strict-input-amount.json}.
      *
-     * <p><strong>Empirical finding:</strong> the compiled {@code Draft 2020-12} validator evaluates
+     * <p><strong>Empirical result:</strong> the compiled {@code Draft 2020-12} validator evaluates
      * the {@code pattern} keyword using Java {@link java.util.regex.Matcher#find()} semantics, not
      * {@link java.util.regex.Matcher#matches()} — the JSON Schema specification itself mandates a
      * "contains a match" evaluation. Combined with Java's own {@code $} anchor allowing a zero-width
@@ -415,8 +415,7 @@ class SchemaFixtureMatrixTest {
      * terminator, so the serde stays the strict boundary.
      */
     @Test
-    @DisplayName(
-            "The strict decimal pattern validates \"1\\n\" under find semantics (documented residual, §2 finding 12)")
+    @DisplayName("The strict decimal pattern validates \"1\\n\" under find semantics (documented residual)")
     void anchoredPatternValidatorSemanticsPinned() {
         JsonObject schema = new JsonObject(golden("strict-input-amount.json"));
         JsonSchemaOptions options =

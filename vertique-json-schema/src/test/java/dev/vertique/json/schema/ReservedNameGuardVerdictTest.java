@@ -306,7 +306,7 @@ class ReservedNameGuardVerdictTest {
     }
 
     private static Stream<Arguments> boundedPositionCorpus() {
-        // Multiplied out (recorded in evidence alongside these counts): once a case-insensitive type's
+        // Multiplied out: once a case-insensitive type's
         // reserved-name key reaches three bounded positions instead of two, 30 extra keys of 4,000
         // characters count 360,000 characters toward the per-request pattern-input total rather than
         // 240,000 — each bounded position counts the whole 4,000-character key again.

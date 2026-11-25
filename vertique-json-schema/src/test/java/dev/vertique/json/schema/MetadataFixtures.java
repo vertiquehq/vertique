@@ -32,9 +32,7 @@ import org.hibernate.validator.constraints.Range;
 import org.hibernate.validator.constraints.URL;
 
 /**
- * Fixtures for the {@link MetadataConstraintSource} coverage and name-join proofs, adapted from the
- * design's {@code bv-metadata} scratch probes ({@code NameJoinProbe}, {@code CoverageProbe},
- * {@code RenderParityProbe}).
+ * Fixtures for the {@link MetadataConstraintSource} coverage and name-join proofs.
  */
 final class MetadataFixtures {
 
@@ -150,7 +148,7 @@ final class MetadataFixtures {
      * A constraint declared with a non-default group, on a plain, reflectively visible field: the
      * always-active floor (the schema library's own Jakarta Validation module, group-blind by
      * construction — a schema generator has no Bean Validation group concept) renders it required
-     * regardless, matching {@code main}; only the metadata supplement's own contribution is filtered
+     * regardless, as it does without a validator; only the metadata supplement's own contribution is filtered
      * by group.
      */
     static final class NonDefaultGroupDto {
@@ -173,7 +171,7 @@ final class MetadataFixtures {
     }
 
     /** Shapes with render gaps, plus a CASE_INSENSITIVE @Pattern. */
-    static final class Sharp606Dto {
+    static final class RenderGapsDto {
         @Range(min = 10, max = 20)
         public int range;
 
@@ -190,16 +188,16 @@ final class MetadataFixtures {
         public java.math.BigDecimal exclusiveMax;
     }
 
-    // --- F7 (security review round 1, LOW): a #606 correction must not loosen a stricter floor bound ---
+    // --- A render-gap correction must not loosen a stricter floor bound ---
 
-    static final class F7StricterCorrectionDto {
+    static final class StricterCorrectionDto {
         /** floor renders minimum:15 from @Min; the @Range(min=10) correction must not loosen it. */
         @Range(min = 10, max = 20)
         @Min(15)
         public int rangeBesideStricterMin;
     }
 
-    // --- W3: fully-qualified constraint-type matching ---
+    // --- Fully-qualified constraint-type matching ---
 
     /** An app-defined "Size" (in another package, {@link dev.vertique.json.schema.appconstraints.Size}) composing @Pattern. */
     static final class AppDefinedSizeCollisionDto {
@@ -207,7 +205,7 @@ final class MetadataFixtures {
         public String code;
     }
 
-    // --- S5: multiple @Pattern in the default group on one member ---
+    // --- Multiple @Pattern in the default group on one member ---
 
     static final class TwoPatternsDto {
         @Pattern(regexp = "^[A-Z].*")
@@ -215,7 +213,7 @@ final class MetadataFixtures {
         public String code;
     }
 
-    // --- C4: parity shapes (validator on vs. off must render byte-identical output) ---
+    // --- Parity shapes (validator on vs. off must render byte-identical output) ---
 
     /** An {@code @AssertTrue boolean}: victools' own Jakarta module renders this as {@code const: true}, unaided. */
     static final class AssertTrueDto {
@@ -278,14 +276,13 @@ final class MetadataFixtures {
     }
 
     /**
-     * D4: a generic holder whose type variable is bound to {@code Integer} by the member that embeds
+     * A generic holder whose type variable is bound to {@code Integer} by the member that embeds
      * it. {@code GenericHolderBase<T>.value}'s reflected {@link java.lang.reflect.Field#getType()} is
      * the type variable's erasure ({@code Object}, unbounded) regardless of what any holder binds
      * {@code T} to; only the resolved {@link com.fasterxml.jackson.databind.JavaType} Jackson computes
      * for {@code GenericHolderBoundIntDto.boxed}'s own parameterization says {@code Integer}. {@code
      * @Size} has no keyword family for a number, so a correct resolution renders nothing for it either
-     * way — matching {@code adv-d D4-generic-holder-bound-int} in the deserializer-driven-schema
-     * validation harness.
+     * way.
      */
     static final class GenericHolderBase<T> {
         @Size(max = 3)
@@ -297,7 +294,7 @@ final class MetadataFixtures {
     }
 
     /**
-     * C3: a static-factory {@code @JsonCreator} with a constraint on its parameter. Bean Validation
+     * A static-factory {@code @JsonCreator} with a constraint on its parameter. Bean Validation
      * exposes constrained constructors only ({@code BeanDescriptor#getConstraintsForConstructor}), so
      * {@link MetadataConstraintSource#forUnscopedMember} contributes nothing for this parameter's owner
      * (a static {@link Method}, never a {@link java.lang.reflect.Constructor}) — the constraint must
@@ -322,7 +319,7 @@ final class MetadataFixtures {
     }
 
     /**
-     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * A Lombok {@code @Builder @Jacksonized} type with a constrained private field and
      * deliberately <strong>no getter</strong> — unlike every other Lombok builder fixture in this
      * class and {@link BuilderWireNameJoinTest}, which all carry {@code @Getter}. Jackson's own
      * default introspection only auto-detects a <em>public</em> field or accessor; with neither here,
@@ -335,7 +332,7 @@ final class MetadataFixtures {
      */
     @Builder
     @Jacksonized
-    static final class Bg1Dto {
+    static final class NoGetterLombokBuilderDto {
         @Size(max = 5)
         private final String name;
     }

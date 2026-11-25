@@ -21,14 +21,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * C4: per-shape parity proof that the design's floor-plus-supplement architecture holds — generating
+ * Per-shape parity proof that the floor-plus-supplement architecture holds — generating
  * with a {@link Validator} supplied produces byte-identical output to generating without one, for six
  * shapes chosen to each exercise a different corner: a scoped boolean the schema library's own module
  * alone renders, a container-element (type-argument) constraint, a renamed setter whose method name
  * matches neither the field nor a name-derived convention, a custom-prefixed builder method, a
  * non-{@code Default}-group constraint, and a generic holder's type variable bound to a member type the
- * constraint's keyword family does not cover (D4). The one shape that is <em>not</em> asserted here as
- * a parity case (two {@code @Pattern} constraints, S5) is intentionally documented as a real divergence
+ * constraint's keyword family does not cover. The one shape that is <em>not</em> asserted here as
+ * a parity case (two {@code @Pattern} constraints) is intentionally documented as a real divergence
  * in {@link MetadataConstraintSourceCoverageTest#twoPatternsUnderTheWalkAloneRenderNeitherPattern()}.
  */
 class MetadataParityTest {
@@ -56,7 +56,7 @@ class MetadataParityTest {
     }
 
     @Test
-    @DisplayName("C4: @AssertTrue boolean renders const:true identically with and without a validator")
+    @DisplayName("@AssertTrue boolean renders const:true identically with and without a validator")
     void assertTrueBooleanRendersConstTrueEitherWay() {
         Validator validator = MetadataTestValidators.plain();
         assertParity(MetadataFixtures.AssertTrueDto.class, validator);
@@ -69,14 +69,14 @@ class MetadataParityTest {
     }
 
     @Test
-    @DisplayName("C4: Optional<@Size(max = 3) String> renders identically with and without a validator")
+    @DisplayName("Optional<@Size(max = 3) String> renders identically with and without a validator")
     void optionalContainerElementSizeRendersIdenticallyEitherWay() {
         Validator validator = MetadataTestValidators.plain();
         assertParity(MetadataFixtures.OptionalSizeDto.class, validator);
     }
 
     @Test
-    @DisplayName("C4: a @JsonSetter(\"level\") renamed setter's field constraint renders identically either way")
+    @DisplayName("a @JsonSetter(\"level\") renamed setter's field constraint renders identically either way")
     void renamedSetterFieldConstraintRendersIdenticallyEitherWay() {
         Validator validator = MetadataTestValidators.plain();
         assertParity(MetadataFixtures.ConfigureSetterDto.class, validator);
@@ -93,7 +93,7 @@ class MetadataParityTest {
 
     @Test
     @DisplayName(
-            "C4: a @JsonPOJOBuilder(withPrefix = \"put\") builder's built-field constraint renders identically either way")
+            "a @JsonPOJOBuilder(withPrefix = \"put\") builder's built-field constraint renders identically either way")
     void putPrefixedBuilderFieldConstraintRendersIdenticallyEitherWay() {
         Validator validator = MetadataTestValidators.plain();
         assertParity(MetadataFixtures.PutPrefixBuiltDto.class, validator);
@@ -101,14 +101,14 @@ class MetadataParityTest {
 
     @Test
     @DisplayName(
-            "C4: a non-Default-group constraint stays rendered as on main (stricter than actual enforcement), either way")
+            "a non-Default-group constraint stays rendered as the floor renders it (stricter than actual enforcement), either way")
     void nonDefaultGroupConstraintRendersIdenticallyEitherWay() {
         // Documented divergence from actual Bean Validation enforcement: @NotNull(groups =
         // AdminGroup.class) is only ever *enforced* when a caller validates against AdminGroup
         // explicitly, but this schema unconditionally marks the property required — exactly matching
-        // main (no validator, no group concept at all), which the metadata supplement's own group
+        // the no-validator path (no group concept at all), which the metadata supplement's own group
         // filter deliberately never narrows away from (see MetadataConstraintSourceCoverageTest
-        // .nonDefaultGroupOnVisibleMemberStaysRequiredLikeMain). The generated schema is therefore
+        // .nonDefaultGroupOnVisibleMemberStaysRequired). The generated schema is therefore
         // stricter than actual runtime enforcement for this shape, by design.
         Validator validator = MetadataTestValidators.plain();
         assertParity(MetadataFixtures.NonDefaultGroupDto.class, validator);
@@ -121,7 +121,7 @@ class MetadataParityTest {
     }
 
     @Test
-    @DisplayName("D4: a generic holder's @Size member bound to Integer renders identically either way (nothing)")
+    @DisplayName("a generic holder's @Size member bound to Integer renders identically either way (nothing)")
     void genericHolderBoundIntRendersIdenticallyEitherWay() {
         // The walk never runs at all for a scoped member (WalkConstraintSource#forScopedMember is
         // unconditionally NONE), so "identical either way" here means "nothing either way" — the

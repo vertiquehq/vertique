@@ -17,20 +17,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Characterized, at rest-023 T001's own pre-extraction baseline (`562decd8`), what {@code
- * describeMapLike} published for a {@code Map} subclass carrying a type-use constraint on its own
- * supertype's type argument — the exact fixture shape security round-2 finding S4 names as the vehicle
- * for the renderer's overlay source ({@code getAnnotatedSuperclass()}/{@code getAnnotatedInterfaces()}).
+ * Pins what {@code describeMapLike} publishes for a {@code Map} subclass carrying a type-use
+ * constraint on its own supertype's type argument — the shape that exercises the renderer's overlay
+ * source ({@code getAnnotatedSuperclass()}/{@code getAnnotatedInterfaces()}).
  *
- * <p><strong>Flipped by T003.</strong> At the T001 baseline this class was pinned against, {@code
- * describeMapLike} (`InputPropertyDescriber.java` `:745`) resolved only the value type's own schema
- * through {@code resolve(context, content)}; it applied no type-use overlay at all, so {@code Tags}'s
- * {@code @Size(max = 3)} constraint on its supertype's type argument rendered nowhere in the published
- * {@code additionalProperties} — the open, unconstrained {@code {"type": "string"}}. T003 ({@code D001})
- * wires the renderer's type-use-overlay step to read this exact supertype {@code AnnotatedType} (
- * {@code ValuePositionRenderer.mapValueSlotOfClass}) and render {@code maxLength} there, both
- * generated as a type and as a property — the two assertions below now pin the new, constrained
- * rendering instead of the old baseline.
+ * <p>The renderer's type-use-overlay step reads this exact supertype {@code AnnotatedType} ({@code
+ * ValuePositionRenderer.mapValueSlotOfClass}) and renders {@code maxLength} there, both generated as a
+ * type and as a property, so {@code Tags}'s {@code @Size(max = 3)} constraint on its supertype's type
+ * argument appears in the published {@code additionalProperties} rather than the open, unconstrained
+ * {@code {"type": "string"}}.
  *
  * <p>Both of this package's own constraint-source modes are exercised and asserted identical, following
  * {@link MetadataConstraintSourceCoverageTest}'s walk-vs-metadata pattern: {@link
@@ -43,9 +38,9 @@ import org.junit.jupiter.api.Test;
  * nothing to join by either — this is a distinct root cause from the type-use overlay itself, but it
  * produces the same constrained rendering in both modes.
  */
-class MapSubclassTypeUseConstraintBaselineTest {
+class MapSubclassTypeUseConstraintTest {
 
-    /** The rendered (T003, constrained) published schema of {@code Tags}'s value type. */
+    /** The rendered, constrained published schema of {@code Tags}'s value type. */
     private static final String CONSTRAINED_STRING_VALUE = "{\"maxLength\":3,\"type\":\"string\"}";
 
     private static JsonMapperProfile profile() {
@@ -82,16 +77,16 @@ class MapSubclassTypeUseConstraintBaselineTest {
     }
 
     @Test
-    @DisplayName("A Map subclass's supertype type-use constraint is rendered (T003), generated as a type")
-    void mapSubclassTypeUseConstraintIsNotRenderedAtBaseline_asType() {
+    @DisplayName("A Map subclass's supertype type-use constraint is rendered, generated as a type")
+    void mapSubclassTypeUseConstraintIsRendered_asType() {
         String[] rendered = additionalPropertiesBothModes(Tags.class);
         assertEquals(CONSTRAINED_STRING_VALUE, rendered[0], "walk-only mode");
         assertEquals(CONSTRAINED_STRING_VALUE, rendered[1], "validator-supplemented metadata mode");
     }
 
     @Test
-    @DisplayName("A Map subclass's supertype type-use constraint is rendered (T003), generated as a property")
-    void mapSubclassTypeUseConstraintIsNotRenderedAtBaseline_asProperty() {
+    @DisplayName("A Map subclass's supertype type-use constraint is rendered, generated as a property")
+    void mapSubclassTypeUseConstraintIsRendered_asProperty() {
         String[] rendered = additionalPropertiesBothModes(TagsHolder.class);
         assertEquals(CONSTRAINED_STRING_VALUE, rendered[0], "walk-only mode");
         assertEquals(CONSTRAINED_STRING_VALUE, rendered[1], "validator-supplemented metadata mode");

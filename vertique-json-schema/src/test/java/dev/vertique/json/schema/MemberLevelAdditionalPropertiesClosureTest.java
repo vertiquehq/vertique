@@ -43,21 +43,20 @@ import org.junit.jupiter.api.Test;
  * rather than a new mechanism.
  *
  * <ul>
- *   <li><strong>TP-001</strong> — the M10 fixture: a member-level {@code FALSE} on an
- *       any-setter-carrying value type closes that member's own extras, described inline; the same
- *       value type referenced elsewhere without the annotation keeps its own standalone rendering,
- *       unaffected.
- *   <li><strong>TP-002</strong> — composition and precedence across six fixtures: (a) CI-inline plus
- *       {@code FALSE} composes; (b) a profile override plus {@code FALSE} refuses with the remedy;
- *       (c) a member-level {@code TRUE} does not loosen a class-level {@code FALSE}; (d-inline),
- *       (d-ref), (d2) — three self-referential shapes, each failing with the single bounded
+ *   <li>A member-level {@code FALSE} on an any-setter-carrying value type closes that member's own
+ *       extras, described inline; the same value type referenced elsewhere without the annotation
+ *       keeps its own standalone rendering, unaffected.
+ *   <li>Composition and precedence: case-insensitive inline plus {@code FALSE} composes; a profile
+ *       override plus {@code FALSE} refuses with the remedy; a member-level {@code TRUE} does not
+ *       loosen a class-level {@code FALSE}; three self-referential shapes (re-entry through the inline
+ *       path, through a plain {@code $ref}, and at the root) each fail with the single bounded
  *       diagnostic, never a {@code StackOverflowError} and never a silent standard {@code $defs}
- *       fallback; plus the F4 regression twins proving the pre-existing case-insensitive-inline path
- *       is bounded the same way, at the same depth.
+ *       fallback; regression twins prove the pre-existing case-insensitive-inline path is bounded the
+ *       same way, at the same depth.
  * </ul>
  *
  * <p>Every document is generated under the registry's built-in {@code vertique} profile, except
- * where a test declares its own profile (TP-002(b)'s override fixture).
+ * where a test declares its own profile (the override fixture).
  */
 class MemberLevelAdditionalPropertiesClosureTest {
 
@@ -97,7 +96,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         return new JsonMapperProfile() {
             @Override
             public JsonProfileId id() {
-                return JsonProfileId.of("t005-tp002b-override");
+                return JsonProfileId.of("member-false-override");
             }
 
             @Override
@@ -116,8 +115,8 @@ class MemberLevelAdditionalPropertiesClosureTest {
      * Runs {@code generation}, asserting it fails with a bounded {@link JsonSchemaGenerationException}
      * rather than succeeding silently or overflowing the stack. A {@link StackOverflowError} is caught
      * here only to turn it into an actionable, distinguishing failure message — never to let the test
-     * pass — since an unbounded recursion is exactly the defect D005's own recursion bound exists to
-     * close, not an acceptable substitute for the bounded diagnostic.
+     * pass — since an unbounded recursion is exactly the defect the recursion bound exists to close, not
+     * an acceptable substitute for the bounded diagnostic.
      *
      * @param generation the generation action under test
      * @return the thrown exception, once confirmed
@@ -131,7 +130,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         } catch (StackOverflowError overflow) {
             fail("expected a bounded JsonSchemaGenerationException, but generation overflowed the stack"
                     + " (StackOverflowError) instead — an unbounded recursion, not the bounded diagnostic"
-                    + " D005's own recursion bound requires");
+                    + " the recursion bound requires");
         } catch (JsonSchemaGenerationException expected) {
             return expected;
         }
@@ -175,33 +174,27 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     // ==================================================================================================
-    // TP-001 — the M10 fixture: a member-level FALSE on an any-setter-carrying value type closes that
-    // member's own extras, reusing the existing inline path.
+    // A member-level FALSE on an any-setter-carrying value type closes that member's own extras,
+    // reusing the existing inline path.
     // ==================================================================================================
 
     /**
-     * Given: the M10 fixture — {@code M10Parent.child}, annotated {@code @Schema(additionalProperties =
-     * FALSE)}, whose value type {@link M10Child} carries its own any-setter; a companion property {@code
-     * open}, the same value type, unannotated.
+     * Given: {@code ClosedMemberParent.child}, annotated {@code @Schema(additionalProperties =
+     * FALSE)}, whose value type {@link AnySetterChild} carries its own any-setter; a companion property
+     * {@code open}, the same value type, unannotated.
      *
-     * <p>When: the input-direction schema is generated for {@link M10Parent}.
+     * <p>When: the input-direction schema is generated for {@link ClosedMemberParent}.
      *
      * <p>Then: {@code child}'s own inline description carries {@code properties.name} unchanged and
      * {@code additionalProperties: false}; {@code open}'s own rendering of the same value type stays
-     * {@code additionalProperties: {"type":"string"}}, unaffected — the sensitivity proof that this
-     * task's own rule is scoped to the annotated member, not the value type globally.
-     *
-     * <p>Expected initial result: red, only for the {@code additionalProperties: false} half —
-     * {@code main}'s member-level {@code FALSE} has no effect anywhere on a non-Map-typed member today
-     * (confirmed by reading {@code InputPropertyDescriber#translateSwagger}, which never inspects
-     * {@code additionalProperties} at all); the member's own {@code properties.name} rendering is
-     * already correct at baseline.
+     * {@code additionalProperties: {"type":"string"}}, unaffected — the sensitivity proof that the
+     * rule is scoped to the annotated member, not the value type globally.
      */
     @Test
-    @DisplayName("TP-001: a member-level FALSE on an any-setter-carrying value type closes that member's"
+    @DisplayName("a member-level FALSE on an any-setter-carrying value type closes that member's"
             + " own extras, reusing the existing inline path; an unannotated reference elsewhere is unaffected")
     void memberLevelFalseClosesExtrasViaTheExistingInlinePath() {
-        JsonNode document = inputDocument(M10Parent.class);
+        JsonNode document = inputDocument(ClosedMemberParent.class);
         JsonNode childRaw = document.path("properties").path("child");
         JsonNode child = resolve(document, childRaw);
 
@@ -215,8 +208,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         assertEquals(
                 "{\"maxLength\":3,\"type\":\"string\"}",
                 child.path("properties").path("name").toString(),
-                "the member's own inline properties.name rendering is already correct today and must"
-                        + " stay unchanged; document: " + document);
+                "the member's own inline properties.name rendering must stay unchanged; document: " + document);
         assertTrue(
                 child.path("additionalProperties").isBoolean()
                         && !child.path("additionalProperties").asBoolean(),
@@ -234,21 +226,16 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     // ==================================================================================================
-    // TP-002 — composition and precedence across six fixtures, plus the F4 regression twins.
+    // Composition and precedence, plus the regression twins for the case-insensitive-inline path.
     // ==================================================================================================
 
     /**
-     * (a) A member both case-insensitive-inline and {@code FALSE} composes as one inline description:
+     * A member both case-insensitive-inline and {@code FALSE} composes as one inline description:
      * case-insensitive handling kept ({@code patternProperties}), extras suppressed ({@code
      * additionalProperties: false}).
-     *
-     * <p>Expected initial result (contract's own prediction): green, already correct. Measured against
-     * the actual baseline instead of assumed: {@code translateSwagger} never inspects {@code
-     * additionalProperties} (see TP-001's own Javadoc), so this fixture's own {@code FALSE} half is
-     * unhonored at baseline exactly like TP-001's — reported honestly below, whichever it is.
      */
     @Test
-    @DisplayName("TP-002(a): a member both case-insensitive-inline and FALSE composes as one inline"
+    @DisplayName("a member both case-insensitive-inline and FALSE composes as one inline"
             + " description — case-insensitive kept, extras suppressed")
     void caseInsensitiveInlinePlusFalseComposes() {
         JsonNode document = inputDocument(CiFalseHolder.class);
@@ -276,21 +263,17 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * (b) A member {@code FALSE} whose value type carries a profile override refuses generation with a
+     * A member {@code FALSE} whose value type carries a profile override refuses generation with a
      * bounded diagnostic naming the member and the override-fragment remedy — the override wins, so
      * {@code FALSE} cannot be silently honored nor silently dropped.
-     *
-     * <p>Expected initial result: red — {@code main} silently applies the override and drops the
-     * {@code FALSE} annotation without any refusal (the override already resolves through the ordinary,
-     * non-inline reference path, which this member does not leave today).
      */
     @Test
-    @DisplayName("TP-002(b): a member FALSE whose value type carries a profile override refuses with a"
+    @DisplayName("a member FALSE whose value type carries a profile override refuses with a"
             + " bounded diagnostic naming the member and the override remedy")
     void overridePlusFalseRefusesWithTheRemedy() {
         JsonMapperProfile withOverride = overrideProfile(
                 OverriddenChild.class,
-                JsonSchemaFragment.parse("{\"type\":\"object\",\"format\":\"t005-tp002b\",\"properties\":{},"
+                JsonSchemaFragment.parse("{\"type\":\"object\",\"format\":\"member-false-override\",\"properties\":{},"
                         + "\"additionalProperties\":false}"));
 
         JsonSchemaGenerationException failure =
@@ -309,16 +292,12 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * (c) A member-level {@code TRUE} must not loosen a class-level {@code FALSE} already closing the
-     * value type — a regression control.
-     *
-     * <p>Expected initial result: green — a member-level {@code TRUE} has no effect anywhere today, and
-     * the class-level {@code FALSE} on {@link ClassLevelClosedChild} already closes it (D005's own
-     * corrected round-1 finding, {@code describeExtras:1994}).
+     * A member-level {@code TRUE} must not loosen a class-level {@code FALSE} already closing the
+     * value type — a regression control. The class-level {@code FALSE} on {@link
+     * ClassLevelClosedChild} already closes it.
      */
     @Test
-    @DisplayName(
-            "TP-002(c): a member-level TRUE does not loosen a class-level FALSE already closing the" + " value type")
+    @DisplayName("a member-level TRUE does not loosen a class-level FALSE already closing the value type")
     void memberLevelTrueDoesNotLoosenAClassLevelFalse() {
         JsonNode document = inputDocument(MemberTrueOverClassFalseHolder.class);
         JsonNode child = resolve(document, document.path("properties").path("child"));
@@ -331,24 +310,20 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * (d-inline) A nested self-referential member, where the re-entry arrives through the inline path
-     * itself: {@code Holder.node} is {@code FALSE}-annotated (registers {@link D5Node} in {@code
-     * inlineInProgress}), and {@code Node.child} is itself {@code FALSE}-annotated, re-entering the same
-     * inline population for {@link D5Node} while it is still in progress.
-     *
-     * <p>Expected initial result: red — {@code main}'s own F4 CI-inline path (and this task's own,
-     * not-yet-built FALSE path) has no recursion bound one level below the root; the actual observed
-     * outcome (silent success, {@code StackOverflowError}, or a genuine — but not-yet-implemented —
-     * refusal) is reported by the L02 baseline run, not assumed here.
+     * A nested self-referential member, where the re-entry arrives through the inline path itself:
+     * {@code Holder.node} is {@code FALSE}-annotated (registers {@link SelfReferentialInlineNode} in
+     * {@code inlineInProgress}), and {@code Node.child} is itself {@code FALSE}-annotated, re-entering
+     * the same inline population for {@link SelfReferentialInlineNode} while it is still in progress.
      */
     @Test
-    @DisplayName("TP-002(d-inline): a nested self-referential member, re-entering through the inline"
+    @DisplayName("a nested self-referential member, re-entering through the inline"
             + " path itself, refuses with the single bounded diagnostic")
     void nestedSelfReferenceThroughTheInlinePathRefuses() {
-        JsonSchemaGenerationException failure = assertBoundedRefusal(() -> inputDocument(D5Holder.class));
+        JsonSchemaGenerationException failure =
+                assertBoundedRefusal(() -> inputDocument(SelfReferentialInlineHolder.class));
 
         assertTrue(
-                failure.getMessage().contains(D5Node.class.getSimpleName()),
+                failure.getMessage().contains(SelfReferentialInlineNode.class.getSimpleName()),
                 "the diagnostic must name the self-referential type; was: " + failure.getMessage());
         assertTrue(
                 failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
@@ -356,23 +331,21 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * (d-ref) The same nesting, but {@code Node.child} is unannotated: the re-entry reaches the
-     * provider's own {@code provideCustomSchemaDefinition} for {@link D5RefNode} while it is still
-     * registered in {@code inlineInProgress} — exercising the provider-side refusal (security round-3
-     * MEDIUM), never the pre-existing "return null on re-entry" branch's own silent fallback to a
-     * standard, reflection-built {@code $defs} entry.
-     *
-     * <p>Expected initial result: red, for the same reason as (d-inline) — reported honestly against
-     * the actual baseline.
+     * The same nesting as the inline case, but {@code Node.child} is unannotated: the re-entry reaches the
+     * provider's own {@code provideCustomSchemaDefinition} for {@link SelfReferentialRefNode} while it
+     * is still registered in {@code inlineInProgress} — exercising the provider-side refusal, never the
+     * "return null on re-entry" branch's own silent fallback to a standard, reflection-built {@code
+     * $defs} entry.
      */
     @Test
-    @DisplayName("TP-002(d-ref): a nested self-referential member, re-entering through a plain $ref,"
+    @DisplayName("a nested self-referential member, re-entering through a plain $ref,"
             + " refuses with the single bounded diagnostic — never a silent standard $defs fallback")
     void nestedSelfReferenceThroughAPlainRefRefuses() {
-        JsonSchemaGenerationException failure = assertBoundedRefusal(() -> inputDocument(D5RefHolder.class));
+        JsonSchemaGenerationException failure =
+                assertBoundedRefusal(() -> inputDocument(SelfReferentialRefHolder.class));
 
         assertTrue(
-                failure.getMessage().contains(D5RefNode.class.getSimpleName()),
+                failure.getMessage().contains(SelfReferentialRefNode.class.getSimpleName()),
                 "the diagnostic must name the self-referential type; was: " + failure.getMessage());
         assertTrue(
                 failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
@@ -380,22 +353,19 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * (d2) The original, simpler root-level self-referential shape: {@link D5RootNode} declares its own
-     * {@code FALSE}-annotated field of its own type, generated as the root.
-     *
-     * <p>Expected initial result: red — {@code main} accepts this shape silently (D005's own recorded
-     * round-1 fixture gap: the root type is already registered in {@code inProgress} from generation's
-     * own top-level registration, but that alone does not produce a diagnostic for the member-level
-     * inline path, which is not wired to check {@code inProgress}/{@code inlineInProgress} at all today).
+     * The simpler root-level self-referential shape: {@link SelfReferentialRootNode} declares its own
+     * {@code FALSE}-annotated field of its own type, generated as the root. The root type is already
+     * registered in {@code inProgress} from generation's own top-level registration, and the member-level
+     * inline path must still produce the bounded diagnostic.
      */
     @Test
-    @DisplayName("TP-002(d2): the simpler root-level self-referential shape also refuses with the single"
-            + " bounded diagnostic")
+    @DisplayName("the simpler root-level self-referential shape also refuses with the single" + " bounded diagnostic")
     void rootLevelSelfReferenceRefuses() {
-        JsonSchemaGenerationException failure = assertBoundedRefusal(() -> inputDocument(D5RootNode.class));
+        JsonSchemaGenerationException failure =
+                assertBoundedRefusal(() -> inputDocument(SelfReferentialRootNode.class));
 
         assertTrue(
-                failure.getMessage().contains(D5RootNode.class.getSimpleName()),
+                failure.getMessage().contains(SelfReferentialRootNode.class.getSimpleName()),
                 "the diagnostic must name the self-referential type; was: " + failure.getMessage());
         assertTrue(
                 failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
@@ -403,25 +373,20 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * F4 regression twin (inline): the same {@code Holder -> Node -> Node} nesting as (d-inline), but
-     * through the <strong>pre-existing</strong> case-insensitive-inline path (member-level {@code
-     * @JsonFormat}), never this task's own {@code FALSE} rule — proving the pre-existing F4 branch is
-     * bounded the same way, at the same depth, once this task's shared recursion-bound helper is wired
-     * through it too.
-     *
-     * <p>Expected initial result: red — {@code main}'s F4 CI-inline path calls {@code
-     * populateObjectSchema} directly with no recursion bound at all (confirmed by reading {@code
-     * InputPropertyDescriber:896-950}); the actual observed outcome (silent success or {@code
-     * StackOverflowError}) is reported by the L02 baseline run.
+     * Regression twin (inline): the same {@code Holder -> Node -> Node} nesting as the inline case
+     * above, but through the case-insensitive-inline path (member-level {@code @JsonFormat}), never the
+     * {@code FALSE} rule — proving that branch is bounded the same way, at the same depth, through the
+     * shared recursion-bound helper.
      */
     @Test
-    @DisplayName("F4 regression twin (inline): the pre-existing case-insensitive-inline path's own nested"
+    @DisplayName("Regression twin (inline): the case-insensitive-inline path's own nested"
             + " self-reference, re-entering through the inline path itself, is bounded the same way")
     void caseInsensitiveNestedSelfReferenceThroughTheInlinePathIsBounded() {
-        JsonSchemaGenerationException failure = assertBoundedRefusal(() -> inputDocument(CiD5InlineHolder.class));
+        JsonSchemaGenerationException failure =
+                assertBoundedRefusal(() -> inputDocument(CiSelfReferentialInlineHolder.class));
 
         assertTrue(
-                failure.getMessage().contains(CiD5InlineNode.class.getSimpleName()),
+                failure.getMessage().contains(CiSelfReferentialInlineNode.class.getSimpleName()),
                 "the diagnostic must name the self-referential type; was: " + failure.getMessage());
         assertTrue(
                 failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
@@ -429,21 +394,19 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     /**
-     * F4 regression twin (ref): the same nesting as (d-ref), but through the pre-existing
+     * Regression twin (ref): the same nesting as the plain-{@code $ref} case above, but through the
      * case-insensitive-inline path — {@code Node.child} is unannotated, so the re-entry reaches the
      * provider's own {@code provideCustomSchemaDefinition} instead.
-     *
-     * <p>Expected initial result: red, for the same reason as the inline twin — reported honestly
-     * against the actual baseline.
      */
     @Test
-    @DisplayName("F4 regression twin (ref): the pre-existing case-insensitive-inline path's own nested"
+    @DisplayName("Regression twin (ref): the case-insensitive-inline path's own nested"
             + " self-reference, re-entering through a plain $ref, is bounded the same way")
     void caseInsensitiveNestedSelfReferenceThroughAPlainRefIsBounded() {
-        JsonSchemaGenerationException failure = assertBoundedRefusal(() -> inputDocument(CiD5RefHolder.class));
+        JsonSchemaGenerationException failure =
+                assertBoundedRefusal(() -> inputDocument(CiSelfReferentialRefHolder.class));
 
         assertTrue(
-                failure.getMessage().contains(CiD5RefNode.class.getSimpleName()),
+                failure.getMessage().contains(CiSelfReferentialRefNode.class.getSimpleName()),
                 "the diagnostic must name the self-referential type; was: " + failure.getMessage());
         assertTrue(
                 failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
@@ -452,14 +415,14 @@ class MemberLevelAdditionalPropertiesClosureTest {
 
     /**
      * Control: a Map-typed member's own {@code @Schema(additionalProperties = FALSE)} stays ignored
-     * (T003's own Q1 rule, scoped to a Map-typed member specifically), with the value schema still
-     * rendered and exactly one WARNING emitted — reusing {@code MapValueDescriptionTest}'s own
-     * warning-capture idiom, proving this task's own new rule does not reach a Map-typed member at all.
+     * (scoped to a Map-typed member specifically), with the value schema still rendered and exactly one
+     * WARNING emitted — reusing {@code MapValueDescriptionTest}'s own warning-capture idiom, proving the
+     * member-level closure rule does not reach a Map-typed member at all.
      */
     @Test
-    @DisplayName("Control: a Map-typed member's own FALSE stays ignored (T003's Q1 rule) — the value"
+    @DisplayName("Control: a Map-typed member's own FALSE stays ignored — the value"
             + " schema is still rendered, with exactly one WARNING")
-    void mapTypedMemberFalseKeepsT003sIgnoreRuleWithOneWarning() {
+    void mapTypedMemberFalseStaysIgnoredWithOneWarning() {
         List<String> warnings = new ArrayList<>();
         JsonNode document = captureWarnings(warnings, () -> inputDocument(MapControlDto.class));
         JsonNode attributes = document.path("properties").path("attributes").path("additionalProperties");
@@ -477,10 +440,9 @@ class MemberLevelAdditionalPropertiesClosureTest {
     }
 
     // ==================================================================================================
-    // Security review (MEDIUM): propertySchema's extrasSuppressed trigger reads only the value type's OWN
-    // builder any-setter, so a member-level FALSE on a value type whose any-setter is reachable only
-    // through the value type's own @JsonUnwrapped child falls through to the open shared $ref, silently
-    // dropping FALSE.
+    // propertySchema's extrasSuppressed trigger must also see an any-setter reachable only through the
+    // value type's own @JsonUnwrapped child: a member-level FALSE on such a value type must not fall
+    // through to the open shared $ref, silently dropping FALSE.
     // ==================================================================================================
 
     /**
@@ -493,20 +455,13 @@ class MemberLevelAdditionalPropertiesClosureTest {
      * <p>When: the input-direction schema is generated for {@link UnwrappedChildFalseHolder}.
      *
      * <p>Then: {@code child}'s own inline description carries {@code properties.yname}, {@code
-     * properties.zname} (the unwrapped child's own properties folded as today), and {@code
+     * properties.zname} (the unwrapped child's own properties folded in), and {@code
      * additionalProperties: false}; {@code open}'s own rendering of the same value type keeps the shared
      * {@code $ref}/{@code $defs} entry, whose own {@code additionalProperties} is the described extras
      * ({@code {"type":"string"}}) — unaffected.
-     *
-     * <p>Expected initial result: red — {@code propertySchema}'s own {@code extrasSuppressed} trigger reads
-     * only the value type's OWN builder any-setter, never an any-setter reachable only through the value
-     * type's own {@code @JsonUnwrapped} child, so {@code child} falls through to the open shared {@code
-     * $ref} today, silently dropping the member-level {@code FALSE} — reported as a bare {@code $ref}
-     * below, against the measured baseline.
      */
     @Test
-    @DisplayName("Security review (MEDIUM): a member-level FALSE closes an any-setter reached only through"
-            + " an unwrapped child")
+    @DisplayName("a member-level FALSE closes an any-setter reached only through" + " an unwrapped child")
     void memberLevelFalseClosesAnAnySetterReachedThroughAnUnwrappedChild() {
         JsonNode document = inputDocument(UnwrappedChildFalseHolder.class);
         JsonNode childRaw = document.path("properties").path("child");
@@ -546,23 +501,20 @@ class MemberLevelAdditionalPropertiesClosureTest {
     /**
      * Given: {@link UnwrappedChildConjunctionFalseHolder}, whose {@code child} member is {@code
      * @Schema(additionalProperties = FALSE)}-annotated; the member's own value type, {@link W}, carries its
-     * own any-setter <em>and</em> an unwrapped {@link Z} child carrying its own — a conjunction (T004)
+     * own any-setter <em>and</em> an unwrapped {@link Z} child carrying its own — a conjunction
      * candidate.
      *
      * <p>When: the input-direction schema is generated for {@link UnwrappedChildConjunctionFalseHolder}.
      *
      * <p>Then: {@code child}'s own inline description carries {@code additionalProperties: false} — the
      * member-level {@code FALSE} suppresses the parent-any-setter/unwrapped-child-any-setter conjunction
-     * entirely, never the conjoined value schema.
-     *
-     * <p>Expected initial result: red, for the same reason as the previous method — {@code W}'s own
-     * builder-level any-setter alone would already be closable by the existing rule; what is under test
-     * here is that the closure is not defeated by the presence of the conjunction — reported below against
-     * the measured baseline.
+     * entirely, never the conjoined value schema. {@code W}'s own builder-level any-setter alone would
+     * already be closable by the existing rule; what is under test here is that the closure is not
+     * defeated by the presence of the conjunction.
      */
     @Test
-    @DisplayName("Security review (MEDIUM): a member-level FALSE suppresses a parent-any-setter/unwrapped-"
-            + "child-any-setter conjunction entirely")
+    @DisplayName(
+            "a member-level FALSE suppresses a parent-any-setter/unwrapped-" + "child-any-setter conjunction entirely")
     void memberLevelFalseOnAnUnwrappedChildWithItsOwnAnySetterAndAParentAnySetter() {
         JsonNode document = inputDocument(UnwrappedChildConjunctionFalseHolder.class);
         JsonNode childRaw = document.path("properties").path("child");
@@ -582,31 +534,29 @@ class MemberLevelAdditionalPropertiesClosureTest {
     /**
      * Control: {@link PlainMemberFalseHolder}, whose {@code child} member is {@code
      * @Schema(additionalProperties = FALSE)}-annotated; the member's own value type, {@link Plain}, carries
-     * no any-setter anywhere — directly, nor through any unwrapped child (it has none). This task's own
-     * scope is any-setter-carrying value types, so today's rendering must stay unchanged.
+     * no any-setter anywhere — directly, nor through any unwrapped child (it has none). The closure
+     * rule covers any-setter-carrying value types only, so the rendering stays unchanged.
      *
-     * <p>Expected initial result: green, and must stay green — this fixture asserts exactly what renders
-     * today: {@code neither caseInsensitiveInline nor extrasSuppressed} is true (Plain has no any-setter
-     * anywhere, so {@code nestedBuilder.getAnySetter()} is {@code null}), so {@code propertySchema} never
-     * enters the inline-description branch at all and falls through to the ordinary field path; the
-     * generator's own library then inlines {@code Plain} directly (never {@code $ref}/{@code $defs}) simply
-     * because it is referenced exactly once in this fixture — an unrelated, single-reference optimization,
-     * not this task's own inline path — carrying {@code properties.name} and no {@code
-     * additionalProperties} keyword at all. Generation succeeds (proven implicitly: {@code inputDocument}
-     * would have thrown otherwise), proving the fix never reaches a plain bean.
+     * <p>Neither {@code caseInsensitiveInline} nor {@code extrasSuppressed} is true (Plain has no
+     * any-setter anywhere, so {@code nestedBuilder.getAnySetter()} is {@code null}), so {@code
+     * propertySchema} never enters the inline-description branch at all and falls through to the
+     * ordinary field path; the generator's own library then inlines {@code Plain} directly (never {@code
+     * $ref}/{@code $defs}) simply because it is referenced exactly once in this fixture — an unrelated,
+     * single-reference optimization, not the inline path under test — carrying {@code properties.name}
+     * and no {@code additionalProperties} keyword at all. Generation succeeds (proven implicitly: {@code
+     * inputDocument} would have thrown otherwise), proving the closure rule never reaches a plain bean.
      */
     @Test
-    @DisplayName(
-            "Control: a member-level FALSE on a bean without any any-setter is left to the type's own" + " default")
+    @DisplayName("Control: a member-level FALSE on a bean without any any-setter is left to the type's own default")
     void memberLevelFalseOnABeanWithoutAnyAnySetterIsLeftToTheTypesOwnDefault() {
         JsonNode document = inputDocument(PlainMemberFalseHolder.class);
         JsonNode childRaw = document.path("properties").path("child");
 
         assertFalse(
                 childRaw.has("$ref"),
-                "measured baseline: Plain is referenced exactly once in this fixture, so the generator's"
+                "Plain is referenced exactly once in this fixture, so the generator's"
                         + " own library inlines it directly regardless of the FALSE annotation — an"
-                        + " unrelated, single-reference optimization, never this task's own inline path"
+                        + " unrelated, single-reference optimization, never the member-level inline path"
                         + " (neither caseInsensitiveInline nor extrasSuppressed is true, since Plain has no"
                         + " any-setter anywhere); document: " + document);
         assertTrue(
@@ -614,13 +564,13 @@ class MemberLevelAdditionalPropertiesClosureTest {
                 "the inlined schema must still carry the value type's own property; document: " + document);
         assertTrue(
                 childRaw.path("additionalProperties").isMissingNode(),
-                "measured baseline: the FALSE annotation has no effect whatsoever on a value type with no"
+                "the FALSE annotation has no effect whatsoever on a value type with no"
                         + " any-setter anywhere — no additionalProperties keyword is written at all, neither"
                         + " true nor false; document: " + document);
     }
 
     // ==================================================================================================
-    // Issue #624 — class-level FALSE on the plain case-insensitive inline path.
+    // Class-level FALSE on the plain case-insensitive inline path.
     // ==================================================================================================
 
     /**
@@ -632,7 +582,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
      * that applies the class-level closure elsewhere.
      */
     @Test
-    @DisplayName("Issue #624: a class-level FALSE on a value type reached through the plain"
+    @DisplayName("a class-level FALSE on a value type reached through the plain"
             + " case-insensitive inline path publishes additionalProperties: false")
     void classLevelFalseOnPlainCaseInsensitiveInlinePathIsPreserved() {
         JsonNode document = inputDocument(CiClassLevelFalseHolder.class);
@@ -664,8 +614,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
      * class-level closure inherited rather than declared on the value type itself.
      */
     @Test
-    @DisplayName(
-            "Issue #624: an inherited class-level FALSE is preserved on the plain" + " case-insensitive inline path")
+    @DisplayName("an inherited class-level FALSE is preserved on the plain case-insensitive inline path")
     void inheritedClassLevelFalseOnPlainCaseInsensitiveInlinePathIsPreserved() {
         JsonNode document = inputDocument(CiInheritedClassLevelFalseHolder.class);
         JsonNode child = document.path("properties").path("child");
@@ -678,34 +627,34 @@ class MemberLevelAdditionalPropertiesClosureTest {
                         + document);
     }
 
-    // --- Fixtures: TP-001 (M10) ---
+    // --- Fixtures: member-level FALSE on an any-setter-carrying value type ---
 
-    /** M10 value type: carries its own any-setter. */
-    static final class M10Child {
+    /** Value type that carries its own any-setter. */
+    static final class AnySetterChild {
 
         /** The constraint the inline description's own properties.name must keep unchanged. */
         @Size(max = 3)
         public String name;
 
-        /** The any-setter this task's own FALSE rule must suppress on the annotated member only. */
+        /** The any-setter the member-level FALSE rule must suppress on the annotated member only. */
         @JsonAnySetter
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** M10 parent: a FALSE-closed member, plus an unannotated companion referencing the same type. */
-    static final class M10Parent {
+    /** Parent: a FALSE-closed member, plus an unannotated companion referencing the same type. */
+    static final class ClosedMemberParent {
 
         /** The FALSE-closed member under test. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
-        public M10Child child;
+        public AnySetterChild child;
 
         /** The companion, unannotated reference to the same value type — must stay unaffected. */
-        public M10Child open;
+        public AnySetterChild open;
     }
 
-    // --- Fixtures: TP-002(a) — CI-inline plus FALSE ---
+    // --- Fixtures: case-insensitive inline plus FALSE ---
 
-    /** (a) value type: carries its own any-setter, like {@link M10Child}. */
+    /** Value type: carries its own any-setter, like {@link AnySetterChild}. */
     static final class CiFalseChild {
 
         /** Kept unchanged by the composition. */
@@ -717,7 +666,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** (a) holder: the member is both case-insensitive-inline (own @JsonFormat) and FALSE. */
+    /** Holder: the member is both case-insensitive-inline (own @JsonFormat) and FALSE. */
     static final class CiFalseHolder {
 
         /** Bound case-insensitively only through this member's own contextual annotation, and FALSE. */
@@ -726,21 +675,21 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public CiFalseChild child;
     }
 
-    // --- Fixtures: TP-002(b) — override plus FALSE ---
+    // --- Fixtures: override plus FALSE ---
 
-    /** (b) value type: a profile override is declared for this class in the test's own profile. */
+    /** Value type: a profile override is declared for this class in the test's own profile. */
     static final class OverriddenChild {
 
         /** Present so the type looks bean-like beside its own profile override. */
         @Size(max = 3)
         public String name;
 
-        /** An any-setter, so this type would otherwise be eligible for this task's own inline rule. */
+        /** An any-setter, so this type would otherwise be eligible for the member-level inline rule. */
         @JsonAnySetter
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** (b) holder: the member is FALSE, and its value type carries a profile override. */
+    /** Holder: the member is FALSE, and its value type carries a profile override. */
     static final class OverrideFalseHolder {
 
         /** FALSE, but the value type's own profile override must win — refusing, not silently dropping. */
@@ -748,9 +697,9 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public OverriddenChild child;
     }
 
-    // --- Fixtures: TP-002(c) — member-level TRUE over a class-level FALSE ---
+    // --- Fixtures: member-level TRUE over a class-level FALSE ---
 
-    /** (c) value type: already closed at the class level. */
+    /** Value type: already closed at the class level. */
     @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
     static final class ClassLevelClosedChild {
 
@@ -763,7 +712,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** (c) holder: the member is TRUE, over a value type the class level already closes. */
+    /** Holder: the member is TRUE, over a value type the class level already closes. */
     static final class MemberTrueOverClassFalseHolder {
 
         /** TRUE must not loosen the value type's own class-level FALSE. */
@@ -771,119 +720,119 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public ClassLevelClosedChild child;
     }
 
-    // --- Fixtures: TP-002(d-inline)/(d2) — self-reference through this task's own FALSE rule ---
+    // --- Fixtures: self-reference through the member-level FALSE rule ---
 
-    /** (d-inline)/(d2) self-referential type: its own field is the same type, FALSE-annotated. */
-    static final class D5Node {
+    /** Self-referential type: its own field is the same type, FALSE-annotated. */
+    static final class SelfReferentialInlineNode {
 
         /** The self-referential field, itself FALSE-annotated — the inline-registration re-entry. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
-        public D5Node child;
+        public SelfReferentialInlineNode child;
 
-        /** An any-setter, so this type is eligible for this task's own inline rule at every depth. */
+        /** An any-setter, so this type is eligible for the member-level inline rule at every depth. */
         @JsonAnySetter
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** (d-inline) holder: one level above the root, so {@link D5Node} itself is not pre-registered. */
-    static final class D5Holder {
+    /** Holder: one level above the root, so the node type itself is not pre-registered. */
+    static final class SelfReferentialInlineHolder {
 
-        /** FALSE, registering {@link D5Node} in {@code inlineInProgress} for the duration of its own population. */
+        /** FALSE, registering the node type in {@code inlineInProgress} for the duration of its own population. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
-        public D5Node node;
+        public SelfReferentialInlineNode node;
     }
 
-    // --- Fixtures: TP-002(d-ref) — self-reference through a plain $ref ---
+    // --- Fixtures: self-reference through a plain $ref ---
 
-    /** (d-ref) self-referential type: its own field is the same type, unannotated (plain $ref). */
-    static final class D5RefNode {
+    /** Self-referential type: its own field is the same type, unannotated (plain $ref). */
+    static final class SelfReferentialRefNode {
 
         /** The self-referential field, unannotated — reaches the provider's own re-entry guard. */
-        public D5RefNode child;
+        public SelfReferentialRefNode child;
 
-        /** An any-setter, so this type is eligible for this task's own inline rule at every depth. */
+        /** An any-setter, so this type is eligible for the member-level inline rule at every depth. */
         @JsonAnySetter
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** (d-ref) holder: one level above the root, so {@link D5RefNode} itself is not pre-registered. */
-    static final class D5RefHolder {
+    /** Holder: one level above the root, so the node type itself is not pre-registered. */
+    static final class SelfReferentialRefHolder {
 
-        /** FALSE, registering {@link D5RefNode} in {@code inlineInProgress} for its own population. */
+        /** FALSE, registering {@link SelfReferentialRefNode} in {@code inlineInProgress} for its own population. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
-        public D5RefNode node;
+        public SelfReferentialRefNode node;
     }
 
-    // --- Fixtures: TP-002(d2) — the original, simpler root-level shape ---
+    // --- Fixtures: the simpler root-level shape ---
 
-    /** (d2) self-referential type, generated directly as the root. */
-    static final class D5RootNode {
+    /** Self-referential type, generated directly as the root. */
+    static final class SelfReferentialRootNode {
 
         /** The self-referential field, itself FALSE-annotated. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
-        public D5RootNode child;
+        public SelfReferentialRootNode child;
 
-        /** An any-setter, so this type is eligible for this task's own inline rule. */
+        /** An any-setter, so this type is eligible for the member-level inline rule. */
         @JsonAnySetter
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: F4 regression twins — the same nesting through the pre-existing CI-inline path ---
+    // --- Fixtures: regression twins — the same nesting through the case-insensitive-inline path ---
 
-    /** F4 twin (inline) self-referential type: its own field is the same type, CI-annotated. */
-    static final class CiD5InlineNode {
+    /** Twin (inline) self-referential type: its own field is the same type, CI-annotated. */
+    static final class CiSelfReferentialInlineNode {
 
         /** The self-referential field, itself bound case-insensitively through its own @JsonFormat. */
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public CiD5InlineNode child;
+        public CiSelfReferentialInlineNode child;
 
-        /** An any-setter, so this type is eligible for the pre-existing F4 CI-inline path. */
+        /** An any-setter, so this type is eligible for the case-insensitive-inline path. */
         @JsonAnySetter
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** F4 twin (inline) holder: one level above the root. */
-    static final class CiD5InlineHolder {
+    /** Twin (inline) holder: one level above the root. */
+    static final class CiSelfReferentialInlineHolder {
 
         /** Bound case-insensitively only through this member's own contextual annotation. */
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public CiD5InlineNode node;
+        public CiSelfReferentialInlineNode node;
     }
 
-    /** F4 twin (ref) self-referential type: its own field is the same type, unannotated. */
-    static final class CiD5RefNode {
+    /** Twin (ref) self-referential type: its own field is the same type, unannotated. */
+    static final class CiSelfReferentialRefNode {
 
         /** The self-referential field, unannotated — reaches the provider's own re-entry guard. */
-        public CiD5RefNode child;
+        public CiSelfReferentialRefNode child;
 
-        /** An any-setter, so this type is eligible for the pre-existing F4 CI-inline path. */
+        /** An any-setter, so this type is eligible for the case-insensitive-inline path. */
         @JsonAnySetter
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** F4 twin (ref) holder: one level above the root. */
-    static final class CiD5RefHolder {
+    /** Twin (ref) holder: one level above the root. */
+    static final class CiSelfReferentialRefHolder {
 
         /** Bound case-insensitively only through this member's own contextual annotation. */
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-        public CiD5RefNode node;
+        public CiSelfReferentialRefNode node;
     }
 
-    // --- Fixtures: control — a Map-typed member's own FALSE stays ignored (T003's Q1 rule) ---
+    // --- Fixtures: control — a Map-typed member's own FALSE stays ignored ---
 
-    /** Control DTO: a Map-typed member carrying the member-level FALSE this task's rule must not reach. */
+    /** Control DTO: a Map-typed member carrying the member-level FALSE the closure rule must not reach. */
     static final class MapControlDto {
 
-        /** A Map-typed member — T003's own Q1 rule ignores any additionalProperties annotation here. */
+        /** A Map-typed member — any additionalProperties annotation is ignored here. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
         public Map<String, String> attributes = new LinkedHashMap<>();
     }
 
-    // --- Fixtures: security review (MEDIUM) — an any-setter reachable only through an unwrapped child ---
+    // --- Fixtures: an any-setter reachable only through an unwrapped child ---
 
     /**
      * Value type reached only through {@link Y}'s own {@code @JsonUnwrapped} child: carries its own
-     * any-setter (T004 precedent shape, per {@code UnwrappedAnySetterExtrasConjunctionTest}).
+     * any-setter (the shape {@code UnwrappedAnySetterExtrasConjunctionTest} also uses).
      */
     static final class Z {
 
@@ -918,10 +867,10 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public Y open;
     }
 
-    /** W: its own any-setter, plus an unwrapped Z child carrying its own — a conjunction (T004) candidate. */
+    /** W: its own any-setter, plus an unwrapped Z child carrying its own — a conjunction candidate. */
     static final class W {
 
-        /** W's own any-setter, conjoined (T004) with Z's own once both are reachable together. */
+        /** W's own any-setter, conjoined with Z's own once both are reachable together. */
         @JsonAnySetter
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
 
@@ -930,7 +879,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public Z z;
     }
 
-    /** Holder2: a FALSE-closed member whose value type is a parent/unwrapped-child any-setter conjunction. */
+    /** Holder: a FALSE-closed member whose value type is a parent/unwrapped-child any-setter conjunction. */
     static final class UnwrappedChildConjunctionFalseHolder {
 
         /** The FALSE-closed member under test — W's own any-setter conjoins with Z's own, reached via z. */
@@ -940,14 +889,14 @@ class MemberLevelAdditionalPropertiesClosureTest {
 
     // --- Fixtures: control — a bean without any any-setter, directly or through any unwrapped child ---
 
-    /** Plain: no any-setter anywhere — outside this task's own scope. */
+    /** Plain: no any-setter anywhere — outside the closure rule's scope. */
     static final class Plain {
 
         /** An ordinary property, with no any-setter beside it. */
         public String name;
     }
 
-    /** Holder3: a FALSE-closed member whose value type carries no any-setter at all. */
+    /** Holder: a FALSE-closed member whose value type carries no any-setter at all. */
     static final class PlainMemberFalseHolder {
 
         /** FALSE, but Plain carries no any-setter anywhere — left to the type's own default rendering. */
@@ -955,7 +904,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
         public Plain child;
     }
 
-    // --- Fixtures: issue #624 — class-level FALSE on the plain CI inline path ---
+    // --- Fixtures: class-level FALSE on the plain CI inline path ---
 
     /** Value type closed at class level; no member-level FALSE, no any-setter. */
     @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)

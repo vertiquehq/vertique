@@ -10,9 +10,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * S4: the single accessor-prefix-stripping helper's uppercase check, exercised directly through
+ * The single accessor-prefix-stripping helper's uppercase check, exercised directly through
  * {@link InputPropertyDescriber}'s package-private {@code impliedFieldName}/{@code getterBeanName} —
- * the two call sites that previously stripped a prefix without checking the character that follows it.
+ * the two call sites that strip a prefix and must check the character that follows it.
  * A getter or setter literally named {@code issue}/{@code settle} must not be mistaken for an accessor
  * of a property {@code sue}/{@code tle}: the character right after {@code is}/{@code set} is lowercase
  * in both, so neither name is actually using the "is" + Capitalized / "set" + Capitalized convention.
@@ -63,37 +63,37 @@ class AccessorPrefixHelperTest {
     }
 
     @Test
-    @DisplayName("S4: a setter literally named settle is not treated as \"set\" + \"tle\"")
+    @DisplayName("a setter literally named settle is not treated as \"set\" + \"tle\"")
     void settleIsNotTreatedAsSetPlusTle() throws ReflectiveOperationException {
         assertEquals("settle", impliedFieldName("settle"));
     }
 
     @Test
-    @DisplayName("S4: a well-formed setter (setLevel) still strips its prefix correctly")
+    @DisplayName("a well-formed setter (setLevel) still strips its prefix correctly")
     void wellFormedSetterStillStrips() throws ReflectiveOperationException {
         assertEquals("level", impliedFieldName("setLevel"));
     }
 
     @Test
-    @DisplayName("S4: a bare \"with\" (nothing after the prefix) is left unchanged, not stripped to an empty name")
+    @DisplayName("a bare \"with\" (nothing after the prefix) is left unchanged, not stripped to an empty name")
     void bareWithPrefixIsLeftUnchanged() throws ReflectiveOperationException {
         assertEquals("with", impliedFieldName("with"));
     }
 
     @Test
-    @DisplayName("S4: a getter literally named issue is not treated as \"is\" + \"sue\"")
+    @DisplayName("a getter literally named issue is not treated as \"is\" + \"sue\"")
     void issueIsNotTreatedAsIsPlusSue() throws ReflectiveOperationException {
         assertEquals("issue", getterBeanName("issue"));
     }
 
     @Test
-    @DisplayName("S4: a well-formed getter (isActive) still strips its prefix correctly")
+    @DisplayName("a well-formed getter (isActive) still strips its prefix correctly")
     void wellFormedGetterStillStrips() throws ReflectiveOperationException {
         assertEquals("active", getterBeanName("isActive"));
     }
 
     @Test
-    @DisplayName("S4: a bare \"is\" (nothing after the prefix) is left unchanged, not stripped to an empty name")
+    @DisplayName("a bare \"is\" (nothing after the prefix) is left unchanged, not stripped to an empty name")
     void bareIsPrefixIsLeftUnchanged() throws ReflectiveOperationException {
         assertEquals("is", getterBeanName("is"));
     }

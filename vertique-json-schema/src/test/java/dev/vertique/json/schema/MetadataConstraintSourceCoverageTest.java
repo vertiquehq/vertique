@@ -141,7 +141,7 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("round 2 (owner ruling): a hand-written builder's getter-less property does not join with or"
+    @DisplayName("a hand-written builder's getter-less property does not join with or"
             + " without a validator — the supplement must not silently reintroduce the constraint the floor"
             + " never borrows for this shape")
     void handWrittenBuilderWithNoGetterDoesNotJoinWithOrWithoutAValidator() {
@@ -151,8 +151,7 @@ class MetadataConstraintSourceCoverageTest {
         // @Max(10) — Bean Validation does not care how the value got there — and render it as an
         // addition, since the floor never sets "maximum" for a getter-less property built through a
         // non-Lombok-shaped builder. That would make generation depend on whether a Validator happens
-        // to be supplied, silently reversing the owner ruling for exactly the callers who supply one.
-        // Round 2 draws the borrow line at the getter (BuilderWireNameJoinTest
+        // to be supplied. The borrow line is drawn at the getter (BuilderWireNameJoinTest
         // .TransformingBuilderNoGetterDto's Javadoc), so this getter-less shape must stay unresolved
         // both with and without a validator — the getter-backed sibling is pinned separately by
         // handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator below.
@@ -181,15 +180,15 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("round 2 (owner ruling): a hand-written builder's getter-backed property joins with and without"
-            + " a validator — main's own inherited behavior through the getter, not a new strictness")
+    @DisplayName("a hand-written builder's getter-backed property joins with and without"
+            + " a validator — the inherited behavior through the getter, not a new strictness")
     void handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator() {
         // The sibling of handWrittenBuilderWithNoGetterDoesNotJoinWithOrWithoutAValidator above: same
         // hand-written, value-transforming, non-Lombok-shaped builder, but the built field has a getter
-        // (BuilderWireNameJoinTest.TransformingBuilderDto). Round 2 borrows a getter-backed built
-        // property's constraint for any builder shape, exactly what main's field walk always did — the
+        // (BuilderWireNameJoinTest.TransformingBuilderDto). A getter-backed built property's constraint
+        // is borrowed for any builder shape, exactly what the field walk always did — the
         // floor half is pinned without a validator by BuilderWireNameJoinTest
-        // .handWrittenTransformingBuilderWithGetterBorrowsMainsInheritedBehavior; this pins both the
+        // .handWrittenTransformingBuilderWithGetterBorrowsTheGetterBackedConstraint; this pins both the
         // supplement's own agreement under a validator and the floor's own result again through this
         // class's walkDocument helper, so both branches of the rule are recorded in this suite too.
         Validator validator = MetadataTestValidators.plain();
@@ -211,7 +210,7 @@ class MetadataConstraintSourceCoverageTest {
     // --- XML-mapped constraint under a hand-written, non-Lombok-shaped builder ---
 
     /**
-     * The getter-backed shape the finding targets: the same hand-written, non-Lombok-shaped builder as
+     * The getter-backed shape under test: the same hand-written, non-Lombok-shaped builder as
      * {@link BuilderWireNameJoinTest.TransformingBuilderDto} — nested class named plainly {@code Builder}
      * with {@code @JsonPOJOBuilder(withPrefix = "with")}, failing both {@link BuilderBorrowDetector}'s
      * name convention ({@code <Type>Builder}) and its {@code withPrefix = ""} requirement — but {@code
@@ -221,7 +220,7 @@ class MetadataConstraintSourceCoverageTest {
      * TransformingBuilderDto}'s directly reflectable {@code @Max(10)}. A composed-constraint leaf was
      * tried first and rejected as a fixture here: victools' own {@code AnnotationHelper.resolveAnnotation}
      * already walks meta-annotations for a scoped field/getter, so it would have rendered the leaf through
-     * the floor alone, without a validator, masking the gate bug this class exists to expose.
+     * the floor alone, without a validator, masking what this class exists to show.
      */
     @JsonDeserialize(builder = HandWrittenBuilderXmlMappedDto.Builder.class)
     static final class HandWrittenBuilderXmlMappedDto {
@@ -253,9 +252,9 @@ class MetadataConstraintSourceCoverageTest {
     /**
      * The getter-less control twin of {@link HandWrittenBuilderXmlMappedDto}: same hand-written,
      * non-Lombok-shaped builder, no annotation on {@code amount} either, mapped by the same XML mapping's
-     * own bean entry in the test below. The Lombok-shape rule still governs this shape — {@code main}
-     * never published a getter-less field's constraint either — so it must stay unresolved with or without
-     * a validator, unaffected by the finding above.
+     * own bean entry in the test below. The Lombok-shape rule still governs this shape — a getter-less
+     * field's constraint is never published either — so it must stay unresolved with or without
+     * a validator.
      */
     @JsonDeserialize(builder = HandWrittenBuilderXmlMappedNoGetterDto.Builder.class)
     static final class HandWrittenBuilderXmlMappedNoGetterDto {
@@ -286,11 +285,11 @@ class MetadataConstraintSourceCoverageTest {
      * name ({@code amount_cents}, via {@code @JsonProperty}) diverges from the Java name implied by the
      * builder method ({@code amount}, from {@code withAmount} stripped of its {@code with} prefix).
      * {@code MetadataConstraintSource#forUnscopedMember}'s {@code builtProperty(builtClass, javaName)}
-     * lookup compares that implied Java name against {@link BeanPropertyDefinition#getName()}, which is
-     * always the wire name — so for this shape the comparison can never match, {@code
-     * BuilderBorrowDetector.isGetterBacked} is never reached, and the join falls to the getter-less
-     * Lombok-shape rule, which this hand-written, plainly named {@code Builder} class fails, exactly as
-     * {@link HandWrittenBuilderXmlMappedDto} would if its wire and Java names did not already coincide.
+     * lookup must compare that implied Java name against the built property's Java name, not against
+     * {@link BeanPropertyDefinition#getName()}, which is always the wire name — otherwise the comparison
+     * could never match for this shape, {@code BuilderBorrowDetector.isGetterBacked} would never be
+     * reached, and the join would fall to the getter-less Lombok-shape rule, which this hand-written,
+     * plainly named {@code Builder} class fails.
      */
     @JsonDeserialize(builder = HandWrittenBuilderXmlMappedRenamedDto.Builder.class)
     static final class HandWrittenBuilderXmlMappedRenamedDto {
@@ -331,12 +330,11 @@ class MetadataConstraintSourceCoverageTest {
      * builtProperty}) has no property named {@code amount_cents} at all — only {@code amount}. The
      * floor therefore finds no built property to borrow from, and the wire-name-keyed supplement must
      * not find one either. {@code MetadataConstraintSource#forUnscopedMember}'s {@code
-     * builtProperty(builtClass, javaName)} bug lookup happens to compare the builder method's
+     * builtProperty(builtClass, javaName)} lookup compares the builder method's
      * <em>implied Java name</em> ({@code amount}, from {@code withAmount} stripped of its {@code with}
      * prefix) against {@code builtClass}'s own property name — and here that implied Java name
-     * coincides with the real property name by coincidence, so the buggy lookup wrongly succeeds and
-     * wrongly joins the XML-mapped constraint that belongs to a wire property that was never actually
-     * borrowed.
+     * coincides with the real property name by coincidence, which must not make the lookup succeed and
+     * join an XML-mapped constraint that belongs to a wire property that was never actually borrowed.
      */
     @JsonDeserialize(builder = HandWrittenBuilderXmlMappedInverseRenamedDto.Builder.class)
     static final class HandWrittenBuilderXmlMappedInverseRenamedDto {
@@ -409,21 +407,21 @@ class MetadataConstraintSourceCoverageTest {
      * AnnotationHelper.resolveAnnotation}), so an XML mapping is the floor-blind constraint this test needs.
      */
     @Test
-    @DisplayName("finding: a hand-written builder's getter-backed property joins an XML-mapped constraint under"
+    @DisplayName("a hand-written builder's getter-backed property joins an XML-mapped constraint under"
             + " a validator — the supplement must follow the floor's own getter-first rule, not gate every"
             + " builder join on BuilderBorrowDetector.isSoundBorrow regardless of getter presence")
     void handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderAValidator() {
-        // handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator above does not catch the gate bug:
-        // TransformingBuilderDto's plain @Max(10) is directly reflectable, so victools' own Jakarta
-        // Validation module — the floor for the getter-backed field-scope borrow, InputPropertyDescriber
-        // .borrowBuilderFieldAttributes's own AttributeCollector.collectFieldAttributes call — renders
-        // "maximum" on its own, with no help from the supplement, regardless of Validator. That masks that
-        // MetadataConstraintSource#forUnscopedMember (147-168) still requires BuilderBorrowDetector
-        // .isSoundBorrow for every builder-method join, getter or not, unlike the floor's own builder
-        // borrow, which joins unconditionally once the built property has a getter (round 2). An
-        // XML-mapped constraint is invisible to every annotation-reflection path — the floor included, not
-        // only WalkConstraintSource — so it exposes the gate cleanly: expected red, "maximum" absent even
-        // with a Validator supplied.
+        // handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator above cannot show whether the
+        // supplement itself joins: TransformingBuilderDto's plain @Max(10) is directly reflectable, so
+        // victools' own Jakarta Validation module — the floor for the getter-backed field-scope borrow,
+        // InputPropertyDescriber.borrowBuilderFieldAttributes's own
+        // AttributeCollector.collectFieldAttributes call — renders "maximum" on its own, with no help from
+        // the supplement, regardless of Validator. MetadataConstraintSource#forUnscopedMember must not
+        // require BuilderBorrowDetector.isSoundBorrow for every builder-method join, getter or not, unlike
+        // the floor's own builder borrow, which joins unconditionally once the built property has a
+        // getter. An XML-mapped constraint is invisible to every annotation-reflection path — the floor
+        // included, not only WalkConstraintSource — so it exercises the supplement's gate cleanly:
+        // "maximum" must be present once a Validator is supplied.
         Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
         JsonNode withoutValidator = walkDocument(HandWrittenBuilderXmlMappedDto.class);
         JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedDto.class, validator);
@@ -447,7 +445,7 @@ class MetadataConstraintSourceCoverageTest {
                 10,
                 amountWithValidator.at("/maximum").asInt(-1),
                 "the getter-backed hand-written builder's property must carry the XML-mapped constraint once"
-                        + " a validator is supplied, exactly as the floor's own getter-first rule (round 2)"
+                        + " a validator is supplied, exactly as the floor's own getter-first rule"
                         + " already governs InputPropertyDescriber.borrowBuilderFieldAttributes — the"
                         + " supplement must follow the same two-branch rule (getter -> join, no getter ->"
                         + " Lombok-shape rule), not gate every builder join on"
@@ -456,18 +454,19 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("finding: a hand-written builder's getter-backed property joins an XML-mapped constraint under"
+    @DisplayName("a hand-written builder's getter-backed property joins an XML-mapped constraint under"
             + " a validator even when the wire name diverges from the builder method's implied Java name")
     void handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderARenamedWireName() {
         // The renamed-wire-name sibling of handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderAValidator:
-        // MetadataConstraintSource#forUnscopedMember (around line 177) calls
+        // MetadataConstraintSource#forUnscopedMember calls
         // builtProperty(builtClass, javaName) with javaName implied from the builder method's own
-        // declared name (withAmount -> "amount"), but BeanPropertyDefinition#getName() is always the
+        // declared name (withAmount -> "amount"), while BeanPropertyDefinition#getName() is always the
         // wire name ("amount_cents" here, via @JsonProperty on both the getter and the builder method).
-        // That comparison can never match for a renamed wire name, so isGetterBacked is never reached,
-        // the join falls to the getter-less Lombok-shape rule, and this hand-written, plainly named
-        // Builder class fails it — expected red on the with-Validator assertion below: "maximum" absent
-        // at /properties/amount_cents even with a Validator supplying the XML-mapped constraint.
+        // A comparison against the wire name could never match for a renamed wire name, so
+        // isGetterBacked would never be reached, the join would fall to the getter-less Lombok-shape
+        // rule, and this hand-written, plainly named Builder class would fail it — "maximum" would be
+        // absent at /properties/amount_cents even with a Validator supplying the XML-mapped constraint.
+        // The with-Validator assertion below requires it to be present.
         Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
         JsonNode withoutValidator = walkDocument(HandWrittenBuilderXmlMappedRenamedDto.class);
         JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedRenamedDto.class, validator);
@@ -498,7 +497,7 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("finding: the inverse rename — the builder method's own @JsonProperty, not the built getter's —"
+    @DisplayName("the inverse rename — the builder method's own @JsonProperty, not the built getter's —"
             + " must not let the supplement's javaName-keyed lookup coincidentally join a constraint the floor"
             + " itself finds no built property to borrow")
     void handWrittenBuilderWithInverseRenamedWireNameDoesNotJoinTheXmlMappedConstraint() {
@@ -509,12 +508,11 @@ class MetadataConstraintSourceCoverageTest {
         // borrowBuilderFieldAttributes and this class's builtProperty) knows only a property named
         // "amount", never "amount_cents". Neither may borrow anything for "amount_cents": the floor
         // correctly finds no built property of that wire name at all. The supplement's own
-        // builtProperty(builtClass, javaName) bug, though, compares the builder method's implied Java
+        // builtProperty(builtClass, javaName) lookup compares the builder method's implied Java
         // name ("amount", from withAmount stripped of "with") against builtClass's own property name —
-        // and here that implied Java name coincides with the real property "amount" by coincidence, so
-        // the buggy lookup wrongly succeeds, wrongly treats "amount_cents" as getter-backed, and wrongly
-        // joins the XML-mapped constraint. Expected red: /properties/amount_cents must carry no
-        // "maximum" at all, but the buggy lookup currently renders one.
+        // and here that implied Java name coincides with the real property "amount" by coincidence, which
+        // must not make the lookup treat "amount_cents" as getter-backed and join the XML-mapped
+        // constraint. /properties/amount_cents must carry no "maximum" at all.
         Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
         JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedInverseRenamedDto.class, validator);
         JsonNode amountCents = withValidator.at("/properties/amount_cents");
@@ -524,7 +522,7 @@ class MetadataConstraintSourceCoverageTest {
                 "amount_cents must still be published: the builder method binds it; document: " + withValidator);
         assertTrue(
                 amountCents.at("/maximum").isMissingNode(),
-                "ROUND-3 DECISIVE (expected red now): builtClass has no Jackson-introspected property named"
+                "builtClass has no Jackson-introspected property named"
                         + " \"amount_cents\" at all, so neither the floor nor the supplement may borrow"
                         + " anything for it — the supplement's builtProperty(builtClass, javaName) lookup must"
                         + " not coincidentally match the builder method's implied Java name \"amount\" against"
@@ -547,15 +545,15 @@ class MetadataConstraintSourceCoverageTest {
         assertTrue(
                 withValidator.at("/properties/amount/maximum").isMissingNode(),
                 "the getter-less hand-written builder's property must carry no borrowed maximum even with a"
-                        + " validator supplied — the Lombok-shape rule still governs this getter-less shape,"
-                        + " unaffected by the finding above; document: " + withValidator);
+                        + " validator supplied — the Lombok-shape rule still governs this getter-less shape;"
+                        + " document: " + withValidator);
     }
 
     @Test
-    @DisplayName("owner ruling: a hand-written builder reproducing the Lombok shape also joins under a validator"
+    @DisplayName("a hand-written builder reproducing the Lombok shape also joins under a validator"
             + " — the supplement's own builder gate must resolve it the same way the floor does")
     void handWrittenLombokShapedBuilderAlsoJoinsUnderAValidator() {
-        // The builder gate is checked on both borrow sites (3264cff9): InputPropertyDescriber (the
+        // The builder gate is checked on both borrow sites: InputPropertyDescriber (the
         // floor, pinned without a validator by BuilderWireNameJoinTest
         // .handWrittenLombokShapedBuilderAlsoBorrows) and this class (the Bean Validation supplement).
         // Both must agree a hand-written builder that reproduces @Jacksonized's exact shape by hand —
@@ -601,10 +599,10 @@ class MetadataConstraintSourceCoverageTest {
      * strips, but here {@code level} carries no annotation at all — its only constraint is declared
      * entirely by the XML mapping in the test below, invisible to {@link WalkConstraintSource} (the
      * floor), which reads only reflected annotations. {@code
-     * MetadataConstraintSource#forUnscopedMember}'s join for a setter uses the same {@code javaName} the
-     * caller derived from the method — {@code configure} here, since it strips no recognized prefix —
-     * never {@code level}, the field Bean Validation's {@code getConstraintsForProperty} actually keys
-     * by, so the XML-mapped constraint can never be found this way.
+     * MetadataConstraintSource#forUnscopedMember}'s join for a setter must key by {@code level}, the
+     * field Bean Validation's {@code getConstraintsForProperty} actually keys by, not by the {@code
+     * javaName} the caller derived from the method — {@code configure} here, since it strips no
+     * recognized prefix.
      */
     static final class ConfigureSetterXmlMappedDto {
         private int level;
@@ -620,7 +618,7 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("finding: a @JsonSetter(\"level\")-renamed setter's XML-mapped-only constraint joins under a"
+    @DisplayName("a @JsonSetter(\"level\")-renamed setter's XML-mapped-only constraint joins under a"
             + " validator, not just an XML-mapped constraint reachable by the reflected annotation walk")
     void renamedSetterJoinsTheXmlMappedConstraintUnderAValidator() {
         // ConfigureSetterXmlMappedDto's "level" carries no annotation: only the XML mapping below
@@ -629,8 +627,8 @@ class MetadataConstraintSourceCoverageTest {
         // find it once a validator is supplied — Bean Validation's own getConstraintsForProperty keys by
         // the field's real Java name "level", never by the setter method's own implied name "configure"
         // (InputPropertyDescriber#javaBeanName strips no recognized prefix from "configure", so the
-        // implied name is "configure" itself, unchanged) — but the supplement joins by that same wrong
-        // javaName, so this is expected red today: "minimum" absent even with a Validator supplied.
+        // implied name is "configure" itself, unchanged) — so the supplement must not join by that
+        // implied javaName: "minimum" must be present once a Validator is supplied.
         String mapping = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <constraint-mappings
@@ -658,7 +656,7 @@ class MetadataConstraintSourceCoverageTest {
         assertEquals(
                 1,
                 withValidator.at("/properties/level/minimum").asInt(-1),
-                "ROUND-3 DECISIVE (expected red now): the renamed setter's XML-mapped-only @Min(1) must"
+                "the renamed setter's XML-mapped-only @Min(1) must"
                         + " still join once a validator is supplied, joining by the field's real Java name"
                         + " \"level\" that Bean Validation's own getConstraintsForProperty keys by, not by"
                         + " the setter method's own implied Java name \"configure\"; document: " + withValidator);
@@ -720,16 +718,14 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName(
-            "design correction: a non-default-group constraint the floor already renders stays required, like main")
-    void nonDefaultGroupOnVisibleMemberStaysRequiredLikeMain() {
+    @DisplayName("a non-default-group constraint the floor already renders stays required")
+    void nonDefaultGroupOnVisibleMemberStaysRequired() {
         // The always-active floor — the schema library's own Jakarta Validation module for this scoped
         // field — has no Bean Validation group concept at all: it renders NOT_NULLABLE_FIELD_IS_REQUIRED
-        // from the raw @NotNull annotation's presence alone, exactly as `main` (no validator) does. The
+        // from the raw @NotNull annotation's presence alone, exactly as the no-validator path does. The
         // metadata supplement never removes a keyword the floor already rendered, so the document stays
-        // required here even though the constraint's own group is non-Default — see the design
-        // correction: "never remove a keyword the module emitted, including constraints in non-default
-        // groups, which stay rendered as on main."
+        // required here even though the constraint's own group is non-Default: constraints in
+        // non-default groups stay rendered as the floor renders them.
         Validator validator = MetadataTestValidators.plain();
         JsonNode withValidator = metadataDocument(MetadataFixtures.NonDefaultGroupDto.class, validator);
         JsonNode withoutValidator = walkDocument(MetadataFixtures.NonDefaultGroupDto.class);
@@ -817,13 +813,13 @@ class MetadataConstraintSourceCoverageTest {
         assertTrue(textValues(List.of(document), "required").contains("label"));
     }
 
-    // --- #606: shapes victools' Jakarta module misrenders or ignores ---
+    // --- Shapes victools' Jakarta module misrenders or ignores ---
 
     @Test
-    @DisplayName("#606: @Range, @Length, @URL, and a flagged @Pattern all render, unlike victools' Jakarta module")
-    void sharp606Shapes() {
+    @DisplayName("@Range, @Length, @URL, and a flagged @Pattern all render, unlike victools' Jakarta module")
+    void renderGapShapes() {
         Validator validator = MetadataTestValidators.plain();
-        JsonNode document = metadataDocument(MetadataFixtures.Sharp606Dto.class, validator);
+        JsonNode document = metadataDocument(MetadataFixtures.RenderGapsDto.class, validator);
 
         List<JsonNode> range = propertyClosure(document, "range");
         assertEquals(
@@ -864,14 +860,14 @@ class MetadataConstraintSourceCoverageTest {
                                 .decimalValue()));
     }
 
-    // --- F7 (security review round 1, LOW): a #606 correction must not loosen a stricter floor bound ---
+    // --- A render-gap correction must not loosen a stricter floor bound ---
 
     @Test
-    @DisplayName("F7: a @Range correction does not overwrite a stricter minimum the floor rendered from a"
+    @DisplayName("a @Range correction does not overwrite a stricter minimum the floor rendered from a"
             + " separate @Min on the same field")
     void correctionDoesNotLoosenAStricterFloorBound() {
         Validator validator = MetadataTestValidators.plain();
-        JsonNode document = metadataDocument(MetadataFixtures.F7StricterCorrectionDto.class, validator);
+        JsonNode document = metadataDocument(MetadataFixtures.StricterCorrectionDto.class, validator);
 
         List<JsonNode> closure = propertyClosure(document, "rangeBesideStricterMin");
         assertEquals(
@@ -892,12 +888,12 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("F7: #606's flagged-@Pattern rendering still replaces the floor's own unflagged rendering of"
-            + " the *same* @Pattern outright (regression guard for sharp606Shapes)")
+    @DisplayName("the flagged-@Pattern rendering still replaces the floor's own unflagged rendering of"
+            + " the *same* @Pattern outright (regression guard for renderGapShapes)")
     void sameAnnotationFlaggedPatternStillReplacesOutright() {
-        // The one shape already exercised end-to-end by sharp606Shapes: the floor (the schema library's
+        // The one shape already exercised end-to-end by renderGapShapes: the floor (the schema library's
         // own Jakarta module) renders a plain @Pattern's regexp with no flag awareness, and this
-        // source's own correction re-renders the *same* annotation with its flags embedded (#606). The
+        // source's own correction re-renders the *same* annotation with its flags embedded. The
         // two are not different annotations in conflict — mergePatternAsAllOf must keep replacing the
         // floor's rendering outright, never combine them into a redundant allOf.
         com.fasterxml.jackson.databind.node.ObjectNode schema =
@@ -915,10 +911,10 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("F7: a #606 pattern correction genuinely disagreeing with the floor's pattern is combined as an allOf")
+    @DisplayName("a pattern correction genuinely disagreeing with the floor's pattern is combined as an allOf")
     void genuinelyDifferentPatternCorrectionIsCombinedAsAllOf() {
         // A correction whose value is not a flagged rendering of the floor's own pattern — a genuine
-        // two-source disagreement, the shape the fix's "keep both, as an allOf" remedy targets.
+        // two-source disagreement, which keeps both patterns, as an allOf.
         com.fasterxml.jackson.databind.node.ObjectNode schema =
                 com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
         schema.put("type", "string").put("pattern", "^[A-Z]+$");
@@ -937,7 +933,7 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("F7: a stricter bound correction still wins outright — the merge only ever narrows, never widens")
+    @DisplayName("a stricter bound correction still wins outright — the merge only ever narrows, never widens")
     void strictestNumericBoundWinsRegardlessOfWhichSideIsStricter() {
         com.fasterxml.jackson.databind.node.ObjectNode schema =
                 com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
@@ -951,11 +947,11 @@ class MetadataConstraintSourceCoverageTest {
         assertEquals(50, schema.path("maximum").intValue());
     }
 
-    // --- W3: fully-qualified constraint-type matching ---
+    // --- Fully-qualified constraint-type matching ---
 
     @Test
     @DisplayName(
-            "W3: an app-defined @Size in another package that composes @Pattern renders the pattern, not the Size case")
+            "an app-defined @Size in another package that composes @Pattern renders the pattern, not the Size case")
     void applicationDefinedSizeCollisionRendersOnlyItsComposedPattern() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode document = metadataDocument(MetadataFixtures.AppDefinedSizeCollisionDto.class, validator);
@@ -973,10 +969,10 @@ class MetadataConstraintSourceCoverageTest {
                         + " name alone risked exactly that misread; document: " + document);
     }
 
-    // --- S5: two @Pattern constraints in the default group on one member render as allOf ---
+    // --- Two @Pattern constraints in the default group on one member render as allOf ---
 
     @Test
-    @DisplayName("S5: two @Pattern constraints in the default group render as an allOf of both patterns")
+    @DisplayName("two @Pattern constraints in the default group render as an allOf of both patterns")
     void twoPatternsRenderAsAllOf() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode document = metadataDocument(MetadataFixtures.TwoPatternsDto.class, validator);
@@ -996,9 +992,9 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("S5 (honest parity check): without a validator, the walk silently renders neither @Pattern at all")
+    @DisplayName("without a validator, the walk silently renders neither @Pattern at all")
     void twoPatternsUnderTheWalkAloneRenderNeitherPattern() {
-        // Documents the real, pre-existing gap S5 does not fix: WalkConstraintSource joins a single
+        // Documents a known gap the allOf rendering above does not close: WalkConstraintSource joins a single
         // @Pattern by jacksonMember.getAnnotation(Pattern.class), which returns null once two @Pattern
         // annotations collapse into one @Pattern.List container — the annotation actually present on
         // the member is the container, not a repeated Pattern. So without a validator, this shape's
@@ -1012,10 +1008,10 @@ class MetadataConstraintSourceCoverageTest {
         assertFalse(property.has("allOf"), "the walk alone has no allOf-composition mechanism; was: " + property);
     }
 
-    // --- C3 ---
+    // --- Static-factory creator parameter ---
 
     @Test
-    @DisplayName("C3: a static-factory @JsonCreator parameter's constraint still renders through the walk under a"
+    @DisplayName("a static-factory @JsonCreator parameter's constraint still renders through the walk under a"
             + " validator, even though Bean Validation cannot see static factories")
     void staticFactoryCreatorParameterConstraintRendersUnderAValidator() {
         // MetadataConstraintSource#forParameter contributes nothing here: the parameter's owner is a
@@ -1037,10 +1033,10 @@ class MetadataConstraintSourceCoverageTest {
                         + document);
     }
 
-    // --- BG1 ---
+    // --- Lombok builder without a getter ---
 
     @Test
-    @DisplayName("BG1: a Lombok builder's constrained private field with no getter is type-only without a"
+    @DisplayName("a Lombok builder's constrained private field with no getter is type-only without a"
             + " validator and maxLength with one")
     void lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne() {
         // Without a validator, the constraint is not enforced by the generated schema at all — this is
@@ -1051,7 +1047,7 @@ class MetadataConstraintSourceCoverageTest {
         // borrow from. Bean Validation does not depend on Jackson's introspection: it reads the
         // constrained field directly by Java name, so the metadata supplement still finds and renders
         // the constraint once a validator is supplied.
-        JsonNode withoutValidator = walkDocument(MetadataFixtures.Bg1Dto.class);
+        JsonNode withoutValidator = walkDocument(MetadataFixtures.NoGetterLombokBuilderDto.class);
         JsonNode nameWithoutValidator = withoutValidator.at("/properties/name");
 
         assertFalse(
@@ -1068,7 +1064,7 @@ class MetadataConstraintSourceCoverageTest {
                         + " property to borrow from; document: " + withoutValidator);
 
         Validator validator = MetadataTestValidators.plain();
-        JsonNode withValidator = metadataDocument(MetadataFixtures.Bg1Dto.class, validator);
+        JsonNode withValidator = metadataDocument(MetadataFixtures.NoGetterLombokBuilderDto.class, validator);
         JsonNode nameWithValidator = withValidator.at("/properties/name");
 
         assertEquals(
@@ -1080,18 +1076,18 @@ class MetadataConstraintSourceCoverageTest {
                         + " floor; document: " + withValidator);
     }
 
-    // --- D4 ---
+    // --- Generic holder ---
 
     @Test
-    @DisplayName("D4: a generic holder's @Size member bound to Integer renders type:integer with no size keyword")
+    @DisplayName("a generic holder's @Size member bound to Integer renders type:integer with no size keyword")
     void genericHolderBoundIntMemberRendersNoSizeKeyword() {
         // GenericHolderBase<T>.value's reflected java.lang.reflect.Field#getType() is the type
         // variable's erasure (Object, unbounded) regardless of what any holder binds T to; only the
         // Jackson-resolved JavaType for GenericHolderBoundIntDto.boxed's own parameterization says
         // Integer. ConstraintValueKind.fromJavaType must be given that resolved type, not the field's
         // raw reflected one, so the kind is NUMBER here — and @Size has no keyword family for a number,
-        // so the correct render is nothing at all: no minLength/maxLength (the wrong, pre-fix kind's
-        // fallback), and no minItems/maxItems/minProperties/maxProperties either.
+        // so the correct render is nothing at all: no minLength/maxLength (the fallback for an
+        // unresolved kind), and no minItems/maxItems/minProperties/maxProperties either.
         Validator validator = MetadataTestValidators.plain();
         JsonNode document = metadataDocument(MetadataFixtures.GenericHolderBoundIntDto.class, validator);
 

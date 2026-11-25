@@ -37,42 +37,38 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
 /**
- * FR-016 (T008): how every {@code @JsonAlias} spelling of a visible input property is described, and
- * how the profile's own Jackson configuration decides whether several spellings may appear at once.
+ * How every {@code @JsonAlias} spelling of a visible input property is described, and how the
+ * profile's own Jackson configuration decides whether several spellings may appear at once.
  *
- * <p>Four proofs share one fixture family, each fixture named for the shape it stands for:
+ * <p>Six proofs share one fixture family, each fixture named for the shape it stands for:
  *
  * <ul>
- *   <li><strong>TP-001</strong> — every alias of a visible input property that does not back an
+ *   <li><strong>Listing</strong> — every alias of a visible input property that does not back an
  *       any-accessor is listed under {@code properties} with a copy of that property's own published
  *       schema, and a required aliased property leaves the top-level {@code required} list, because
  *       the rule below states its requirement instead.
- *   <li><strong>TP-002</strong> — the rules themselves. Lenient ({@code system}, {@code vertique}):
+ *   <li><strong>Rules</strong> — the rules themselves. Lenient ({@code system}, {@code vertique}):
  *       an optional aliased property has no rule, a required one an {@code anyOf} over its spellings.
  *       Strict ({@code vertique-strict}, whose mapper enables {@code
  *       JsonParser.Feature.STRICT_DUPLICATE_DETECTION}): a required property gets a {@code oneOf}, an
  *       optional one a {@code oneOf} with a none-present {@code not} branch. Rules are combined in
  *       one {@code allOf}, and their branches carry only {@code required} or {@code not} — a branch
  *       carrying {@code properties} would be closed by the MCP hardener.
- *   <li><strong>TP-003</strong> — the spellings that are described nowhere: a spelling equal to
- *       another property's name, a spelling on an any-accessor's backing storage, a spelling more
- *       than one property claims, and a spelling whose owning property the document never publishes.
- *       The last two stay reserved where extras are described (FR-015).
- *   <li><strong>TP-008</strong> — the expansion keyword. Expansion carries each plan in the document
- *       under one generator-private key and strips it afterwards, so a type publishing a property
- *       under that exact wire name is refused at generation rather than silently stripped of its
- *       constraints, and no published document carries the key.
- * </ul>
- *
- * <p>T010 adds two more, for the defects the P01 phase-exit gate found inside that outcome:
- *
- * <ul>
- *   <li><strong>T010 TP-001</strong> (CO-007) — the collision of TP-003's first row decided against
- *       the type's <em>own property names</em> rather than against the finished document, so a
- *       spelling naming a property the generator never publishes is withheld too, and stays reserved.
- *       TP-003's colliding property is a public field, which is published, so there the two tests
- *       agree and the defect is invisible.
- *   <li><strong>T010 TP-004</strong> (CO-009) — the keyword refusal covers a spelling expansion would
+ *   <li><strong>Undescribed spellings</strong> — the spellings that are described nowhere: a spelling
+ *       equal to another property's name, a spelling on an any-accessor's backing storage, a spelling
+ *       more than one property claims, and a spelling whose owning property the document never
+ *       publishes. The last two stay reserved where extras are described.
+ *   <li><strong>Expansion keyword</strong> — expansion carries each plan in the document under one
+ *       generator-private key and strips it afterwards, so a type publishing a property under that
+ *       exact wire name is refused at generation rather than silently stripped of its constraints,
+ *       and no published document carries the key.
+ *   <li><strong>Unpublished collisions</strong> — the collision of an alias with another property's
+ *       name is decided against the type's <em>own property names</em> rather than against the
+ *       finished document, so a spelling naming a property the generator never publishes is withheld
+ *       too, and stays reserved. In the undescribed-spellings proof the colliding property is a
+ *       public field, which is published, so there the two tests agree and a difference would be
+ *       invisible.
+ *   <li><strong>Keyword refusal</strong> — the keyword refusal covers a spelling expansion would
  *       publish, not only a wire name the type declares directly.
  * </ul>
  *
@@ -281,20 +277,20 @@ class AliasDescriptionTest {
     // --- The generator-private expansion keyword ---
 
     /**
-     * The expansion keyword as design proof v7 measured it, used only when the generator does not yet
-     * declare it — that is, at T008's parent, where alias expansion does not exist and no constant
-     * could be read. Once the generator declares the keyword, {@link #expansionKeyword()} reads it
-     * from the generator itself and this literal is never consulted, so the proof follows the
-     * implementation rather than pinning a second copy of it.
+     * The expansion keyword the fixtures below spell in their annotations: a Java annotation value must
+     * be a compile-time constant, so the fixtures cannot read the generator's own constant. The tests
+     * that refuse a keyword-named property pin this literal against {@link #expansionKeyword()}, which
+     * reads the keyword from the generator itself, so the proof follows the implementation rather than
+     * silently drifting from it.
      */
-    private static final String MEASURED_EXPANSION_KEYWORD = "x-vertique-alias-plan";
+    private static final String EXPECTED_EXPANSION_KEYWORD = "x-vertique-alias-plan";
 
     /**
      * Returns the generator's own expansion keyword, found by value rather than by constant name: the
      * one {@code static final String} the generator or one of its nested classes declares whose value
      * starts with the framework's {@code x-vertique-} extension prefix.
      *
-     * @return the generator's keyword, or {@link #MEASURED_EXPANSION_KEYWORD} while the generator
+     * @return the generator's keyword, or {@link #EXPECTED_EXPANSION_KEYWORD} when the generator
      *     declares none
      */
     private static String expansionKeyword() {
@@ -321,7 +317,7 @@ class AliasDescriptionTest {
             }
         }
         if (declared.isEmpty()) {
-            return MEASURED_EXPANSION_KEYWORD;
+            return EXPECTED_EXPANSION_KEYWORD;
         }
         assertEquals(
                 1,
@@ -331,7 +327,7 @@ class AliasDescriptionTest {
         return declared.get(0);
     }
 
-    // --- TP-001: every alias is listed with its property's schema ---
+    // --- Every alias is listed with its property's schema ---
 
     @Test
     @DisplayName("An optional alias is listed with a copy of its property's schema")
@@ -343,7 +339,7 @@ class AliasDescriptionTest {
                 "{\"maximum\":10,\"type\":\"integer\"}",
                 properties(document).path("qty").toString(),
                 "the copied schema must carry the property's own constraint: without it {\"qty\":999} binds a"
-                        + " property declared @Max(10) past the gate (security round 7, N1); document: " + document);
+                        + " property declared @Max(10) past the gate; document: " + document);
         assertEquals(
                 "{\"type\":\"string\"}",
                 properties(document).path("note").toString(),
@@ -437,7 +433,7 @@ class AliasDescriptionTest {
                         + "; document: " + document);
     }
 
-    // --- TP-002: lenient and strict rules follow the mapper's duplicate detection ---
+    // --- Lenient and strict rules follow the mapper's duplicate detection ---
 
     @Test
     @DisplayName("Under system and vertique an optional alias has no rule and a required one an anyOf")
@@ -534,10 +530,10 @@ class AliasDescriptionTest {
     }
 
     /**
-     * The {@code vertique} document design proof v4 measured for the ten-property class. The {@code
-     * system} document equals it.
+     * The {@code vertique} document expected for the ten-property class. The {@code system} document
+     * equals it.
      */
-    private static final String MEASURED_TEN_LENIENT =
+    private static final String EXPECTED_TEN_LENIENT =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"allOf\":[{\"anyOf\":[{\"required\":"
                     + "[\"p0\"]},{\"required\":[\"a0\"]}]},{\"anyOf\":[{\"required\":[\"p1\"]},{\"required\":"
                     + "[\"a1\"]}]},{\"anyOf\":[{\"required\":[\"p2\"]},{\"required\":[\"a2\"]}]}],\"properties\":"
@@ -554,8 +550,8 @@ class AliasDescriptionTest {
                     + "\"p7\":{\"maxLength\":3,\"type\":\"string\"},\"p8\":{\"maxLength\":3,\"type\":\"string\"},"
                     + "\"p9\":{\"maxLength\":3,\"type\":\"string\"}},\"type\":\"object\"}";
 
-    /** The {@code vertique-strict} document design proof v4 measured for the ten-property class. */
-    private static final String MEASURED_TEN_STRICT =
+    /** The {@code vertique-strict} document expected for the ten-property class. */
+    private static final String EXPECTED_TEN_STRICT =
             "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"allOf\":[{\"oneOf\":[{\"required\":"
                     + "[\"p0\"]},{\"required\":[\"a0\"]}]},{\"oneOf\":[{\"required\":[\"p1\"]},{\"required\":"
                     + "[\"a1\"]}]},{\"oneOf\":[{\"required\":[\"p2\"]},{\"required\":[\"a2\"]}]},{\"oneOf\":"
@@ -584,22 +580,22 @@ class AliasDescriptionTest {
                     + "\"p9\":{\"maxLength\":3,\"type\":\"string\"}},\"type\":\"object\"}";
 
     @Test
-    @DisplayName("The ten-property documents equal the two documents design proof v4 measured")
-    void tenPropertyDocumentsMatchTheMeasuredDocuments() {
+    @DisplayName("The ten-property documents equal the two expected documents")
+    void tenPropertyDocumentsMatchTheExpectedDocuments() {
         assertAll(
                 () -> assertEquals(
-                        MEASURED_TEN_LENIENT,
+                        EXPECTED_TEN_LENIENT,
                         inputText(TenAliasedProperties.class, "vertique"),
-                        "the vertique document must equal the one design proof v4 measured for this fixture shape"),
+                        "the vertique document must equal the expected one for this fixture shape"),
                 () -> assertEquals(
-                        MEASURED_TEN_LENIENT,
+                        EXPECTED_TEN_LENIENT,
                         inputText(TenAliasedProperties.class, "system"),
                         "the system document equals the vertique one: neither mapper enables strict duplicate"
                                 + " detection, and neither overrides any type this fixture uses"),
                 () -> assertEquals(
-                        MEASURED_TEN_STRICT,
+                        EXPECTED_TEN_STRICT,
                         inputText(TenAliasedProperties.class, "vertique-strict"),
-                        "the vertique-strict document must equal the one design proof v4 measured"));
+                        "the vertique-strict document must equal the expected one"));
     }
 
     @Test
@@ -633,7 +629,7 @@ class AliasDescriptionTest {
     }
 
     @Test
-    @DisplayName("Recursive and shared types generate byte-identically across passes (CO-006)")
+    @DisplayName("Recursive and shared types generate byte-identically across passes")
     void recursiveAndSharedTypesGenerateIdenticallyAcrossPasses() {
         List<Type> types = List.of(
                 SelfRecursiveAnySetterNode.class,
@@ -643,7 +639,7 @@ class AliasDescriptionTest {
 
         // A fresh generator per pass, then one generator shared across every type, twice: the first
         // detects a per-type record of resolved members drifting between instances, the second detects
-        // it drifting inside one cached instance, which is the residual risk CO-006 carries.
+        // it drifting inside one cached instance.
         Map<Type, String> freshFirst = new LinkedHashMap<>();
         Map<Type, String> freshSecond = new LinkedHashMap<>();
         types.forEach(type -> freshFirst.put(type, inputText(type, "vertique")));
@@ -680,7 +676,7 @@ class AliasDescriptionTest {
         assertAll(checks);
     }
 
-    // --- TP-003: colliding, shared, backing-storage, and unpublished-property aliases ---
+    // --- Colliding, shared, backing-storage, and unpublished-property aliases ---
 
     @Test
     @DisplayName("An alias equal to another property's name is not listed and leaves that property alone")
@@ -793,7 +789,7 @@ class AliasDescriptionTest {
                             "an alias spelling is reserved by default and released only where its owning"
                                     + " property is published: releasing 'lvl' at introspection time leaves it"
                                     + " neither published nor reserved, and it binds the @Max(10) field past the"
-                                    + " schema at REST and MCP (design proof v9, AH1) under " + profileId
+                                    + " schema at REST and MCP under " + profileId
                                     + "; document: " + hidden),
                     () -> assertEquals(
                             "{\"maximum\":10,\"type\":\"integer\"}",
@@ -804,7 +800,7 @@ class AliasDescriptionTest {
                             properties(accessorPair).path("level").toString(),
                             properties(accessorPair).path("lv").toString(),
                             "its spelling is listed with the same schema, so a key under either spelling is"
-                                    + " validated before it reaches the setter (design proof v9, AS3) under "
+                                    + " validated before it reaches the setter under "
                                     + profileId + "; document: " + accessorPair),
                     () -> assertFalse(
                             accessorPair.has("propertyNames"),
@@ -813,7 +809,7 @@ class AliasDescriptionTest {
         }
     }
 
-    // --- T010 TP-001: a spelling naming an unpublished property of the same type ---
+    // --- A spelling naming an unpublished property of the same type ---
 
     @Test
     @DisplayName("A spelling naming a hidden property stays reserved; one naming an accessor pair yields to it")
@@ -826,7 +822,7 @@ class AliasDescriptionTest {
             List<Executable> checks = new ArrayList<>();
             // The collision is decided against the type's own property names, not against the finished
             // document, so a spelling naming a property the generator never publishes is withheld here
-            // exactly as it is when the named property is a published field (TP-003 above).
+            // exactly as it is when the named property is a published field.
             Map<String, JsonNode> bySubject = new LinkedHashMap<>();
             bySubject.put("SpellingNamesAHiddenPropertyOnAnySetterType", hiddenAny);
             bySubject.put("SpellingNamesAHiddenProperty", hiddenClosed);
@@ -862,8 +858,8 @@ class AliasDescriptionTest {
                     reservedNames(hiddenAny),
                     "SpellingNamesAHiddenPropertyOnAnySetterType: 'secret' is bound by Jackson and published"
                             + " nowhere, so where extras are described it must stay reserved. Publishing it"
-                            + " releases it through FR-015's first subtraction — the spelling belongs to"
-                            + " 'level', which is published — and the guard disappears entirely under "
+                            + " releases it through the first subtraction of the reserved set — the spelling"
+                            + " belongs to 'level', which is published — and the guard disappears entirely under "
                             + profileId + "; document: " + hiddenAny));
             checks.add(() -> assertEquals(
                     List.of(),
@@ -931,7 +927,7 @@ class AliasDescriptionTest {
                                 + " with the setter's own constraint rather than with 'amount''s schema"));
     }
 
-    // --- T010 TP-004: a spelling equal to the generator's expansion keyword ---
+    // --- A spelling equal to the generator's expansion keyword ---
 
     @Test
     @DisplayName("An alias spelling equal to the generator keyword refuses generation")
@@ -939,10 +935,10 @@ class AliasDescriptionTest {
         String keyword = expansionKeyword();
 
         // A Java annotation value must be a compile-time constant, so the two fixtures below name the
-        // measured literal; pinning it against the generator's own constant here is what keeps a
+        // fixed literal; pinning it against the generator's own constant here is what keeps a
         // rename from leaving the fixtures aliasing an ordinary spelling and this proof vacuous.
         assertEquals(
-                MEASURED_EXPANSION_KEYWORD,
+                EXPECTED_EXPANSION_KEYWORD,
                 keyword,
                 "the generator's expansion keyword must be the one the fixtures below spell in their"
                         + " @JsonAlias, or this refusal proof tests an ordinary alias spelling");
@@ -954,7 +950,7 @@ class AliasDescriptionTest {
                         () -> inputText(type, profileId),
                         "generation must be refused for a type whose alias expansion would publish a property"
                                 + " under the expansion keyword, exactly as for a type declaring that wire name"
-                                + " directly (FR-008, FR-016): the refusal runs before expansion today, so the"
+                                + " directly: the refusal runs before expansion, so the"
                                 + " spelling is published, stripped again by the same descent that removes the"
                                 + " plan, and left reserved nowhere, under " + profileId);
                 assertTrue(
@@ -972,7 +968,7 @@ class AliasDescriptionTest {
         }
     }
 
-    // --- TP-008: a property named like the expansion keyword refuses generation ---
+    // --- A property named like the expansion keyword refuses generation ---
 
     @Test
     @DisplayName("A property published under the expansion keyword refuses generation")
@@ -985,9 +981,9 @@ class AliasDescriptionTest {
         // leave the fixtures testing an ordinary property name and the refusal proof would pass
         // vacuously.
         assertEquals(
-                MEASURED_EXPANSION_KEYWORD,
+                EXPECTED_EXPANSION_KEYWORD,
                 keyword,
-                "the generator's expansion keyword must be the one design proof v7 measured, because the two"
+                "the generator's expansion keyword must be the one the fixtures spell, because the two"
                         + " fixtures below must publish a property under exactly that wire name to be a proof at"
                         + " all; rename the fixtures' @JsonProperty value with the constant");
 
@@ -999,7 +995,7 @@ class AliasDescriptionTest {
                         "generation must be refused for a type publishing a property under the expansion keyword:"
                                 + " expansion strips that key from every object node, including the properties"
                                 + " object, so the property would be published stripped of its constraints"
-                                + " (security round 8, rows MK1 and MK2) under " + profileId);
+                                + " under " + profileId);
                 assertTrue(
                         refused.getMessage().contains(type.getTypeName()),
                         "the refusal must name the offending type; message: " + refused.getMessage());
@@ -1034,7 +1030,7 @@ class AliasDescriptionTest {
         assertAll(checks);
     }
 
-    /** Every fixture of TP-001 through TP-003, which must all generate a document. */
+    /** Every fixture of the listing, rule and undescribed-spelling proofs, which must all generate a document. */
     private static final List<Type> PUBLISHED_FIXTURES = List.of(
             OptionalAliasedQuantity.class,
             RequiredAliasedQuantity.class,
@@ -1095,7 +1091,7 @@ class AliasDescriptionTest {
     }
 
     /**
-     * The ten-property class design proof v4 measured: {@code p0} to {@code p9} aliased {@code a0} to
+     * The ten-property class: {@code p0} to {@code p9} aliased {@code a0} to
      * {@code a9}, of which {@code p0} to {@code p2} are required and {@code p4} is object-valued,
      * beside an unaliased {@code note}.
      */
@@ -1226,7 +1222,7 @@ class AliasDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A self-recursive any-setter type with a setter-only name (design proof v8, {@code Node}). */
+    /** A self-recursive any-setter type with a setter-only name ({@code Node}). */
     static final class SelfRecursiveAnySetterNode {
 
         /** An ordinary property. */
@@ -1250,7 +1246,7 @@ class AliasDescriptionTest {
     }
 
     /**
-     * One half of a mutually recursive pair (design proof v8, {@code A}). Both halves carry the
+     * One half of a mutually recursive pair ({@code A}). Both halves carry the
      * accessor pair and the any-setter, so the pair's reserved set must appear at the root and in the
      * inlined nested copy of the other half.
      */
@@ -1320,7 +1316,7 @@ class AliasDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A recursive any-setter type with a renamed creator parameter (design proof v8, {@code C}). */
+    /** A recursive any-setter type with a renamed creator parameter ({@code C}). */
     static final class RecursiveCreatorRenameAnySetterType {
 
         private final int amount;
@@ -1423,7 +1419,7 @@ class AliasDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** An alias on a hidden field: bound by Jackson, published nowhere (design proof v9, AH1). */
+    /** An alias on a hidden field: bound by Jackson, published nowhere. */
     static final class HiddenAliasedFieldOnAnySetterType {
 
         /** An ordinary property. */
@@ -1440,7 +1436,7 @@ class AliasDescriptionTest {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** An alias on an accessor pair with no same-named field (design proof v9, AS3). */
+    /** An alias on an accessor pair with no same-named field. */
     static final class AccessorPairAliasedNoFieldOnAnySetterType {
 
         /** An ordinary property. */
@@ -1475,8 +1471,8 @@ class AliasDescriptionTest {
     }
 
     /**
-     * The measured critical shape (spec.md § Amendments, round 10): a published property whose alias
-     * spelling is already the name of a property the document never publishes.
+     * A published property whose alias spelling is already the name of a property the document never
+     * publishes.
      *
      * <p>The two bounds differ on purpose. Publishing {@code secret} with {@code level}'s schema
      * describes a {@code @Max(10)} slot over a member declared {@code @Max(3)}, so the wrong schema
@@ -1500,8 +1496,7 @@ class AliasDescriptionTest {
     }
 
     /**
-     * The same shape with no any-setter, where the closed object was the whole guard: this is the
-     * regression against the released MCP boundary rather than a missed tightening.
+     * The same shape with no any-setter, where the closed object alone is the guard.
      */
     static final class SpellingNamesAHiddenProperty {
 
@@ -1517,7 +1512,7 @@ class AliasDescriptionTest {
     }
 
     /**
-     * A second unpublished-but-bound member of FR-015's reserved set reached the same way: an accessor
+     * A second unpublished-but-bound member of the reserved set reached the same way: an accessor
      * pair with no same-named field, whose name another property aliases.
      */
     static final class SpellingNamesAnAccessorPairOnAnySetterType {
@@ -1558,7 +1553,7 @@ class AliasDescriptionTest {
     static final class KeywordSpellingAlias {
 
         /** The aliased property: expansion would publish its schema under the reserved keyword. */
-        @JsonAlias(MEASURED_EXPANSION_KEYWORD)
+        @JsonAlias(EXPECTED_EXPANSION_KEYWORD)
         @Max(10)
         public Integer plan;
     }
@@ -1567,7 +1562,7 @@ class AliasDescriptionTest {
     static final class KeywordSpellingAliasOnAnySetterType {
 
         /** The aliased property: expansion would publish its schema under the reserved keyword. */
-        @JsonAlias(MEASURED_EXPANSION_KEYWORD)
+        @JsonAlias(EXPECTED_EXPANSION_KEYWORD)
         @Max(10)
         public Integer plan;
 
@@ -1580,16 +1575,16 @@ class AliasDescriptionTest {
     static final class KeywordNamedProperty {
 
         /** A constrained property whose wire name collides with the keyword expansion strips. */
-        @JsonProperty(MEASURED_EXPANSION_KEYWORD)
+        @JsonProperty(EXPECTED_EXPANSION_KEYWORD)
         @Max(10)
         public Integer plan;
     }
 
-    /** The same shape on an any-setter type, where security round 8 measured an MCP regression. */
+    /** The same shape on an any-setter type, where the keyword collision must be refused too. */
     static final class KeywordNamedPropertyOnAnySetterType {
 
         /** A constrained property whose wire name collides with the keyword expansion strips. */
-        @JsonProperty(MEASURED_EXPANSION_KEYWORD)
+        @JsonProperty(EXPECTED_EXPANSION_KEYWORD)
         @Max(10)
         public Integer plan;
 

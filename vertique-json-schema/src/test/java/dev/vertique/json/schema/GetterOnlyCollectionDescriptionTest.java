@@ -18,7 +18,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * H4: a getter-only collection with no backing field publishes its item schema. The gate-level half
+ * A getter-only collection with no backing field publishes its item schema. The gate-level half
  * of this proof (a wrong-typed item is rejected and a valid body accepted, at both the REST and MCP
  * boundaries) lives in {@code ProfiledSchemaSynthesisIT} and {@code McpToolInputShapesIT}.
  */
@@ -46,7 +46,7 @@ class GetterOnlyCollectionDescriptionTest {
     }
 
     @Test
-    @DisplayName("H4: a getter-only collection with no backing field is published with its item schema")
+    @DisplayName("a getter-only collection with no backing field is published with its item schema")
     void getterOnlyCollectionWithNoBackingFieldPublishesItsItemSchema() {
         String canonical = AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile())
                 .generateCanonical(GetterOnlyCollectionNoBackingFieldDto.class);

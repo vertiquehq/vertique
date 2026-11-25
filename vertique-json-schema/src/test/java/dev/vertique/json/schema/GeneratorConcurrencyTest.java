@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Proves {@link AnnotationJsonSchemaGenerator}'s concurrency contract (FR-JSON-080): the complete
+ * Proves {@link AnnotationJsonSchemaGenerator}'s concurrency contract: the complete
  * generate-and-canonicalize operation is serialized <em>per instance</em>, different instances share
  * no lock, and concurrent callers of one instance only ever observe whole, uncorrupted documents.
  *

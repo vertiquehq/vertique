@@ -996,7 +996,7 @@ class ReservedNameManifestTest {
                 Arguments.of(
                         "the creator pins' case-insensitive type with a reserved name",
                         creatorPinsGenerator,
-                        CreatorAndCaseInsensitivityDescriptionTest.CI2WithReservedName.class),
+                        CreatorAndCaseInsensitivityDescriptionTest.CaseInsensitiveWithReservedName.class),
                 Arguments.of(
                         "the Unicode-folding pins' case-insensitive type with extras",
                         AnnotationJsonSchemaGenerator.forInputProfile(profileNamed("ci-unicode-fold-test")),

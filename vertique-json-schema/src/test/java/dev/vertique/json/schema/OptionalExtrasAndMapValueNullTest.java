@@ -24,16 +24,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * rest-023 T002 ({@code D002}). An any-setter extras value of declared type {@code Optional<T>} must
- * render {@code T}'s own schema, marked nullable — not a bare non-nullable object — so an explicit
- * {@code null} binds successfully (closing N14n, the false reject) and a non-null value violating
- * {@code T}'s own constraint is rejected (closing N14, the previously undescribed constraint gap).
- * {@code evidence/probe-report-327531b4.md} § N14 and § N14n measure both gaps against {@code main}.
+ * An any-setter extras value of declared type {@code Optional<T>} must render {@code T}'s own
+ * schema, marked nullable — not a bare non-nullable object — so an explicit {@code null} binds
+ * successfully (no false reject) and a non-null value violating {@code T}'s own constraint is
+ * rejected (no undescribed constraint gap).
  *
  * <p>Fixture: an any-setter extras value of declared type {@code Optional<Plain>}, where {@code Plain}
  * carries its own {@code @Size(max = 3)} constraint on {@code name}. A companion control — the same
- * shape with a non-{@code Optional} extras value type — proves the fix is scoped to the declared-{@code
- * Optional} position: it must stay non-nullable today and every day after this task lands.
+ * shape with a non-{@code Optional} extras value type — proves the rule is scoped to the declared-{@code
+ * Optional} position: it must stay non-nullable.
  */
 class OptionalExtrasAndMapValueNullTest {
 
@@ -173,7 +172,7 @@ class OptionalExtrasAndMapValueNullTest {
         assertAll(
                 () -> assertTrue(
                         isMarkedNullable(extras),
-                        "N14n: an Optional<Plain> extras value must be marked nullable — either an anyOf"
+                        "an Optional<Plain> extras value must be marked nullable — either an anyOf"
                                 + " including {\"type\":\"null\"}, or a type array containing \"null\" — so an"
                                 + " explicit null binds successfully, matching Jackson's own Optional.empty()"
                                 + " mapping; extras schema: " + extras + "; document: " + document),
@@ -183,8 +182,8 @@ class OptionalExtrasAndMapValueNullTest {
                                 .path("name")
                                 .path("maxLength")
                                 .asInt(-1),
-                        "N14: the non-null branch must describe Plain's own schema, including name's own"
-                                + " maxLength: 3 — the constraint gap this task closes; non-null branch: "
+                        "the non-null branch must describe Plain's own schema, including name's own"
+                                + " maxLength: 3 — the constraint must not be dropped; non-null branch: "
                                 + nonNull + "; extras schema: " + extras + "; document: " + document));
     }
 
@@ -212,8 +211,8 @@ class OptionalExtrasAndMapValueNullTest {
         assertAll(
                 () -> assertFalse(
                         isMarkedNullable(extras),
-                        "sensitivity proof: a non-Optional extras value must not be marked nullable by this"
-                                + " task's own fix; extras schema: " + extras + "; document: " + document),
+                        "sensitivity proof: a non-Optional extras value must not be marked nullable;"
+                                + " extras schema: " + extras + "; document: " + document),
                 () -> assertFalse(
                         containsNullType(extras),
                         "sensitivity proof: no null type keyword may appear anywhere in a non-Optional"
@@ -224,9 +223,8 @@ class OptionalExtrasAndMapValueNullTest {
                                 .path("name")
                                 .path("maxLength")
                                 .asInt(-1),
-                        "the control must still carry Plain's own maxLength: 3 — this control must be GREEN"
-                                + " today, before this task's own fix lands; resolved: " + resolved
-                                + "; document: " + document));
+                        "the control must still carry Plain's own maxLength: 3; resolved: " + resolved + "; document: "
+                                + document));
     }
 
     @Test

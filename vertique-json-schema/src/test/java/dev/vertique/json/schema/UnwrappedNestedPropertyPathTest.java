@@ -35,10 +35,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * N1 (review finding, spike/deserializer-driven-schema round 7): commit dfd5761e made the
- * unwrapped-child loop in {@code InputPropertyDescriber#populateObjectSchema} (around lines 500-535)
- * refuse, with the custom-deserializer diagnostic, any declared {@code @JsonUnwrapped} member whose
- * {@code unwrappingDeserializer(...)} does not resolve to a {@code BeanDeserializerBase}.
+ * The unwrapped-child loop in {@code InputPropertyDescriber#populateObjectSchema} refuses, with the
+ * custom-deserializer diagnostic, a declared {@code @JsonUnwrapped} member only when its {@code
+ * unwrappingDeserializer(...)} is a genuinely different, non-bean deserializer.
  *
  * <p>For a member whose type is a {@code Map}, an abstract {@code @JsonTypeInfo} base, {@code
  * Object}, {@code JsonNode}, or {@code Optional<Bean>}, Jackson's own {@code
@@ -46,16 +45,13 @@ import org.junit.jupiter.api.Test;
  * the deserializer does not support unwrapping at all — and {@code BeanDeserializerBase.resolve()}
  * then leaves the member bound as an ordinary nested property, which the describer's own first
  * (non-unwrapped) property loop already publishes under the member's own name. The unwrapped-child
- * loop's {@code instanceof BeanDeserializerBase} check on {@code renamed} does not distinguish "same
- * instance, not a bean" (Jackson declining to unwrap) from "different instance, not a bean" (a
- * genuine custom deserializer that changes the wire shape, W-1's own probe in {@link
- * DelegatingDeserializerWrapperTest}) — it refuses both alike, so generating a schema for every DTO
- * below, generatable before dfd5761e, now fails with a diagnostic.
+ * loop must distinguish "same instance, not a bean" (Jackson declining to unwrap) from "different
+ * instance, not a bean" (a genuine custom deserializer that changes the wire shape, see {@link
+ * DelegatingDeserializerWrapperTest}): only the latter is refused.
  *
- * <p>The correct bound is Jackson's own: refuse only when the unwrapping deserializer is a
+ * <p>The bound is Jackson's own: refuse only when the unwrapping deserializer is a
  * <em>different</em> instance and is not a bean deserializer; when it is the same instance, leave
- * the member to the nested-property path the first loop already handles. This class only authors
- * the proof; the fix belongs in {@code InputPropertyDescriber} itself.
+ * the member to the nested-property path the first loop already handles.
  */
 class UnwrappedNestedPropertyPathTest {
 
@@ -80,12 +76,12 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1: an unwrapped Map<String, Object> member is published as an ordinary nested property, not"
+    @DisplayName("an unwrapped Map<String, Object> member is published as an ordinary nested property, not"
             + " refused as an opaque custom deserializer")
     void unwrappedMapMemberIsPublishedAsNestedProperty() {
         JsonNode document = assertDoesNotThrow(
                 () -> inputDocument(MapAttrsParent.class),
-                "N1 DECISIVE: Jackson's MapDeserializer#unwrappingDeserializer(...) returns the same"
+                "Jackson's MapDeserializer#unwrappingDeserializer(...) returns the same"
                         + " instance (it does not support unwrapping), so BeanDeserializerBase.resolve()"
                         + " leaves \"attrs\" bound as an ordinary nested property, which the describer's own"
                         + " first property loop already publishes — the unwrapped-child loop must not refuse"
@@ -96,14 +92,14 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1 premise: the real binder routes a nested {\"attrs\":{...}} body into the attrs field, not"
+    @DisplayName("premise: the real binder routes a nested {\"attrs\":{...}} body into the attrs field, not"
             + " flattened onto the parent, proving Map is genuinely left to the nested-property path")
     void jacksonBinderRoutesTheMapBodyIntoTheNestedAttrsField() throws Exception {
         MapAttrsParent bound = plainProfile().mapper().readValue("{\"attrs\":{\"k\":1}}", MapAttrsParent.class);
 
         assertTrue(
                 bound.attrs != null && Integer.valueOf(1).equals(bound.attrs.get("k")),
-                "N1 PREMISE: the real Jackson binder must bind the body's own \"attrs\" object into the"
+                "the real Jackson binder must bind the body's own \"attrs\" object into the"
                         + " member as an ordinary nested property (not flattened directly onto the parent),"
                         + " which is exactly why the describer's first loop — not the unwrapped-child loop —"
                         + " must be the one publishing it; bound.attrs=" + (bound.attrs == null ? null : bound.attrs));
@@ -129,12 +125,12 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1: an unwrapped abstract @JsonTypeInfo member is published as an ordinary nested property,"
+    @DisplayName("an unwrapped abstract @JsonTypeInfo member is published as an ordinary nested property,"
             + " not refused as an opaque custom deserializer")
     void unwrappedPolymorphicBaseMemberIsPublishedAsNestedProperty() {
         JsonNode document = assertDoesNotThrow(
                 () -> inputDocument(ShapeParent.class),
-                "N1 DECISIVE: the polymorphic base's own type-id-resolving deserializer does not support"
+                "the polymorphic base's own type-id-resolving deserializer does not support"
                         + " unwrapping either, so \"shape\" must be left to the nested-property path rather"
                         + " than refused");
         assertTrue(
@@ -150,12 +146,12 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1: an unwrapped Object member is published as an ordinary nested property, not refused as an"
+    @DisplayName("an unwrapped Object member is published as an ordinary nested property, not refused as an"
             + " opaque custom deserializer")
     void unwrappedObjectMemberIsPublishedAsNestedProperty() {
         JsonNode document = assertDoesNotThrow(
                 () -> inputDocument(AnyParent.class),
-                "N1 DECISIVE: the untyped-object deserializer does not support unwrapping either, so \"any\""
+                "the untyped-object deserializer does not support unwrapping either, so \"any\""
                         + " must be left to the nested-property path rather than refused");
         assertTrue(
                 document.path("properties").has("any"),
@@ -170,12 +166,12 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1: an unwrapped JsonNode member is published as an ordinary nested property, not refused as"
+    @DisplayName("an unwrapped JsonNode member is published as an ordinary nested property, not refused as"
             + " an opaque custom deserializer")
     void unwrappedJsonNodeMemberIsPublishedAsNestedProperty() {
         JsonNode document = assertDoesNotThrow(
                 () -> inputDocument(NodeParent.class),
-                "N1 DECISIVE: JsonNodeDeserializer does not support unwrapping either, so \"node\" must be"
+                "JsonNodeDeserializer does not support unwrapping either, so \"node\" must be"
                         + " left to the nested-property path rather than refused");
         assertTrue(
                 document.path("properties").has("node"),
@@ -198,7 +194,7 @@ class UnwrappedNestedPropertyPathTest {
      * {@code Optional} at all: Jackson resolves {@code UnsupportedTypeDeserializer} for it, not {@code
      * OptionalDeserializer}, so a {@code Optional<Child>}-typed DTO was never bindable on that mapper
      * in the first place, and this class's own {@link #plainProfile()} mapper cannot stand in for the
-     * real {@code OptionalDeserializer} case this block claims to probe. {@code
+     * real {@code OptionalDeserializer} case this block covers. {@code
      * jackson-datatype-jdk8} is available through {@code vertique-json}'s test-scope dependency.
      */
     private static JsonMapperProfile jdk8Profile() {
@@ -208,13 +204,13 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1: an unwrapped Optional<Bean> member is published as an ordinary nested property, not"
+    @DisplayName("an unwrapped Optional<Bean> member is published as an ordinary nested property, not"
             + " refused as an opaque custom deserializer")
     void unwrappedOptionalMemberIsPublishedAsNestedProperty() {
         JsonMapperProfile profile = jdk8Profile();
         JsonNode document = assertDoesNotThrow(
                 () -> inputDocument(OptionalParent.class, profile),
-                "N1 DECISIVE: Jackson's OptionalDeserializer does not support unwrapping either, so"
+                "Jackson's OptionalDeserializer does not support unwrapping either, so"
                         + " \"maybe\" must be left to the nested-property path rather than refused");
         assertTrue(
                 document.path("properties").has("maybe"),
@@ -222,7 +218,7 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1 premise: the real binder routes a nested {\"maybe\":{...}} body into the maybe field, not"
+    @DisplayName("premise: the real binder routes a nested {\"maybe\":{...}} body into the maybe field, not"
             + " flattened onto the parent, proving Optional is genuinely left to the nested-property path")
     void jacksonBinderRoutesTheOptionalBodyIntoTheNestedMaybeField() throws Exception {
         JsonMapperProfile profile = jdk8Profile();
@@ -230,7 +226,7 @@ class UnwrappedNestedPropertyPathTest {
 
         assertTrue(
                 bound.maybe != null && bound.maybe.isPresent() && "Ann".equals(bound.maybe.get().name),
-                "N1 PREMISE: the real Jackson binder (with Jdk8Module registered) must bind the body's"
+                "the real Jackson binder (with Jdk8Module registered) must bind the body's"
                         + " own \"maybe\" object into the member as an ordinary nested property (not flattened"
                         + " directly onto the parent), which is exactly why the describer's first loop — not"
                         + " the unwrapped-child loop — must be the one publishing it; bound.maybe="
@@ -247,7 +243,7 @@ class UnwrappedNestedPropertyPathTest {
 
     /**
      * Not a pure forwarder (the same shape {@code
-     * DelegatingDeserializerWrapperTest.StringFormAcceptingDelegatingDeserializer} probes at the root
+     * DelegatingDeserializerWrapperTest.StringFormAcceptingDelegatingDeserializer} covers at the root
      * seam): overrides {@code deserialize} to accept a compact string form before ever reaching the
      * delegate, so {@code unwrappingDeserializer(...)} on it yields a genuinely different, non-bean
      * instance — the case the refusal branch exists for.
@@ -300,7 +296,7 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     @Test
-    @DisplayName("N1 refusal branch: an unwrapped member whose type has a non-pure DelegatingDeserializer"
+    @DisplayName("refusal branch: an unwrapped member whose type has a non-pure DelegatingDeserializer"
             + " wrapper (changing the wire shape) is refused with the custom-deserializer diagnostic")
     void unwrappedMemberWithShapeChangingDelegatingWrapperIsRefused() {
         JsonMapperProfile profile = shapeChangingWrapperProfile();
@@ -308,16 +304,16 @@ class UnwrappedNestedPropertyPathTest {
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
                 () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(WireShapeParent.class),
-                "N1 REFUSAL BRANCH: a shape-changing DelegatingDeserializer subclass is a genuinely different"
+                "a shape-changing DelegatingDeserializer subclass is a genuinely different"
                         + " instance from unwrappingDeserializer(...) and is not a bean deserializer, so this"
-                        + " must still be refused, exactly as W-1 established at the root seam");
+                        + " must still be refused, exactly as at the root seam");
         assertTrue(
                 failure.getMessage().contains("whose wire shape the generator cannot describe"),
                 "unexpected message: " + failure.getMessage());
     }
 
     @Test
-    @DisplayName("N1 refusal branch: the custom-deserializer diagnostic for an unwrapped member names the"
+    @DisplayName("refusal branch: the custom-deserializer diagnostic for an unwrapped member names the"
             + " member, not only the type")
     void refusalDiagnosticNamesTheUnwrappedMember() {
         JsonMapperProfile profile = shapeChangingWrapperProfile();

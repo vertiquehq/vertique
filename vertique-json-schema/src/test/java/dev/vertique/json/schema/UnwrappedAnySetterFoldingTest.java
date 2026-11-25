@@ -26,15 +26,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * F2 (security review round 1, HIGH): a {@code @JsonUnwrapped} child's alias spellings and hidden
- * members are neither published nor reserved on an any-setter parent, so a client-submitted key
- * spelling one of them binds through the extras bucket unconstrained.
+ * A {@code @JsonUnwrapped} child's alias spellings and hidden members must be published or reserved on
+ * an any-setter parent; otherwise a client-submitted key spelling one of them binds through the extras
+ * bucket unconstrained.
  *
- * <p>Probe (from the review): {@code Parent{@JsonAnySetter Map extras; @JsonUnwrapped Child child}},
- * {@code Child{@JsonAlias("tok") String token}}; body {@code {"tok":"abcdef"}} bound {@code
- * child.token = "abcdef"} while the generated document neither published {@code "tok"} under {@code
- * properties} nor refused it via {@code propertyNames.not.enum} — it fell through to {@code
- * additionalProperties}, an unconstrained value, even though the binder routed it straight into
+ * <p>Shape: {@code Parent{@JsonAnySetter Map extras; @JsonUnwrapped Child child}}, {@code
+ * Child{@JsonAlias("tok") String token}}; body {@code {"tok":"abcdef"}} binds {@code child.token =
+ * "abcdef"}, so the generated document must publish {@code "tok"} under {@code properties} (or refuse
+ * it via {@code propertyNames.not.enum}) rather than let it fall through to {@code
+ * additionalProperties}, an unconstrained value, even though the binder routes it straight into
  * {@code token}'s own {@code @Size(max = 3)}. Same shape for a {@code @Schema(hidden = true)} member.
  */
 class UnwrappedAnySetterFoldingTest {
@@ -65,20 +65,18 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName("F2: an unwrapped child's alias spelling is published under the child member's own"
+    @DisplayName("an unwrapped child's alias spelling is published under the child member's own"
             + " constraint, never left unconstrained in the extras bucket")
     void unwrappedChildAliasIsPublishedWithTheChildMembersConstraint() {
-        // CHARACTERIZATION NOTE, checked empirically against this project's pinned Jackson 2.21.4:
+        // Characterization note, checked empirically against this project's pinned Jackson 2.21.4:
         // for a *bare* @JsonUnwrapped (no prefix/suffix), Jackson's own unwrappingDeserializer already
         // iterates the alias spelling as a distinct bound property alongside the canonical name — so
-        // boundProperties(unwrapped, null) already contains "tok" before F2's own fold runs, and this
-        // specific assertion does not discriminate pre-fix from post-fix code on this Jackson version
-        // (confirmed: reverting the F2 change and re-running this exact test still passes). It is kept
-        // as a positive regression guard for that already-correct behavior, and because
-        // foldUnwrappedChildIntoParentPlan must not corrupt it (a duplicate or conflicting alias-plan
-        // entry) when it runs anyway. The discriminating proof for F2 is the hidden-member test below,
-        // which is unambiguously broken before this fix and fixed after, confirmed both in the
-        // generated document and against the real Jackson binder.
+        // boundProperties(unwrapped, null) already contains "tok" before the fold runs, and this
+        // specific assertion does not discriminate whether the fold itself works. It is a positive
+        // regression guard for that behavior, and because foldUnwrappedChildIntoParentPlan must not
+        // corrupt it (a duplicate or conflicting alias-plan entry) when it runs anyway. The
+        // discriminating proof is the hidden-member test below, confirmed both in the generated
+        // document and against the real Jackson binder.
         JsonNode document = inputDocument(AliasParent.class);
 
         assertEquals(
@@ -111,14 +109,14 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName("F2: an unwrapped child's hidden member is reserved on the parent, refusing a key spelling it"
+    @DisplayName("an unwrapped child's hidden member is reserved on the parent, refusing a key spelling it"
             + " instead of leaving it to the extras bucket")
     void unwrappedChildHiddenMemberIsReserved() {
         JsonNode document = inputDocument(HiddenParent.class);
 
         assertFalse(
                 document.path("properties").has("token"),
-                "a @Schema(hidden = true) member must stay unpublished, as before; document: " + document);
+                "a @Schema(hidden = true) member must stay unpublished; document: " + document);
         JsonNode reservedNames = document.path("propertyNames").path("not").path("enum");
         boolean reserved = false;
         if (reservedNames.isArray()) {
@@ -137,7 +135,7 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     /**
-     * The real-binder half of the hidden-member probe, checked directly against the profile's own
+     * The real-binder half of the hidden-member proof, checked directly against the profile's own
      * mapper (empirically confirmed, not assumed): {@code {"token":"toolongvalue"}} binds straight into
      * {@code child.token} — 12 characters against the field's own {@code @Size(max = 3)} — proving this
      * is a genuine constraint bypass, not only a description gap. The gate-level counterpart (this
@@ -146,7 +144,7 @@ class UnwrappedAnySetterFoldingTest {
      * @throws Exception when the binder itself throws
      */
     @Test
-    @DisplayName("F2 premise: the real binder routes a key spelling an unwrapped child's hidden member straight"
+    @DisplayName("premise: the real binder routes a key spelling an unwrapped child's hidden member straight"
             + " into the constrained field, oversized value included")
     void jacksonBinderRoutesTheHiddenKeyIntoTheConstrainedField() throws Exception {
         HiddenParent bound = plainProfile().mapper().readValue("{\"token\":\"toolongvalue\"}", HiddenParent.class);
@@ -179,7 +177,7 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName("F2: a nested @JsonUnwrapped chain on an any-setter type is refused with a bounded diagnostic")
+    @DisplayName("a nested @JsonUnwrapped chain on an any-setter type is refused with a bounded diagnostic")
     void nestedUnwrappedChainOnAnAnySetterTypeIsRefused() {
         JsonSchemaGenerationException failure =
                 assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(NestedAnySetterParent.class));
@@ -190,11 +188,11 @@ class UnwrappedAnySetterFoldingTest {
         assertTrue(failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH, "was: " + failure.getMessage());
     }
 
-    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+    // --- Sibling-ordered unwrapped pair ---
 
     /**
      * The first unwrapped sibling, carrying no any-setter of its own: an aliased, constrained member and
-     * a hidden, constrained member — the exact shape {@link HiddenChild} and {@link AliasChild} probe
+     * a hidden, constrained member — the exact shape {@link HiddenChild} and {@link AliasChild} cover
      * individually, combined onto one class so the fold has something to fold for the *first*-processed
      * sibling.
      */
@@ -215,7 +213,7 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     /**
-     * C1: two {@code @JsonUnwrapped} siblings declared in this order, where only the *second* ({@link
+     * Two {@code @JsonUnwrapped} siblings declared in this order, where only the *second* ({@link
      * SiblingB}) carries the {@code @JsonAnySetter}. {@code populateObjectSchema}'s unwrapped loop only
      * learns a type is any-setter-shaped once it has processed the child that actually declares the
      * any-setter — so when the first sibling ({@link SiblingA}) is processed, the loop's own
@@ -232,19 +230,18 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName("C1 CHARACTERIZATION: a sibling unwrapped child's alias is published under its own constraint"
-            + " even though the any-setter is declared on a *different* sibling — does not discriminate the"
-            + " fold's own order bug on this Jackson version")
+    @DisplayName("characterization: a sibling unwrapped child's alias is published under its own constraint"
+            + " even though the any-setter is declared on a *different* sibling")
     void firstSiblingsAliasIsPublishedEvenThoughTheAnySetterIsOnTheSecondSibling() {
-        // CHARACTERIZATION NOTE, checked empirically (measured against this run): exactly as
+        // Characterization note, checked empirically: exactly as
         // unwrappedChildAliasIsPublishedWithTheChildMembersConstraint documents for the single-child
         // shape, Jackson's own unwrappingDeserializer already iterates a *bare* @JsonUnwrapped member's
         // alias spelling as a distinct bound property, independent of any sibling or any-setter at all —
         // so "ak" is published here through the ordinary child-property loop before
         // foldUnwrappedChildIntoParentPlan ever runs, regardless of which sibling carries the any-setter
-        // or which sibling is processed first. This assertion is kept as a positive regression guard, not
-        // as C1's own discriminating proof — the hidden-member test below is that proof, exactly as it is
-        // for the single-child F2 probe.
+        // or which sibling is processed first. This assertion is a positive regression guard, not the
+        // discriminating proof — the hidden-member test below is that proof, exactly as it is for the
+        // single-child shape.
         JsonNode document = inputDocument(SiblingOrderedParent.class);
 
         assertEquals(
@@ -259,7 +256,7 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName("C1: a sibling unwrapped child's hidden member is reserved even though the any-setter is"
+    @DisplayName("a sibling unwrapped child's hidden member is reserved even though the any-setter is"
             + " declared on a different sibling, processed later")
     void firstSiblingsHiddenMemberIsReservedEvenThoughTheAnySetterIsOnTheSecondSibling() {
         JsonNode document = inputDocument(SiblingOrderedParent.class);
@@ -278,14 +275,14 @@ class UnwrappedAnySetterFoldingTest {
         }
         assertTrue(
                 reserved,
-                "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must be"
+                "the first-processed unwrapped sibling's hidden member \"secret\" must be"
                         + " reserved even though the any-setter is declared on the second sibling, exactly as"
                         + " it is reserved when the any-setter sits on that same sibling (see"
                         + " unwrappedChildHiddenMemberIsReserved above); document: " + document);
     }
 
     /**
-     * The real-binder half of the C1 probe: {@code {"ak":"abcdefgh"}} binds straight into
+     * The real-binder half of the sibling-order proof: {@code {"ak":"abcdefgh"}} binds straight into
      * {@code a.aname} — 8 characters against the field's own {@code @Size(max = 3)} — regardless of
      * which sibling carries the any-setter, so a document that leaves "ak" unpublished and unreserved is
      * a genuine constraint bypass, not only a description gap.
@@ -293,7 +290,7 @@ class UnwrappedAnySetterFoldingTest {
      * @throws Exception when the binder itself throws
      */
     @Test
-    @DisplayName("C1 premise: the real binder routes the first sibling's alias key straight into its"
+    @DisplayName("premise: the real binder routes the first sibling's alias key straight into its"
             + " constrained field, oversized value included")
     void jacksonBinderRoutesTheSiblingAliasKeyIntoTheConstrainedField() throws Exception {
         SiblingOrderedParent bound =
@@ -305,7 +302,7 @@ class UnwrappedAnySetterFoldingTest {
                         + " premise to hold; bound.a=" + (bound.a == null ? null : bound.a.aname));
     }
 
-    // --- S1 (spike/deserializer-driven-schema round 4): alias folding under a non-trivial unwrap prefix ---
+    // --- Alias folding under a non-trivial unwrap prefix ---
 
     /** A member carrying an alias, unwrapped under a non-no-op transformer ({@code prefix = "p_"}). */
     static final class PrefixedAliasChild {
@@ -323,20 +320,16 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     /**
-     * S1 (owner ruling): under a non-no-op unwrap transformer, {@code foldUnwrappedChildIntoParentPlan}
-     * still folds the child's alias — hand-transforming the alias's own local spelling
-     * ({@code "tok"} &rarr; {@code "p_tok"}) — into the parent's alias plan, which the generator then
-     * materializes as a published {@code "p_tok"} property carrying {@code token}'s own schema. The
-     * owner ruling records that this is measured to be over-description: neither the plain alias
-     * spelling ({@code "tok"}) nor the hand-transformed one ({@code "p_tok"}) actually binds through
-     * Jackson's own unwrapping deserializer once a real prefix is in play, so the published spelling is
-     * validated against a constraint a key of that name never actually reaches at the binder. This test
-     * reports the current state (not forced to red or green) and the binder measurement it rests on.
+     * Under a non-no-op unwrap transformer, neither the plain alias spelling ({@code "tok"}) nor the
+     * hand-transformed one ({@code "p_tok"}) actually binds through Jackson's own unwrapping
+     * deserializer once a real prefix is in play, so the generator must not publish either spelling:
+     * doing so would validate a key of that name against a constraint it never actually reaches at the
+     * binder. This test pins that contract together with the binder measurement it rests on.
      */
     @Test
-    @DisplayName("S1: under a non-trivial unwrap prefix, current state of whether an alias spelling is folded"
-            + " into the plan — reported against the measured binder behavior")
-    void prefixedUnwrapAliasFoldingCurrentState() throws Exception {
+    @DisplayName("under a non-trivial unwrap prefix, no alias spelling is folded into the plan —"
+            + " matching the measured binder behavior")
+    void prefixedUnwrapDoesNotPublishAnAliasSpelling() throws Exception {
         JsonNode document = inputDocument(PrefixedAliasParent.class);
 
         // The canonical (transformed) child property is expected to be published either way.
@@ -359,26 +352,24 @@ class UnwrappedAnySetterFoldingTest {
 
         assertFalse(
                 plainSpellingBinds,
-                "S1 MEASUREMENT: the owner ruling's premise is that neither alias spelling binds once a"
-                        + " real unwrap prefix is in play — if this fails, the ruling's premise for \"tok\""
-                        + " does not hold on this Jackson version");
+                "premise: neither alias spelling binds once a real unwrap prefix is in play — if this"
+                        + " fails, the premise for \"tok\" does not hold on this Jackson version");
         assertFalse(
                 transformedSpellingBinds,
-                "S1 MEASUREMENT: the owner ruling's premise is that neither alias spelling binds once a"
-                        + " real unwrap prefix is in play — if this fails, the ruling's premise for \"p_tok\""
-                        + " does not hold on this Jackson version");
+                "premise: neither alias spelling binds once a real unwrap prefix is in play — if this"
+                        + " fails, the premise for \"p_tok\" does not hold on this Jackson version");
 
         assertFalse(
                 plainAliasPublished,
-                "S1 CURRENT STATE: the untransformed alias spelling \"tok\" must never be folded into the"
+                "the untransformed alias spelling \"tok\" must never be folded into the"
                         + " plan — it never carried the prefix to begin with, so this is not the shape the"
                         + " fold could have produced either way; document: " + document);
         assertFalse(
                 transformedAliasPublished,
-                "S1 CURRENT STATE (owner ruling target): the hand-transformed alias spelling \"p_tok\" must"
+                "the hand-transformed alias spelling \"p_tok\" must"
                         + " not be folded into the plan, since the measurement above shows it never actually"
-                        + " binds through the real deserializer — if this assertion fails, the fold still"
-                        + " runs unconditionally for a non-no-op transformer (pre-fix state); document: "
+                        + " binds through the real deserializer — if this assertion fails, the fold runs"
+                        + " unconditionally for a non-no-op transformer; document: "
                         + document);
     }
 }

@@ -21,17 +21,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * W1 (spike/deserializer-driven-schema round 4 ruling): {@code InputPropertyDescriber#borrowFieldAttributes}
- * joins a setter-bound property to its backing field through
- * {@code BeanPropertyDefinition#getField()} (the a2538dc1 INFO-item tightening) rather than a raw
- * field-name scan. {@code getField()} is {@code null} when the only accessor Jackson associates with the
- * property is the setter — a private field with a setter and no getter, no public field either — so the
- * constraint the developer wrote on that field is no longer borrowed onto the published property. Main's
- * own field walk published it; the deserializer-driven floor, joined this way, currently does not.
- *
- * <p>The owner ruling records the fix direction (fall back to the field whose Java name equals the
- * property's implied name when {@code getField()} is {@code null} and the property has no getter) but
- * this class only authors the proof, never the production change.
+ * {@code InputPropertyDescriber#borrowFieldAttributes} joins a setter-bound property to its backing
+ * field through {@code BeanPropertyDefinition#getField()} rather than a raw field-name scan.
+ * {@code getField()} is {@code null} when the only accessor Jackson associates with the property is the
+ * setter — a private field with a setter and no getter, no public field either — so the join falls
+ * back to the field whose Java name equals the property's implied name, and the constraint the
+ * developer wrote on that field is still borrowed onto the published property.
  */
 class SetterOnlyFieldBorrowTest {
 
@@ -64,7 +59,7 @@ class SetterOnlyFieldBorrowTest {
                 .generateCanonical(type));
     }
 
-    /** W1: a private, constrained field bound only through a setter — no getter, no public field. */
+    /** A private, constrained field bound only through a setter — no getter, no public field. */
     static final class SetterOnly {
         @Size(max = 3)
         private String level;
@@ -89,7 +84,7 @@ class SetterOnlyFieldBorrowTest {
     }
 
     @Test
-    @DisplayName("W1: a write-only private field's constraint is borrowed onto the published property")
+    @DisplayName("a write-only private field's constraint is borrowed onto the published property")
     void writeOnlyPrivateFieldConstraintIsBorrowed() {
         JsonNode document = document(SetterOnly.class);
         JsonNode level = document.path("properties").path("level");
@@ -102,15 +97,14 @@ class SetterOnlyFieldBorrowTest {
         assertEquals(
                 3,
                 level.path("maxLength").asInt(-1),
-                "W1 DECISIVE: a private field bound only through a setter (no getter, no public field) must"
-                        + " still have its own @Size(max = 3) borrowed onto the published property, exactly as"
-                        + " main's field walk did — BeanPropertyDefinition#getField() is null for this shape,"
-                        + " so the current wire-name join (candidate.getField()) finds nothing to borrow from;"
-                        + " document: " + document);
+                "a private field bound only through a setter (no getter, no public field) must"
+                        + " still have its own @Size(max = 3) borrowed onto the published property —"
+                        + " BeanPropertyDefinition#getField() is null for this shape, so the join falls back"
+                        + " to the field named by the setter's implied name; document: " + document);
     }
 
     @Test
-    @DisplayName("W1 control: the same shape with a getter still borrows the constraint (unaffected)")
+    @DisplayName("control: the same shape with a getter still borrows the constraint")
     void writeAndReadableFieldConstraintIsStillBorrowed() {
         JsonNode document = document(SetterAndGetter.class);
         JsonNode level = document.path("properties").path("level");
@@ -121,21 +115,19 @@ class SetterOnlyFieldBorrowTest {
         assertEquals(
                 3,
                 level.path("maxLength").asInt(-1),
-                "control: a field reachable through a getter is unaffected by W1 — getField() resolves"
-                        + " normally, so the constraint must already be borrowed on unchanged production code;"
-                        + " document: " + document);
+                "control: a field reachable through a getter is borrowed — getField() resolves"
+                        + " normally, so the constraint is borrowed through it; document: " + document);
     }
 
-    // --- Reopened finding: a transient field with BOTH a getter and a setter, no validator ---
+    // --- A transient field with BOTH a getter and a setter, no validator ---
 
     /**
      * A private, {@code transient}, {@code @Max}-constrained numeric field bound through both a getter
      * and a setter. {@code BeanPropertyDefinition#getField()} is {@code null} for a transient field
-     * (Jackson's property definition has no field member for it), so W1's own fallback in {@link
-     * dev.vertique.json.schema.InputPropertyDescriber#borrowFieldAttributes} would be the only remaining
-     * path to the constraint — but that fallback is bounded to {@code candidate.getGetter() == null},
-     * which this shape does not satisfy (it has a getter), so neither path borrows the field's
-     * {@code @Max(10)} onto the published property.
+     * (Jackson's property definition has no field member for it), so the implied-name fallback in
+     * {@link dev.vertique.json.schema.InputPropertyDescriber#borrowFieldAttributes} is the path to the
+     * constraint — and it must fire whether or not a getter is also present, so the field's
+     * {@code @Max(10)} is borrowed onto the published property.
      */
     static final class TransientNumericField {
         @Max(10)
@@ -165,9 +157,8 @@ class SetterOnlyFieldBorrowTest {
     }
 
     @Test
-    @DisplayName(
-            "REOPENED: a transient numeric field with a getter and a setter loses its @Max without a" + " validator")
-    void transientNumericFieldWithGetterAndSetterLosesMaxWithoutAValidator() {
+    @DisplayName("a transient numeric field with a getter and a setter keeps its @Max without a validator")
+    void transientNumericFieldWithGetterAndSetterKeepsMaxWithoutAValidator() {
         JsonNode document = document(TransientNumericField.class);
         JsonNode level = document.path("properties").path("level");
 
@@ -177,17 +168,15 @@ class SetterOnlyFieldBorrowTest {
         assertEquals(
                 10,
                 level.path("maximum").asInt(-1),
-                "REOPENED DECISIVE: a transient field's own @Max(10) must still be borrowed onto the published"
+                "a transient field's own @Max(10) must still be borrowed onto the published"
                         + " property even though it also has a getter — getField() is null for a transient field"
-                        + " (no field member in Jackson's property definition), and the write-only fallback added"
-                        + " for W1 only fires when there is also no getter, so this shape currently falls through"
-                        + " both paths unborrowed; document: " + document);
+                        + " (no field member in Jackson's property definition), so the implied-name fallback"
+                        + " must fire whether or not a getter exists; document: " + document);
     }
 
     @Test
-    @DisplayName(
-            "REOPENED: a transient String field with a getter and a setter loses its @Size without a" + " validator")
-    void transientStringFieldWithGetterAndSetterLosesSizeWithoutAValidator() {
+    @DisplayName("a transient String field with a getter and a setter keeps its @Size without a validator")
+    void transientStringFieldWithGetterAndSetterKeepsSizeWithoutAValidator() {
         JsonNode document = document(TransientStringField.class);
         JsonNode token = document.path("properties").path("token");
 
@@ -197,14 +186,13 @@ class SetterOnlyFieldBorrowTest {
         assertEquals(
                 3,
                 token.path("maxLength").asInt(-1),
-                "REOPENED DECISIVE: a transient field's own @Size(max = 3) must still be borrowed onto the"
+                "a transient field's own @Size(max = 3) must still be borrowed onto the"
                         + " published property even though it also has a getter, for the same reason as the"
                         + " numeric shape above; document: " + document);
     }
 
     @Test
-    @DisplayName("REOPENED control: a validator-backed generator still publishes the transient numeric field's"
-            + " @Max, unaffected by the no-validator gap above")
+    @DisplayName("control: a validator-backed generator also publishes the transient numeric field's @Max")
     void transientNumericFieldConstraintIsPublishedUnderAValidator() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode document = document(TransientNumericField.class, validator);
@@ -216,7 +204,7 @@ class SetterOnlyFieldBorrowTest {
                 level.path("maximum").asInt(-1),
                 "control: the Bean Validation metadata supplement reads the field directly (not through"
                         + " Jackson's getField() join), so a validator-backed generator must publish the"
-                        + " constraint regardless of the no-validator gap this class otherwise proves; document: "
+                        + " constraint as well; document: "
                         + document);
     }
 }

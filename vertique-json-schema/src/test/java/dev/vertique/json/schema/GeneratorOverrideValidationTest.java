@@ -165,18 +165,11 @@ class GeneratorOverrideValidationTest {
      * A map key position never receives a profile fragment, while a map <em>value</em> position and an
      * ordinary (non-key) type position both do.
      *
-     * <p><strong>Updated by rest-023 T003 ({@code D001}).</strong> Before T003, at the pinned Victools
-     * 4.38.0 {@code OptionPreset.PLAIN_JSON} configuration, a resolved {@code Map} generated a bare
-     * {@code {"type":"object"}} with no {@code additionalProperties} member at all, so neither the key
-     * nor the value type was resolved into the document and a value-side fragment assertion was
-     * unfalsifiable — that absence was asserted explicitly so the test would fail, rather than silently
-     * changing meaning, once a future version started emitting map value schemas. T003 is that version:
-     * a {@code Map<K,V>} value position is now described through the shared value-position renderer,
-     * whose override-first step ({@code createDefinitionReference}) applies a declared profile override
-     * on {@code V} exactly as it would for any other value position — so {@link
-     * HardeningFixtures#DecimalValuedMapDto}'s own {@code Map<String, BigDecimal>} value now receives
-     * the fragment, while {@link HardeningFixtures#DecimalKeyedMapDto}'s own key position still does not
-     * (D001's own map-key exclusion is unchanged).
+     * <p>A {@code Map<K,V>} value position is described through the shared value-position renderer,
+     * whose override-first step ({@code createDefinitionReference}) applies a declared profile
+     * override on {@code V} exactly as it would for any other value position — so {@link
+     * HardeningFixtures#DecimalValuedMapDto}'s own {@code Map<String, BigDecimal>} value receives the
+     * fragment, while {@link HardeningFixtures#DecimalKeyedMapDto}'s own key position does not.
      */
     @Test
     @DisplayName("A map key position never receives a fragment, while a map value position and a non-key position do")
@@ -194,12 +187,12 @@ class GeneratorOverrideValidationTest {
                 keyed.contains(HardeningFixtures.MAP_POSITION_MARKER),
                 "a map key position must stay mapper-owned; was: " + keyed);
 
-        // When/Then (T003): a Map<String, BigDecimal> value position now receives the fragment, through
-        // the shared renderer's own override-first step.
+        // When/Then: a Map<String, BigDecimal> value position receives the fragment, through the
+        // shared renderer's own override-first step.
         String valued = generator.generateCanonical(HardeningFixtures.DecimalValuedMapDto.class);
         assertTrue(
                 valued.contains(HardeningFixtures.MAP_POSITION_MARKER),
-                "a map value position must receive the fragment (T003); was: " + valued);
+                "a map value position must receive the fragment; was: " + valued);
 
         // When/Then: an ordinary non-key type position does receive the fragment.
         String element = generator.generateCanonical(ProofFixtures.LIST_OF_BIG_DECIMAL);
@@ -208,14 +201,14 @@ class GeneratorOverrideValidationTest {
                 "a resolved collection element must receive the fragment; was: " + element);
     }
 
-    // --- F6 (security review round 1, MEDIUM): an INPUT override for a bean-like type must close it ---
+    // --- An INPUT override for a bean-like type must close it ---
 
     @Test
-    @DisplayName("F6: an INPUT override for a bean-like type declaring neither properties nor additionalProperties"
+    @DisplayName("an INPUT override for a bean-like type declaring neither properties nor additionalProperties"
             + " is refused at construction, bounded")
     void openObjectOverrideForBeanLikeTypeAtInputIsRefused() {
         // Given: the documented remedy for a generator refusal, applied bare — {"type":"object"} — for a
-        // bean-like type (a public-field DTO, exactly what F1's own beanLike check would also treat as
+        // bean-like type (a public-field DTO, exactly what the generator's own beanLike check treats as
         // bean-like).
         JsonMapperProfile profile = HardeningFixtures.profile(
                 PROFILE_ID,
@@ -236,7 +229,7 @@ class GeneratorOverrideValidationTest {
     }
 
     @Test
-    @DisplayName("F6: declaring properties (or additionalProperties) remedies the open-override refusal")
+    @DisplayName("declaring properties (or additionalProperties) remedies the open-override refusal")
     void closedOverrideForBeanLikeTypeAtInputIsAccepted() {
         JsonMapperProfile withProperties = HardeningFixtures.profile(
                 PROFILE_ID,
@@ -254,17 +247,17 @@ class GeneratorOverrideValidationTest {
     }
 
     @Test
-    @DisplayName("F6: a non-bean-like type's open override, and an OUTPUT-direction override, are unaffected")
+    @DisplayName("a non-bean-like type's open override, and an OUTPUT-direction override, are unaffected")
     void openOverrideIsScopedToInputBeanLikeTypesOnly() {
         // A non-bean-like type (no introspected properties — a private final field with no accessor,
-        // exactly the shape F1's own beanLike check exempts) carries no open-object risk.
+        // exactly the shape the generator's own beanLike check exempts) carries no open-object risk.
         JsonMapperProfile scalarOverride = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         NotBeanLike.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
         AnnotationJsonSchemaGenerator.forInputProfile(scalarOverride); // must not throw
 
-        // An OUTPUT-direction override is not the F1/F3 refusal's documented remedy and is unaffected.
+        // An OUTPUT-direction override is not the refusal's documented remedy and is unaffected.
         JsonMapperProfile outputOverride = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.output(
@@ -272,21 +265,17 @@ class GeneratorOverrideValidationTest {
         AnnotationJsonSchemaGenerator.forOutputProfile(outputOverride); // must not throw
     }
 
-    // --- W3 (spike/deserializer-driven-schema round 4 ruling): over-refused bean-like overrides ---
+    // --- Non-object-shaped bean-like overrides are accepted ---
 
     /**
-     * W3: an override whose {@code type} is an array not containing {@code "object"}, or which carries
+     * An override whose {@code type} is an array not containing {@code "object"}, or which carries
      * {@code enum}/{@code const}, or whose every {@code oneOf} branch itself satisfies the rule, fully
      * constrains a bean-like type's wire shape with no property-level position an unconstrained extra
-     * key could hide in — the same open-object risk {@link #requireClosedOrDeclaredForBeanLikeType} (F6)
-     * exists to catch is simply absent from these shapes. The current check only exempts a fragment
-     * whose {@code type} is a single non-"object" string, so each of these four shapes is refused today.
-     *
-     * <p>The owner ruling records the fix direction but this class only authors the proof, never the
-     * production change.
+     * key could hide in — the same open-object risk {@link #requireClosedOrDeclaredForBeanLikeType}
+     * exists to catch is simply absent from these shapes, so each of these four shapes is accepted.
      */
     @Test
-    @DisplayName("W3: a nullable-string type array, an enum, a const, and an all-scalar oneOf must each be"
+    @DisplayName("a nullable-string type array, an enum, a const, and an all-scalar oneOf must each be"
             + " accepted for a bean-like type at INPUT, not refused as an open object")
     void nonObjectShapedOverridesForBeanLikeTypeAreAccepted() {
         // assertAll so every one of the four shapes is checked and reported independently, rather than
@@ -306,11 +295,11 @@ class GeneratorOverrideValidationTest {
     }
 
     @Test
-    @DisplayName("W3 control: a bare {\"type\":\"object\"} override for a bean-like type stays refused")
+    @DisplayName("control: a bare {\"type\":\"object\"} override for a bean-like type stays refused")
     void plainObjectOverrideForBeanLikeTypeStaysRefused() {
-        // The existing F6 regression guard (openObjectOverrideForBeanLikeTypeAtInputIsRefused) already
-        // pins this; restated here beside the four W3 shapes so the four accepted forms and this one
-        // refused form are read together as one contrast.
+        // openObjectOverrideForBeanLikeTypeAtInputIsRefused already pins this; restated here beside
+        // the four accepted shapes so the four accepted forms and this one refused form are read
+        // together as one contrast.
         JsonMapperProfile profile = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
@@ -340,7 +329,7 @@ class GeneratorOverrideValidationTest {
             AnnotationJsonSchemaGenerator.forInputProfile(profile);
         } catch (JsonSchemaGenerationException refused) {
             throw new AssertionError(
-                    "W3 DECISIVE: " + fragmentJson + " must be accepted at construction (" + why + "); was refused: "
+                    fragmentJson + " must be accepted at construction (" + why + "); was refused: "
                             + refused.getMessage(),
                     refused);
         }
