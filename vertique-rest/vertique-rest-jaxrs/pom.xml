@@ -52,6 +52,18 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-sanitization</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- The Swagger reader and the framework's OpenAPI extensions, the build-time side of the security
+             parity test. -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-jaxrs2-jakarta</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-openapi-plugin</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- The real DefaultConfigParser for the jaxrs.applications parse tests; this module's test
              ConfigParser stubs refuse parseKeyedObject. -->
         <dependency>

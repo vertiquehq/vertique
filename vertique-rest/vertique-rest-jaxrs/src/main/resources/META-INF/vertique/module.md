@@ -1777,6 +1777,10 @@ with OpenAPI's precedence; the first rule that applies decides an operation's re
 4. the document's requirements, each `@SecurityRequirement` one OR alternative, in declaration order;
 5. none.
 
+The build-time `openapi.json` that the `vertique-rest-openapi-plugin` produces follows the same order for the method and class
+levels: its `SecurityRequirementsExtension` replaces the class-level requirements with the method's own, and writes
+`security: []` for an operation made public by the empty marker.
+
 ```java
 @RestApplication(name = "orders", path = "/api/orders", resources = OrderResource.class)
 @OpenAPIDefinition(security = @SecurityRequirement(name = "bearerAuth"))
