@@ -599,11 +599,10 @@ class GeneratedBindingMetaLoaderTest {
         }
     }
 
-    // --- Dual-annotation parity test (Fix 3) ---
+    // --- Dual-annotation parity test ---
 
     @Nested
-    @DisplayName(
-            "Fix 3: dual-annotation — scanKafkaSources ignores ROUTER/HANDLER metas; scanListeners ignores SOURCE metas")
+    @DisplayName("dual-annotation — scanKafkaSources ignores ROUTER/HANDLER metas; scanListeners ignores SOURCE metas")
     class DualAnnotationTests {
 
         @Test

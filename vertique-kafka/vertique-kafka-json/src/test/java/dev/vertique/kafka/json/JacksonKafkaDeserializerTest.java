@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link JacksonKafkaDeserializer}: successful deserialization, failure on invalid
  * JSON, failure on empty bytes, custom {@link ObjectMapper} configuration propagation, and
- * security-critical value-free failure messages (W2: offending record value must not leak into the
+ * security-critical value-free failure messages (offending record value must not leak into the
  * exception message string).
  */
 class JacksonKafkaDeserializerTest {
@@ -124,10 +124,10 @@ class JacksonKafkaDeserializerTest {
         }
     }
 
-    // --- Security: value-free failure messages (W2) ---
+    // --- Security: value-free failure messages ---
 
     @Nested
-    @DisplayName("Security: deserialization-failure messages are value-free (W2)")
+    @DisplayName("Security: deserialization-failure messages are value-free")
     class ValueFreeMessages {
 
         /**

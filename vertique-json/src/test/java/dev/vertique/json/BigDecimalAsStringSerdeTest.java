@@ -307,7 +307,7 @@ class BigDecimalAsStringSerdeTest {
         }
     }
 
-    // --- Read-side message hygiene (json-004) ---
+    // --- Read-side message hygiene ---
 
     @Nested
     @DisplayName("Read-side rejection message hygiene")
@@ -338,7 +338,7 @@ class BigDecimalAsStringSerdeTest {
         }
     }
 
-    // --- Write-side length bound (json-004) ---
+    // --- Write-side length bound ---
 
     @Nested
     @DisplayName("Write-side length bound")
@@ -418,7 +418,7 @@ class BigDecimalAsStringSerdeTest {
         }
     }
 
-    // --- Negative-scale zero exemption (json-004 R2-2) ---
+    // --- Negative-scale zero exemption ---
 
     @Nested
     @DisplayName("Negative-scale zero exemption")

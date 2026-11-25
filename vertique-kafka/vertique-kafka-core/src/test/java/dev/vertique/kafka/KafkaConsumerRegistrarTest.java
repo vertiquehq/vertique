@@ -916,9 +916,8 @@ class KafkaConsumerRegistrarTest {
      * Proves that {@link KafkaConsumerRegistrar#scan} WARN-logs a deserializer {@code close()}
      * failure on the registration-abort cleanup path instead of swallowing it silently.
      *
-     * <p>The test is RED before the fix (no WARN emitted — the exception is swallowed) and GREEN
-     * after ({@code log.warn(..., closeFailure)} is added in
-     * {@code closeFrameworkOwnedDeserializers}).
+     * <p>The failure is logged with {@code log.warn(..., closeFailure)} in
+     * {@code closeFrameworkOwnedDeserializers} rather than swallowed.
      *
      * <p>Log capture uses a Logback {@link ListAppender} attached to the
      * {@code KafkaConsumerRegistrar} class logger, mirroring the pattern used in
@@ -1005,7 +1004,6 @@ class KafkaConsumerRegistrarTest {
 
             // Then: a WARN is captured by KafkaConsumerRegistrar naming the consumer
             // "throw-close-avro".
-            // RED before the fix (swallowed → no WARN), GREEN after (log.warn is added).
             String capturedWarns = logAppender.list.stream()
                     .filter(e -> e.getLevel() == Level.WARN)
                     .map(ILoggingEvent::getFormattedMessage)

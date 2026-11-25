@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Tests that {@link KafkaProducerFactory} reads the {@link JsonProfile @JsonProfile} annotation on a
  * {@code @KafkaProducer} interface as the sole per-binding profile selector, applying the
- * FR-JSON-066 method-level reject at <em>producer-build time</em>.
+ * method-level reject at <em>producer-build time</em>.
  *
  * <p>Build time for a producer is {@link KafkaProducerFactory#resolveMethodSerializers}: the static
  * seam the sibling {@code ProducerValueJsonProfilePrecedenceTest} already drives to observe the
@@ -50,7 +50,7 @@ class KafkaProducerFactoryJsonProfileTest {
         Future<RecordMetadata> publish(Payload value);
     }
 
-    /** Method-level {@code @JsonProfile} on a {@code @KafkaProducer} interface (FR-066 reject). */
+    /** Method-level {@code @JsonProfile} on a {@code @KafkaProducer} interface (rejected). */
     @KafkaProducer(name = "p")
     interface MethodLevelJsonProfileProducer {
         @Topic("the.topic")
@@ -104,7 +104,7 @@ class KafkaProducerFactoryJsonProfileTest {
                 producerInterface, "p", typed.producerIndex().get("p"), typed, registry);
     }
 
-    // --- 1. interface @JsonProfile is read (FR-JSON-060/062) ---
+    // --- 1. interface @JsonProfile is read ---
 
     @Test
     @DisplayName("producerInterfaceWithJsonProfileAnnotation_usesProfileForSerialization — @JsonProfile(\"orders-v2\")"
@@ -123,7 +123,7 @@ class KafkaProducerFactoryJsonProfileTest {
                 "interface-level @JsonProfile(\"orders-v2\") must reach the producer serde bag");
     }
 
-    // --- 2. method-level @JsonProfile on a TYPE-only boundary fails fast (FR-JSON-066) ---
+    // --- 2. method-level @JsonProfile on a TYPE-only boundary fails fast ---
 
     @Test
     @DisplayName(
@@ -142,7 +142,7 @@ class KafkaProducerFactoryJsonProfileTest {
         assertTrue(message.contains("TYPE"), "message should name the required TYPE-level placement: " + message);
     }
 
-    // --- 3. legacy attribute removal (Phase 3 contract) ---
+    // --- 3. legacy attribute removal ---
 
     @Test
     @DisplayName("kafkaProducerValueJsonProfileAttribute_noLongerExists — the legacy attribute method is gone")

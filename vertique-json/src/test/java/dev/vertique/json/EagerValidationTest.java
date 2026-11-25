@@ -22,7 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves that NFR-JSON-002A's eager validation seam works end-to-end through the Dagger graph.
+ * Proves that the eager validation seam works end-to-end through the Dagger graph.
  *
  * <p>Dagger constructs {@code @Singleton}s lazily — the first accessor call on the component forces
  * construction. This test verifies that:

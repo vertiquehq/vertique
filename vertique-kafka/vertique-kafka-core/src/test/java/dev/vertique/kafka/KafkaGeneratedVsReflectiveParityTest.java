@@ -439,10 +439,10 @@ class KafkaGeneratedVsReflectiveParityTest {
         }
     }
 
-    // --- Fix 1 parity: generic payload route ---
+    // --- Parity: generic payload route ---
 
     /**
-     * Parity test for Fix 1 — a router route with a generic payload type.
+     * Parity test for a router route with a generic payload type.
      *
      * <p>The generated path must emit the erased type ({@code Envelope.class}) so that
      * {@link GeneratedBindingMetaLoader#toRouterEntry} produces the same {@link ConsumerEntry}
@@ -450,7 +450,7 @@ class KafkaGeneratedVsReflectiveParityTest {
      * (which also operates on erased types).
      */
     @Nested
-    @DisplayName("Fix 1: generic-payload route parity (generated vs reflective)")
+    @DisplayName("generic-payload route parity (generated vs reflective)")
     class GenericPayloadRouteParity {
 
         /** Simple generic envelope wrapper. */
@@ -520,7 +520,7 @@ class KafkaGeneratedVsReflectiveParityTest {
                                     "",
                                     "order",
                                     false,
-                                    // Erased type — mirrors what the emitter now produces after Fix 1
+                                    // Erased type — mirrors what the emitter produces
                                     Envelope.class,
                                     GenericTarget.class,
                                     "process"),
@@ -545,10 +545,10 @@ class KafkaGeneratedVsReflectiveParityTest {
         }
     }
 
-    // --- Fix 2 parity: inherited @KafkaHandler router ---
+    // --- Parity: inherited @KafkaHandler router ---
 
     /**
-     * Parity test for Fix 2 — a router that inherits a {@code @KafkaHandler} method from
+     * Parity test for a router that inherits a {@code @KafkaHandler} method from
      * a super-interface.
      *
      * <p>The generated path must produce the same {@link ConsumerEntry} as the reflective path
@@ -556,7 +556,7 @@ class KafkaGeneratedVsReflectiveParityTest {
      * and {@code Class.getMethods()} scanning in the runtime produce equivalent metas.
      */
     @Nested
-    @DisplayName("Fix 2: inherited-handler router parity (generated vs reflective)")
+    @DisplayName("inherited-handler router parity (generated vs reflective)")
     class InheritedHandlerRouterParity {
 
         /** Base interface providing the inherited handler. */
@@ -585,7 +585,7 @@ class KafkaGeneratedVsReflectiveParityTest {
             assertEquals(ConsumerEntry.Kind.ROUTER, reflective.kind());
             assertEquals(2, reflective.routes().size(), "Expected 2 routes (inherited + default)");
 
-            // The generated meta mirrors what the processor now emits after Fix 2:
+            // The generated meta mirrors what the processor emits:
             // the inherited route is included in the routes list.
             KafkaBindingMeta meta = new KafkaBindingMeta(
                     "inherited-router",
@@ -622,19 +622,19 @@ class KafkaGeneratedVsReflectiveParityTest {
         }
     }
 
-    // --- Fix 1 parity: payload-first with trailing context router ---
+    // --- Parity: payload-first with trailing context router ---
 
     /**
      * Parity test verifying that a router with {@code (SomeEvent event, MyCtx ctx)} handler
      * parameters produces matching generated and reflective {@link ConsumerEntry} instances.
      *
-     * <p>After Fix 1 (payload-must-be-first enforcement), the reflective scanner reads
-     * {@code params[0]} as the payload type, and the codegen emitter (after validation ensures
+     * <p>With the payload-must-be-first rule enforced, the reflective scanner reads
+     * {@code params[0]} as the payload type, and the codegen emitter (once validation ensures
      * {@code params[0]} is the payload) uses {@link dev.vertique.kafka.KafkaParamClassifier} to
      * resolve the same type. Both must agree: {@code SomeEvent.class}.
      */
     @Nested
-    @DisplayName("Fix 1 (parity): payload-first with trailing context — generated == reflective")
+    @DisplayName("payload-first with trailing context — generated == reflective")
     class PayloadFirstWithTrailingContextParity {
 
         /** A {@code @DispatchContextValue}-annotated type usable as a trailing context parameter. */
@@ -675,7 +675,7 @@ class KafkaGeneratedVsReflectiveParityTest {
             assertEquals(
                     ParityEvent.class, createdRoute.valueType(), "Reflective path must use params[0] = ParityEvent");
 
-            // Generated path: hand-build the meta the processor would emit after Fix-1 validation
+            // Generated path: hand-build the meta the processor would emit once validation
             // ensures payload is first.  The emitter resolves the payload type from params[0] via
             // KafkaParamClassifier — which is SomeEvent (the payload), not TrailingCtx (context).
             KafkaBindingMeta meta = new KafkaBindingMeta(

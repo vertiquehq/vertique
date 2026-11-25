@@ -473,8 +473,8 @@ class KafkaConfigTest {
     @Test
     @DisplayName("a secret nested inside a JsonArray element object is masked in toString but intact live")
     void arrayNestedSecretScrubbed() {
-        // An open bag may carry an array of objects; a secret nested under an array index leaked
-        // verbatim before the shared array-aware redactor (gap W2). The runtime flatten also
+        // An open bag may carry an array of objects; a secret nested under an array index must be
+        // masked by the shared array-aware redactor. The runtime flatten also
         // propagates array-nested values, so it MUST be masked at every depth.
         JsonObject kafka = new JsonObject()
                 .put(

@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
  * <p>Covers format resolution for Models 1, 2, and 4 (BINDING/HANDLER kinds), threading
  * enforcement for {@code mayBlock} deserializers, validation rules around custom deserializers
  * (Model 2), and provider-required validation: the json provider (via {@link TestJsonSerdeProvider})
- * is now required for any consumer that resolves to the "json" format (no built-in fallback).
+ * is required for any consumer that resolves to the "json" format (no built-in fallback).
  *
  * <p>A {@link FakeAvroProvider} stands in for a real Avro format provider; it auto-detects
  * {@link FakeRecord} types and reports {@code mayBlock=true}.
@@ -412,7 +412,7 @@ class KafkaConsumerFormatSelectionTest {
     // ===========================================================================================
 
     @Nested
-    @DisplayName("Threading enforcement (NFR-AVRO-005)")
+    @DisplayName("Threading enforcement")
     class ThreadingEnforcement {
 
         @Test
@@ -465,7 +465,7 @@ class KafkaConsumerFormatSelectionTest {
             assertEquals("avro", entry.valueFormat(), "format is still resolved for diagnostics");
             assertNull(entry.deserializer(), "a disabled consumer must not RETAIN a registry-backed serde");
             assertFalse(entry.frameworkOwnedDeserializer());
-            // The disabled path now validates the full config (incl. jsonProfile) by building a
+            // The disabled path validates the full config (incl. jsonProfile) by building a
             // probe deserializer and closing it immediately — the probe is built then closed, never
             // retained on the entry.
             assertTrue(
@@ -527,7 +527,7 @@ class KafkaConsumerFormatSelectionTest {
         @Test
         @DisplayName("a disabled json consumer is still rejected when no json provider is registered")
         void disabledJsonConsumerRequiresJsonProvider() {
-            // No providers at all — even the json format requires a registered provider now
+            // No providers at all — even the json format requires a registered provider
             JsonObject kafkaConfig = new JsonObject()
                     .put("consumers", new JsonObject().put("off-json", new JsonObject().put("enabled", false)));
             List<String> violations = new ArrayList<>();

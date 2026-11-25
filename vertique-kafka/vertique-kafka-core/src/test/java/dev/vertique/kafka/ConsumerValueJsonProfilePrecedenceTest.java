@@ -15,18 +15,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the consumer {@code jsonProfile} precedence (slice 4.2 + slice 2.4 extension):
+ * Unit tests for the consumer {@code jsonProfile} precedence:
  * config wins over the binding/listener default, which wins over the {@code kafka.jsonProfile}
  * boundary default, which wins over the {@code vertx} default. The resolved id is threaded into the
  * merged {@code serdeConfig} bag under the top-level {@code "jsonProfile"} key (present only when
  * non-null/non-blank), where {@link JsonSerdeProvider} reads it at deserializer-build time.
  *
- * <p>Slice 2.4 adds three new tests that prove the {@code kafka.jsonProfile} tier:
+ * <p>The {@code kafka.jsonProfile} tier is proved by:
  * <ul>
  *   <li>{@code configOverBoundaryDefault} — per-consumer config beats the boundary default;</li>
  *   <li>{@code listenerDefaultOverBoundaryDefault} — listener default beats the boundary default;</li>
  *   <li>{@code kafkaBoundaryApplies} — boundary default applies when no per-consumer/listener default;</li>
- *   <li>{@code vertiqueFloor} — nothing set leaves the bag key absent (FR-JSON-057).</li>
+ *   <li>{@code vertiqueFloor} — nothing set leaves the bag key absent.</li>
  * </ul>
  */
 @DisplayName("Consumer jsonProfile precedence")
@@ -65,7 +65,7 @@ class ConsumerValueJsonProfilePrecedenceTest {
                 .put("consumers", new JsonObject().put(name, new JsonObject().put("jsonProfile", profile)));
     }
 
-    // --- Pre-existing (slice 4.2) ---
+    // --- Per-consumer and listener precedence ---
 
     @Test
     @DisplayName("config jsonProfile 'A' wins over binding/listener default 'B'")
@@ -88,7 +88,7 @@ class ConsumerValueJsonProfilePrecedenceTest {
         assertNull(config.serdeConfig().getString("jsonProfile"));
     }
 
-    // --- Slice 2.4: kafka.jsonProfile boundary tier ---
+    // --- kafka.jsonProfile boundary tier ---
 
     @Test
     @DisplayName("configOverBoundaryDefault: consumer config 'a' wins over kafka.jsonProfile 'b'")
@@ -102,8 +102,6 @@ class ConsumerValueJsonProfilePrecedenceTest {
         ResolvedKafkaConsumerConfig config = resolve("c", null, kafkaJson);
 
         // Then: the per-consumer config wins (most specific tier)
-        // RED: KafkaConfig does not yet have jsonProfile, so this test will fail
-        // until the neutral field is added AND the chain is extended.
         assertEquals(
                 "a",
                 config.serdeConfig().getString("jsonProfile"),
@@ -120,7 +118,6 @@ class ConsumerValueJsonProfilePrecedenceTest {
         ResolvedKafkaConsumerConfig config = resolve("c", "a", kafkaJson);
 
         // Then: the listener default wins over the kafka boundary default
-        // RED: KafkaConfig.jsonProfile field does not exist yet.
         assertEquals(
                 "a",
                 config.serdeConfig().getString("jsonProfile"),
@@ -137,8 +134,6 @@ class ConsumerValueJsonProfilePrecedenceTest {
         ResolvedKafkaConsumerConfig config = resolve("c", null, kafkaJson);
 
         // Then: the kafka boundary default reaches the serde bag
-        // RED: KafkaConfig.jsonProfile field does not exist yet AND the chain is not extended,
-        // so the serde bag will NOT carry "b" — this assertion will fail red.
         assertEquals(
                 "b",
                 config.serdeConfig().getString("jsonProfile"),
@@ -146,7 +141,7 @@ class ConsumerValueJsonProfilePrecedenceTest {
     }
 
     @Test
-    @DisplayName("vertiqueFloor: nothing set leaves the bag key absent (FR-JSON-057)")
+    @DisplayName("vertiqueFloor: nothing set leaves the bag key absent")
     void vertiqueFloor() {
         // Given: no kafka.jsonProfile, no per-consumer, no listener default
         ResolvedKafkaConsumerConfig config = resolve("c", null, new JsonObject());

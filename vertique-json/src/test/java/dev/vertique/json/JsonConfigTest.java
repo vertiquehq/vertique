@@ -22,7 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 2.1 RED tests for {@link JsonConfig} — boundary parsing of the {@code json} section into the
+ * Tests for {@link JsonConfig} — boundary parsing of the {@code json} section into the
  * typed record, via a {@link ConfigParser}.
  *
  * <p>Verifies that:
@@ -73,13 +73,13 @@ class JsonConfigTest {
     }
 
     /**
-     * TP-001 — {@code JsonConfig} carries two profile keys ({@code jsonProfile}, {@code
+     * {@code JsonConfig} carries two profile keys ({@code jsonProfile}, {@code
      * systemProfile}); {@link JsonConfig#effectiveProfile()} floors at the reserved {@code vertique}
      * id and {@link JsonConfig#effectiveSystemProfile()} floors at the reserved {@link
      * JsonProfileId#SYSTEM} id; the retired {@code vertx} id is rejected by {@link
      * JsonDefaultProfileValidator} naming the rename.
      *
-     * <p>Rows (contract table + T010 TP-001 Given/Then):
+     * <p>Rows:
      *
      * <ol>
      *   <li>{@code JsonConfig.defaults()} → both accessors floor to ({@code vertique}, {@code
@@ -119,7 +119,7 @@ class JsonConfigTest {
                 "an unset jsonProfile must validate cleanly against the seeded registry");
 
         // Row 2: new JsonConfig(" ", " ") -> blank (not null) -> the same floors as row 1. This is
-        // the sensitivity row named by TP-001: flooring effectiveSystemProfile() at vertique instead
+        // the sensitivity row: flooring effectiveSystemProfile() at vertique instead
         // of system would make this assertion (and row 1's) fail.
         JsonConfig blank = new JsonConfig(" ", " ");
         assertEquals(
@@ -180,8 +180,8 @@ class JsonConfigTest {
                 "the vertx rejection must name the rename (mention both 'vertx' and 'system'): "
                         + vertxEx.getMessage());
 
-        // Row 6: new JsonConfig(null, "vertx") -> the system-role key is validated at VALIDATE as well
-        // (security review): a retired or unknown json.systemProfile must not boot silently.
+        // Row 6: new JsonConfig(null, "vertx") -> the system-role key is validated at VALIDATE as well,
+        // so a retired or unknown json.systemProfile cannot boot silently.
         JsonConfig systemVertx = new JsonConfig(null, "vertx");
         JsonProfileConfigurationException systemVertxEx = assertThrows(
                 JsonProfileConfigurationException.class,

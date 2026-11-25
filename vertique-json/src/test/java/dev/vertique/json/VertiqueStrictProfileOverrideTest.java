@@ -17,11 +17,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests proving the {@code vertique-strict} profile's declared JSON Schema override
- * (FR-JSON-089): a single {@code BigDecimal} {@link Direction#BOTH} override whose fragment is
- * built from the shared {@link BigDecimalStrictStringDeserializer} grammar constants — never a
- * second, independently maintained copy of the bound or the pattern — and that the other two
- * built-in profiles declare no overrides at all.
+ * Unit tests proving the {@code vertique-strict} profile's declared JSON Schema override: a single
+ * {@code BigDecimal} {@link Direction#BOTH} override whose fragment is built from the shared
+ * {@link BigDecimalStrictStringDeserializer} grammar constants — never a second, independently
+ * maintained copy of the bound or the pattern — and that the other two built-in profiles declare no
+ * overrides at all.
  */
 class VertiqueStrictProfileOverrideTest {
 

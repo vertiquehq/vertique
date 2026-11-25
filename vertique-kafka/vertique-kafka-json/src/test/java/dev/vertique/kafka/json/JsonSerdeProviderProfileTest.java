@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link JsonSerdeProvider} profile resolution (slice 4.2): the provider reads the
+ * Unit tests for {@link JsonSerdeProvider} profile resolution: the provider reads the
  * {@code jsonProfile} key from the merged serde-config bag and resolves the backing
  * {@code ObjectMapper} from an injected {@link DefaultJsonMapperProfileRegistry}.
  *
@@ -41,14 +41,14 @@ import org.junit.jupiter.api.Test;
  * {@code int} is expected) is rejected by that profile but accepted by the lenient {@code vertique}
  * floor. That observable difference proves which mapper each <em>deserializing</em> method used.
  *
- * <p>For the <em>serializing</em> path (slice 4.3, producer threading), the {@code "indent"}
+ * <p>For the <em>serializing</em> path (producer threading), the {@code "indent"}
  * application profile enables {@link SerializationFeature#INDENT_OUTPUT}, so a record serializes to
  * pretty-printed bytes (containing a newline) under the profile mapper but to compact bytes under the
  * {@code vertique} floor — proving {@link JsonSerdeProvider#serializer} honors the resolved profile
  * mapper. {@code INDENT_OUTPUT} changes only whitespace, so the registry's structural round-trip probe
  * still passes (unlike {@code JsonInclude.Include.NON_NULL}, which would drop fields and fail it).
  *
- * <p>The security-message tests (W2 fix) assert that deserialization-failure messages are value-free:
+ * <p>The security-message tests assert that deserialization-failure messages are value-free:
  * the offending scalar ({@code "5"}) must not appear in the {@link dev.vertique.kafka.DeserializationException}
  * message string, but the Jackson cause must still be preserved for diagnostics.
  */
@@ -170,7 +170,7 @@ class JsonSerdeProviderProfileTest {
         }
     }
 
-    // --- serde-bag key rename (S6): jsonProfile selects, stale valueJsonProfile is ignored ---
+    // --- serde-bag key: jsonProfile selects, stale valueJsonProfile is ignored ---
 
     @Nested
     @DisplayName("resolveMapper reads the renamed jsonProfile bag key, not the retired valueJsonProfile key")
@@ -250,10 +250,10 @@ class JsonSerdeProviderProfileTest {
         }
     }
 
-    // --- security: value-free deserialization-failure messages (W2) ---
+    // --- security: value-free deserialization-failure messages ---
 
     @Nested
-    @DisplayName("deserialization-failure messages are value-free (W2 security fix)")
+    @DisplayName("deserialization-failure messages are value-free")
     class ValueFreeMessages {
 
         /**

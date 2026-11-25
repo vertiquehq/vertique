@@ -290,7 +290,7 @@ class KafkaProducerSerializerSelectionTest {
         }
     }
 
-    // --- Synchronous serialization failure becomes a failed Future (NFR-AVRO-003) ---
+    // --- Synchronous serialization failure becomes a failed Future ---
 
     @Nested
     @DisplayName("serialization failure surfaces as a failed Future, not a synchronous throw")

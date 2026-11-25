@@ -379,7 +379,7 @@ class VertiqueStrictProfileTest {
                 "the registered module count on the shared mapper must be unchanged");
     }
 
-    // --- T008 TP-005 (FR-017, AC-017.1): repeated keys, per mapper and through the process codec ---
+    // --- Repeated keys, per mapper and through the process codec ---
 
     /** A body repeating an identical key, which every JSON parser is free to accept or refuse. */
     private static final String REPEATED_NOTE = "{\"note\":\"a\",\"note\":\"b\"}";
@@ -391,17 +391,15 @@ class VertiqueStrictProfileTest {
     private static final String TWO_SPELLINGS = "{\"quantity\":1,\"qty\":2}";
 
     /**
-     * T008 TP-005 (AC-017.1, the direct-read half). {@code vertique-strict}'s mapper enables
+     * The direct-read half of the repeated-key contract. {@code vertique-strict}'s mapper enables
      * {@code JsonParser.Feature.STRICT_DUPLICATE_DETECTION}, so it refuses a body repeating an
      * identical key on both read paths, while {@code vertique} and {@code system} accept it and keep
      * the last value.
      *
-     * <p>Behavior-change: at T008's parent every built-in mapper accepts both bodies (design proof
-     * v4, parser run). The enabled feature is also what FR-016's strict schema rule reads, so a
-     * mapper that stopped enabling it would silently turn every {@code oneOf} alias rule back into an
-     * {@code anyOf}.
+     * <p>The enabled feature is also what the strict schema rule reads, so a mapper that stopped
+     * enabling it would silently turn every {@code oneOf} alias rule back into an {@code anyOf}.
      *
-     * @throws Exception when a lenient read fails, which would itself be the finding
+     * @throws Exception when a lenient read fails, which would itself be a defect
      */
     @Test
     @DisplayName("Only vertique-strict rejects a repeated identical key on a direct read")
@@ -409,7 +407,7 @@ class VertiqueStrictProfileTest {
         ObjectMapper strict = strictMapper();
         DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
 
-        // assertAll, so the strict reds and the lenient characterizations are all observed in one run:
+        // assertAll, so the strict rejections and the lenient characterizations are all observed in one run:
         // the lenient rows are what makes the strict rejection a profile difference rather than a
         // parser-wide one, and a first failure must not hide them.
         List<Executable> checks = new ArrayList<>();
@@ -439,8 +437,8 @@ class VertiqueStrictProfileTest {
             checks.add(() -> assertEquals(
                     "b",
                     lenient.readTree(REPEATED_NOTE).get("note").asText(),
-                    lenientId.value() + " must accept a repeated key and keep the last value: FR-017 changes"
-                            + " vertique-strict alone"));
+                    lenientId.value() + " must accept a repeated key and keep the last value: only"
+                            + " vertique-strict rejects it"));
             checks.add(() -> assertEquals(
                     2,
                     lenient.readValue(REPEATED_QUANTITY, AliasedQuantity.class).quantity,
@@ -450,15 +448,14 @@ class VertiqueStrictProfileTest {
     }
 
     /**
-     * T008 TP-005 (AC-017.1, the two-spellings half). An alias sent beside its primary spelling is
+     * The two-spellings half of the repeated-key contract. An alias sent beside its primary spelling is
      * two different keys, so no built-in mapper refuses it — which is why the one-spelling rule under
      * {@code vertique-strict} has to be the schema's and cannot be the parser's.
      *
-     * <p>Behavior-preservation: green at T008's parent and after it. A mapper that started rejecting
-     * the pair would make FR-016's strict rule redundant rather than stricter, and must be
-     * re-recorded here rather than relaxed.
+     * <p>A mapper that started rejecting the pair would make the strict schema rule redundant rather
+     * than stricter, and must be re-recorded here rather than relaxed.
      *
-     * @throws Exception when a read fails, which is the finding
+     * @throws Exception when a read fails, which is a defect
      */
     @Test
     @DisplayName("Two spellings of one property are not duplicates to any built-in mapper")
@@ -481,16 +478,14 @@ class VertiqueStrictProfileTest {
     }
 
     /**
-     * T008 TP-005 (AC-017.1, the process-codec half). With {@code vertique-strict} installed as the
+     * The process-codec half of the repeated-key contract. With {@code vertique-strict} installed as the
      * process JSON codec's mapper — what {@code json.systemProfile: vertique-strict} does — the
      * codec's <em>delegated</em> decode methods reject a repeated identical key, while the streaming
      * {@code JacksonCodec} overloads and the static {@code DatabindCodec} parser helpers keep
      * accepting it. That exclusion is the codec's own documented contract; it is pinned here so a
-     * claim of process-wide rejection cannot silently widen (design proof v7,
-     * {@code runs/codec-coverage-v7.txt}).
+     * claim of process-wide rejection cannot silently widen.
      *
-     * <p>Behavior-change for the five delegated entry points, behavior-preservation for the three
-     * excluded ones.
+     * <p>The five delegated entry points reject; the three excluded ones keep accepting.
      */
     @Test
     @DisplayName("An installed vertique-strict codec rejects a repeated key only in its delegated decode methods")

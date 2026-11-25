@@ -587,7 +587,7 @@ class KafkaProducerCaptureHookTest {
         }
     }
 
-    // --- Producer operation (issue #638) ---
+    // --- Producer operation ---
 
     @Nested
     @DisplayName("Producer operation: hooks receive the @KafkaProducer interface and name")

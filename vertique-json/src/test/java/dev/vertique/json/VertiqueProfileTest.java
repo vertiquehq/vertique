@@ -33,11 +33,11 @@ import org.junit.jupiter.api.Test;
  * ({@link VertiqueJsonMapperProfile}) as seeded by {@link DefaultJsonMapperProfileRegistry}.
  *
  * <p>Verifies that the registry always seeds a {@code vertique} profile resolvable from an empty
- * application set (FR-JSON-043); that an application profile claiming the reserved {@code vertique}
- * id is rejected at construction (FR-JSON-044); that the {@code vertique} mapper is an independent
- * instance, never the shared Vert.x {@code DatabindCodec.mapper()} (FR-JSON-045); and that the
+ * application set; that an application profile claiming the reserved {@code vertique}
+ * id is rejected at construction; that the {@code vertique} mapper is an independent
+ * instance, never the shared Vert.x {@code DatabindCodec.mapper()}; and that the
  * {@code vertique} mapper applies the framework's opinionated JSON defaults without mutating Vert.x's
- * global mapper (NFR-JSON-013).
+ * global mapper.
  */
 class VertiqueProfileTest {
 
@@ -66,7 +66,7 @@ class VertiqueProfileTest {
     }
 
     @Test
-    @DisplayName("application profile with reserved vertique id fails construction (FR-JSON-044)")
+    @DisplayName("application profile with reserved vertique id fails construction")
     void appProfileWithVertiqueId_rejected() {
         // Given: an application profile claiming the reserved vertique id, backed by a vertx-aware
         // mapper so any failure is unambiguously the reservation guard, not a probe failure.
@@ -80,7 +80,7 @@ class VertiqueProfileTest {
     }
 
     @Test
-    @DisplayName("vertique mapper is an independent instance, not the shared Vert.x mapper (FR-JSON-045)")
+    @DisplayName("vertique mapper is an independent instance, not the shared Vert.x mapper")
     void vertiqueMapper_isNotSharedVertxMapper() {
         // Given: a registry built with no application-contributed profiles.
         DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
@@ -96,10 +96,10 @@ class VertiqueProfileTest {
      * Behavioral smoke tests on the resolved {@code vertique} mapper, proving the opinionated
      * defaults (Vert.x JSON support, ISO-8601 {@code java.time}, unknown-enum fallback, {@code NON_NULL}
      * inclusion) are in effect, and that constructing the registry does not mutate Vert.x's global
-     * {@code DatabindCodec.mapper()} (NFR-JSON-013).
+     * {@code DatabindCodec.mapper()}.
      */
     @Nested
-    @DisplayName("vertique mapper smoke tests (NFR-JSON-013)")
+    @DisplayName("vertique mapper smoke tests")
     class SmokeTests {
 
         /**
