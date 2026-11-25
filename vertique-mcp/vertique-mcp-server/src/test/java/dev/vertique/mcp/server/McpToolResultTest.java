@@ -44,7 +44,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T019 TP-001 — the frozen complete-only result algebra contract matrix.
+ * The frozen complete-only result algebra contract matrix.
  *
  * <p>Rows 1-3 compile one real {@code ResultAlgebraTools} application source with the real {@link
  * McpToolProcessor}, load each generated {@code *_McpToolInvoker}, and call {@code
@@ -59,7 +59,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * every generated invocation here settle synchronously on the calling thread (no {@code Vertx}
  * instance exists to schedule on) — so there is nothing to close in teardown.
  */
-@DisplayName("MCP complete-only tool result algebra — T019 contract matrix")
+@DisplayName("MCP complete-only tool result algebra — contract matrix")
 class McpToolResultTest {
 
     @Test
@@ -223,20 +223,20 @@ class McpToolResultTest {
         toolsInstance = toolsClass.getDeclaredConstructor().newInstance();
     }
 
-    private static Stream<String> t019ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(SCALAR_ROW, FUTURE_ROW, IS_ERROR_ROW, TERMINAL_OUTCOME_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t019ContractRows")
-    @DisplayName("enforces the T019 contract matrix")
-    void shouldEnforceT019ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("enforces the contract matrix")
+    void shouldEnforceContractMatrix(String row) throws Exception {
         switch (row) {
             case SCALAR_ROW -> shouldAdaptScalarAndRecordReturns();
             case FUTURE_ROW -> shouldAdaptFutureReturns();
             case IS_ERROR_ROW -> shouldPreserveIsErrorResults();
             case TERMINAL_OUTCOME_ROW -> shouldRetainNoneResultTypeForRejectedFailedAndCancelledOutcomes();
-            default -> fail("unknown T019 contract matrix row: " + row);
+            default -> fail("unknown contract matrix row: " + row);
         }
     }
 

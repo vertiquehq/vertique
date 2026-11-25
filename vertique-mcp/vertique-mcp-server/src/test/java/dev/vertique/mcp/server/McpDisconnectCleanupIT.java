@@ -59,23 +59,23 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R14 item 5 — the request-scoped cleanup contract must actually run when a client vanishes.
+ * The request-scoped cleanup contract must actually run when a client vanishes.
  *
- * <p>R09's {@code bindCorrelation} javadoc claimed its {@code ContextHolder.Scope} is torn down on
- * "every exit path — ... a client disconnect, or a stream reset". It was not. {@code
- * McpRequestDispatcher#registerSettlementHooks} called {@code response().closeHandler(...)} and
- * {@code .exceptionHandler(...)}; both are single-slot setters, and Vert.x Web's own {@code
- * RoutingContextImpl} had already installed <em>its</em> handlers there (on the first {@code
- * addEndHandler} call, which {@link RequestContextLifecycle} makes for every request). MCP's
- * registration replaced them, so no routing-context end handler fired for a disconnect or a reset on
- * this mount and {@code RequestContextLifecycle.Handle#closeAll()} never ran — the correlation
- * binding, every other holder binding, and the mount's own upload cleanup all silently skipped.
+ * <p>The {@code bindCorrelation} {@code ContextHolder.Scope} is torn down on "every exit path — ... a
+ * client disconnect, or a stream reset". {@code response().closeHandler(...)} and {@code
+ * .exceptionHandler(...)} are single-slot setters, and Vert.x Web's own {@code RoutingContextImpl}
+ * installs <em>its</em> handlers there (on the first {@code addEndHandler} call, which {@link
+ * RequestContextLifecycle} makes for every request). If {@code
+ * McpRequestDispatcher#registerSettlementHooks} replaced them, no routing-context end handler would
+ * fire for a disconnect or a reset on this mount and {@code RequestContextLifecycle.Handle#closeAll()}
+ * would never run — the correlation binding, every other holder binding, and the mount's own upload
+ * cleanup would all be silently skipped.
  *
- * <p>Settlement now runs through the multicast {@code addEndHandler}. This proof watches the effect
- * rather than the mechanism: a real request is left in flight (its authorization decision never
+ * <p>Settlement therefore runs through the multicast {@code addEndHandler}. This proof watches the
+ * effect rather than the mechanism: a real request is left in flight (its authorization decision never
  * answers), the client's socket is closed, and the recorded {@code ContextHolder} scope must close.
- * Reverting {@code registerSettlementHooks} to the two response handlers turns it red — nothing else
- * in the suite does, which is why the false claim survived R09 through R13.
+ * Registering the two response handlers instead of the multicast end handler would fail it — no other
+ * test in the suite covers this.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class McpDisconnectCleanupIT {
@@ -119,7 +119,7 @@ class McpDisconnectCleanupIT {
     }
 
     @Test
-    @DisplayName("R14 item 5: a client disconnect runs the request lifecycle's cleanup, not just settlement")
+    @DisplayName("a client disconnect runs the request lifecycle's cleanup, not just settlement")
     void shouldRunRequestScopedCleanupWhenTheClientDisconnectsMidRequest() throws Exception {
         fixture = Fixture.start(vertx);
         server = fixture.server();
@@ -335,7 +335,7 @@ class McpDisconnectCleanupIT {
                 McpToolDescriptor descriptor = new McpToolDescriptor(
                         name,
                         null,
-                        "R14 item 5 disconnect-cleanup fixture tool.",
+                        "Disconnect-cleanup fixture tool.",
                         new McpToolAnnotations(true, false, true, false),
                         "{\"type\":\"object\"}",
                         null,

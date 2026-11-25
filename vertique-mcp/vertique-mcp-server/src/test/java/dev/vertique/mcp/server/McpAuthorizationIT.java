@@ -72,7 +72,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T005 frozen authorization matrix through {@link McpPolicyEnforcer}, backed by a real
+ * Exercises the frozen authorization matrix through {@link McpPolicyEnforcer}, backed by a real
  * port-0 identity-establishment pipeline: {@link IdentityResolutionMiddleware} wired exactly as
  * production does, behind an optional bearer scheme.
  *
@@ -80,7 +80,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * {@code alice} (role {@code ops}), or bearer {@code admin} — then evaluates one or more directly
  * constructed {@link McpToolDescriptor}s against that context through {@link McpPolicyEnforcer}
  * alone, never through a {@code tools/list}/{@code tools/call} wire path — {@link McpToolPaginationIT}
- * and {@link McpToolCallIT} own those (T011 and T012 respectively). The in-test {@link Authorizer}
+ * and {@link McpToolCallIT} own those. The in-test {@link Authorizer}
  * double permits the fine action gate only for the {@code admin} identity,
  * isolating the fine gate from the coarse role gate the {@code ops} role drives.
  *
@@ -118,7 +118,7 @@ class McpAuthorizationIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t005ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 PUBLIC_ROW, ROLES_ROW, ACTION_ROW, ROLES_AND_ACTION_ROW, DENY_ALL_ROW, ANONYMOUS_FAIL_CLOSED_ROW);
     }
@@ -151,9 +151,9 @@ class McpAuthorizationIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t005ContractRows")
-    @DisplayName("T005 authorization matrix: McpPolicyEnforcer descriptor mapping and filtering")
-    void shouldEnforceT005ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("authorization matrix: McpPolicyEnforcer descriptor mapping and filtering")
+    void shouldEnforceAuthorizationContractMatrix(String row) throws Exception {
         startServer();
         switch (row) {
             case PUBLIC_ROW -> {
@@ -174,7 +174,7 @@ class McpAuthorizationIT {
             case ROLES_ROW -> {
                 McpToolDescriptor rolesTool = descriptor("roles-tool", rolesAccess());
 
-                // SENSITIVITY PROOF (T005 TP-002): the BEARER_ALICE literal on the next line is the
+                // SENSITIVITY PROOF: the BEARER_ALICE literal on the next line is the
                 // mutation point. Replacing only it with a "Bearer tampered" credential must flip this
                 // permitted assertion true→false while the invocation count stays 0.
                 assertPermittedAndVisible(rolesTool, establish(BEARER_ALICE));
@@ -260,10 +260,10 @@ class McpAuthorizationIT {
                         .as("no anonymous caller reaches the guarded invocation path")
                         .hasValue(0);
             }
-            default -> fail("unknown T005 authorization matrix row: " + row);
+            default -> fail("unknown authorization matrix row: " + row);
         }
 
-        // Frozen by contract for every MCP evaluation, and previously asserted by no proof: the
+        // Frozen by contract for every MCP evaluation, and asserted by no other proof: the
         // enforcer must supply the MCP invocation origin and an "mcp-tool" ResourceRef carrying the
         // descriptor name. Without this, passing "route" or a constant id would keep every row green.
         assertThat(events).allSatisfy(event -> {
@@ -316,7 +316,7 @@ class McpAuthorizationIT {
     }
 
     /**
-     * The guarded call path a dispatcher takes ({@link McpToolCallIT} owns the wire form, T012): the
+     * The guarded call path a dispatcher takes ({@link McpToolCallIT} owns the wire form): the
      * tool is invoked only
      * when the decision permits. Driving both the permitted and the denied assertions through this
      * one path is what gives the zero-invocation claim its teeth — a decision that wrongly permits

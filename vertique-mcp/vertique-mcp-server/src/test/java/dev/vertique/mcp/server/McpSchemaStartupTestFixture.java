@@ -85,7 +85,7 @@ final class McpSchemaStartupTestFixture {
      * One fixture invoker whose descriptor carries a syntactically invalid JSON Schema document, so
      * compiling it into the owned {@link McpSchemaRegistry} fails deterministically — the "or
      * validator" half of the frozen "invalid descriptor, unsupported schema/mapping contract, or
-     * validator" startup rule (§4.2).
+     * validator" startup rule.
      */
     static McpToolInvoker invokerWithUncompilableSchema(String name) {
         McpToolDescriptor descriptor = new McpToolDescriptor(
@@ -144,7 +144,7 @@ final class McpSchemaStartupTestFixture {
 
         @Override
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-            throw new AssertionError("a T010 startup-validation fixture invoker must never be prepared");
+            throw new AssertionError("a startup-validation fixture invoker must never be prepared");
         }
     }
 }

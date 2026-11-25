@@ -34,13 +34,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T004 neutral lifecycle observation contract of {@link McpCompletionCoordinator}.
+ * Exercises the neutral lifecycle observation contract of {@link McpCompletionCoordinator}.
  *
  * <p>Each contributed {@link McpRequestLifecycleObserver} is opened exactly once per request, and
  * every retained {@link McpRequestObservation} receives exactly one terminal callback followed by
- * exactly one completion callback — on every settlement path, including the disconnect path the T004
- * seam introduces. An observer that throws from {@code open}, returns a null session,
- * or throws from a callback is isolated to itself and never suppresses a healthy observer.
+ * exactly one completion callback — on every settlement path, including the disconnect path. An
+ * observer that throws from {@code open}, returns a null session, or throws from a callback is
+ * isolated to itself and never suppresses a healthy observer.
  *
  * <p>Observers are opened in the coordinator constructor, and the disconnect settlement path then
  * delivers the terminal and completion callbacks to every opened session. Both rows drive that path
@@ -78,8 +78,8 @@ class McpLifecycleObservationTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("observationRows")
-    @DisplayName("T004 observation matrix: one session per observer, fixed order, per-observer isolation")
-    void shouldEnforceT004ContractMatrix(String row) throws Exception {
+    @DisplayName("observation matrix: one session per observer, fixed order, per-observer isolation")
+    void shouldEnforceObservationContractMatrix(String row) throws Exception {
         Context context = vertx.getOrCreateContext();
 
         switch (row) {
@@ -119,15 +119,15 @@ class McpLifecycleObservationTest {
                 McpCompletionCoordinator coordinator = assertConstructsWithoutPropagatingFailures(context, mixed);
 
                 // DECISIVE: the disconnect settlement must reach the healthy observer regardless of a
-                // sibling that threw from open, returned null, or throws from its own callback. The
-                // red-slice settlement entry delivers nothing, so the healthy observer is starved.
+                // sibling that threw from open, returned null, or throws from its own callback. A
+                // settlement entry that delivered nothing would starve the healthy observer.
                 coordinator.settleDisconnected(disconnectTerminal(), false);
                 assertThat(healthy.awaitCallbacks())
                         .as("a healthy observer must receive its terminal and completion despite failing siblings")
                         .isTrue();
                 healthy.assertOpenThenTerminalThenCompleted();
             }
-            default -> fail("unknown T004 observation row: " + row);
+            default -> fail("unknown observation row: " + row);
         }
     }
 

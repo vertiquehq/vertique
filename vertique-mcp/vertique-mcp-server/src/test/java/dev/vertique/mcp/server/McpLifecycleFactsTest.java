@@ -66,8 +66,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * R05 TP-002 — {@code shouldCarryNegotiatedVersionCorrelationAndAuthorizationToEveryTerminal}
- * (issue #431).
+ * {@code shouldCarryNegotiatedVersionCorrelationAndAuthorizationToEveryTerminal}.
  *
  * <p>Drives {@link McpRequestDispatcher#begin}, then either {@link McpRequestDispatcher#dispatch} or
  * {@link McpRequestDispatcher#completeAuthenticationRejection}, against a mocked {@link
@@ -77,7 +76,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * authentication rejection (terminates before negotiation ever runs), a handler failure inside an
  * otherwise-authorized {@code tools/call} (a "lifecycle-observed failure" — the terminal event a
  * genuine handler throw produces, observed through the same lifecycle session every other row uses),
- * and (R07 item 3) a pre-dispatch request-interceptor rejection, which — unlike the authentication
+ * and a pre-dispatch request-interceptor rejection, which — unlike the authentication
  * rejection — runs strictly after negotiation has already completed and so must still carry the
  * negotiated version. Every row asserts the terminal event's {@code protocolVersion}, {@code
  * correlation}, and {@code authorization} facts (or their documented absence) rather than only the
@@ -94,12 +93,12 @@ class McpLifecycleFactsTest {
     private static final String KNOWN_TOOL = "greet";
 
     /**
-     * Bounded wait for a request-owning-context-anchored dispatch to settle its terminal (repair task
-     * R47): {@link McpRequestDispatcher#dispatch} composes every application-origin future through
-     * {@code anchoredOnContext}, which — correctly, post-repair — always routes settlement through
+     * Bounded wait for a request-owning-context-anchored dispatch to settle its terminal: {@link
+     * McpRequestDispatcher#dispatch} composes every application-origin future through
+     * {@code anchoredOnContext}, which always routes settlement through
      * {@code owningContext} rather than completing inline on whatever thread called {@code dispatch}.
      * This fixture drives {@code dispatch} via {@link Context#runOnContext} and awaits the terminal
-     * callback instead of asserting immediately after the (now asynchronous-with-respect-to-the-test-
+     * callback instead of asserting immediately after the (asynchronous-with-respect-to-the-test-
      * thread) call returns.
      */
     private static final long TERMINAL_WAIT_SECONDS = 5;
@@ -110,12 +109,10 @@ class McpLifecycleFactsTest {
     private static final String LIFECYCLE_FAILURE_ROW = "shouldCarryFactsOnAHandlerFailureInsideAnAuthorizedCall";
 
     /**
-     * R07 item 3 (post-R05 security/architecture review): {@link McpRequestDispatcher#writeInterceptorRejection}
-     * previously passed a hardcoded {@code null} {@code protocolVersion} on its normal-response branch
-     * while its own over-cap branch correctly derived it from {@link
-     * McpRequestDispatcher#protocolVersionOf} — even though negotiation has always completed by the time
-     * either branch runs. This row is the missing 5th of the 21 {@code McpRequestTerminalEvent} factory
-     * call sites the original R05 evidence enumerated only 4 of.
+     * {@link McpRequestDispatcher#writeInterceptorRejection} must not pass a hardcoded {@code null}
+     * {@code protocolVersion} on its normal-response branch while its own over-cap branch derives it from
+     * {@link McpRequestDispatcher#protocolVersionOf} — negotiation has always completed by the time
+     * either branch runs. This row covers that {@code McpRequestTerminalEvent} factory call site.
      */
     private static final String INTERCEPTOR_REJECTION_ROW = "shouldCarryFactsOnAnInterceptorRejectedRequest";
 
@@ -127,14 +124,14 @@ class McpLifecycleFactsTest {
         openedVertx.clear();
     }
 
-    private static Stream<String> r05Tp002Rows() {
+    private static Stream<String> terminalPathRows() {
         return Stream.of(
                 SUCCESS_ROW, DENIAL_ROW, AUTHENTICATION_FAILURE_ROW, LIFECYCLE_FAILURE_ROW, INTERCEPTOR_REJECTION_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("r05Tp002Rows")
-    @DisplayName("R05 TP-002: every terminal path carries the negotiated version, correlation, and authorization")
+    @MethodSource("terminalPathRows")
+    @DisplayName("every terminal path carries the negotiated version, correlation, and authorization")
     void shouldCarryNegotiatedVersionCorrelationAndAuthorizationToEveryTerminal(String row)
             throws InterruptedException {
         switch (row) {
@@ -143,7 +140,7 @@ class McpLifecycleFactsTest {
             case AUTHENTICATION_FAILURE_ROW -> shouldCarryFactsOnAnAuthenticationRejection();
             case LIFECYCLE_FAILURE_ROW -> shouldCarryFactsOnAHandlerFailureInsideAnAuthorizedCall();
             case INTERCEPTOR_REJECTION_ROW -> shouldCarryFactsOnAnInterceptorRejectedRequest();
-            default -> throw new IllegalArgumentException("unknown R05 TP-002 row: " + row);
+            default -> throw new IllegalArgumentException("unknown terminal path row: " + row);
         }
     }
 
@@ -179,7 +176,7 @@ class McpLifecycleFactsTest {
         assertCorrelationPresent(terminal);
         assertThat(terminal.authorization())
                 .as("DECISIVE: the deny decision's own summary reaches the rejection terminal — this is the "
-                        + "row the R05 task names as the sensitivity target for dropping the summary")
+                        + "sensitivity target for dropping the summary")
                 .isEqualTo(new McpAuthorizationSummary(false, "role_missing", null, null));
     }
 
@@ -281,8 +278,8 @@ class McpLifecycleFactsTest {
 
     /**
      * Drives {@link McpRequestDispatcher#dispatch} on {@code fixture}'s own request-owning context
-     * (repair task R47) and awaits the terminal callback, rather than asserting immediately after a
-     * call that — correctly, post-repair — no longer completes synchronously on the calling thread.
+     * and awaits the terminal callback, rather than asserting immediately after a
+     * call that does not complete synchronously on the calling thread.
      */
     private static void dispatchOnContext(Fixture fixture) throws InterruptedException {
         Context vertxContext = fixture.context.vertx().getOrCreateContext();
@@ -327,7 +324,7 @@ class McpLifecycleFactsTest {
                 new CorrelationContextFactory(Optional.empty()));
 
         RoutingContext context = mockRoutingContext(vertxContext, toolsCallBody());
-        // R09: begin() now registers the correlation bind scope with RequestContextLifecycle's per-
+        // begin() registers the correlation bind scope with RequestContextLifecycle's per-
         // request handle; this synthetic RoutingContext has no real ROOT-scoped middleware chain, so
         // the fixture installs the lifecycle handle itself, exactly as production's HttpVerticle does.
         new RequestContextLifecycle().handle(context);
@@ -430,7 +427,7 @@ class McpLifecycleFactsTest {
         private static final McpToolDescriptor DESCRIPTOR = new McpToolDescriptor(
                 KNOWN_TOOL,
                 null,
-                "A fixture tool for R05 TP-002.",
+                "A fixture tool for lifecycle facts.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 null,
@@ -476,7 +473,7 @@ class McpLifecycleFactsTest {
         }
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

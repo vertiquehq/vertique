@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Pins D008's unsigned cursor structure: exactly protocol version, registry digest, and a
+ * Pins the unsigned cursor structure: exactly protocol version, registry digest, and a
  * syntactically valid lexicographic anchor. The codec validates syntax and canonical structure,
  * never registry membership.
  */
@@ -37,7 +37,7 @@ class McpCursorCodecTest {
     private static final String ANCHOR = "example.tool";
     private static final String NONMEMBER_ANCHOR = "example.position-hint";
 
-    private static Stream<String> d008ContractRows() {
+    private static Stream<String> cursorContractRows() {
         return Stream.of(
                 ROUND_TRIP_ROW,
                 WRONG_VERSION_ROW,
@@ -49,9 +49,9 @@ class McpCursorCodecTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("d008ContractRows")
-    @DisplayName("D008 cursor matrix: canonical structure, bounded decoding, and membership-free anchors")
-    void shouldEnforceD008CursorContract(String row) {
+    @MethodSource("cursorContractRows")
+    @DisplayName("cursor matrix: canonical structure, bounded decoding, and membership-free anchors")
+    void shouldEnforceCursorContract(String row) {
         switch (row) {
             case ROUND_TRIP_ROW -> {
                 McpCursorCodec codec = new McpCursorCodec();
@@ -82,7 +82,7 @@ class McpCursorCodecTest {
                         "{\"protocolVersion\":\"" + McpCursorCodec.PROTOCOL_VERSION + "\",\"registryDigest\":\""
                                 + REGISTRY_DIGEST + "\",\"lastScannedToolName\":\"" + ANCHOR + "\",\"attempts\":0}"));
             case BOUND_BEFORE_PARSE_ROW -> assertByteBoundBeforeParsing();
-            default -> fail("unknown D008 cursor matrix row: " + row);
+            default -> fail("unknown cursor matrix row: " + row);
         }
     }
 
@@ -146,7 +146,7 @@ class McpCursorCodecTest {
         java.util.List<String> fieldNames = new java.util.ArrayList<>();
         node.fieldNames().forEachRemaining(fieldNames::add);
         assertThat(fieldNames)
-                .as("a D008 cursor carries exactly protocolVersion, registryDigest, and lastScannedToolName")
+                .as("a cursor carries exactly protocolVersion, registryDigest, and lastScannedToolName")
                 .containsExactly("protocolVersion", "registryDigest", "lastScannedToolName");
     }
 

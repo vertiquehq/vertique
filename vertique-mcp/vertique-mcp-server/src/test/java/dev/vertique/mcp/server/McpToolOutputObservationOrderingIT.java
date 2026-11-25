@@ -256,7 +256,7 @@ class McpToolOutputObservationOrderingIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R32 defect 3 fixture tool.",
+                "Output observation ordering fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,

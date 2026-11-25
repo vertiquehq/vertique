@@ -52,7 +52,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Review-finding proof (round-14 remediation): {@code writeUnknownOrUnauthorized} — the shared
+ * Output-cap proof: {@code writeUnknownOrUnauthorized} — the shared
  * {@code -32602} writer for an unresolved {@code tools/call} name, a denied {@code tools/call}, and
  * an invalid {@code tools/list} cursor — must bound its response at {@code mcp.output.maxBytes}
  * exactly like every sibling terminal writer, degrading to the bounded id-less internal error when
@@ -152,10 +152,9 @@ class McpUnknownOrUnauthorizedOutputCapIT {
     }
 
     /**
-     * DECISIVE: pre-fix, {@code writeUnknownOrUnauthorized} called the unbounded {@code codec.encode}
-     * and would echo the full 4,000-byte id, blowing past the 1,024-byte cap this fixture configures.
-     * Post-fix it degrades to the bounded, id-less internal error every sibling terminal writer already
-     * degrades to.
+     * DECISIVE: an unbounded {@code codec.encode} would echo the full 4,000-byte id, blowing past
+     * the 1,024-byte cap this fixture configures. {@code writeUnknownOrUnauthorized} instead degrades
+     * to the bounded, id-less internal error every sibling terminal writer degrades to.
      */
     private static void assertCappedInternalErrorDegrade(HttpResponse<Buffer> response) {
         assertThat(response.body().length())

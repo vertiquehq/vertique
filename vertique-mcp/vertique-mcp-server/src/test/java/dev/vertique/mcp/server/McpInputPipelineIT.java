@@ -86,14 +86,14 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <p>Exposes one record-argument tool ({@code Args}, carrying a {@code @NotBlank} component and a
  * polymorphic {@code Contact} member) whose hand-written {@link PipelineToolInvoker} stands in for a
  * real generated invoker's {@code prepare()} exactly as {@code McpPreparedToolCallTestFixture}'s
- * {@code GeneratedInvoker} did for T014 — {@code prepare()} is the generated fixed input boundary and
+ * {@code GeneratedInvoker} does — {@code prepare()} is the generated fixed input boundary and
  * runs stages 2-4 for real through the same production {@link InputObjectProcessor}, {@link
  * ObjectMapper}, and {@link McpBeanValidation#validate} a real generated invoker would use; only
- * {@link McpRequestDispatcher} (stage 1, schema validation before {@code prepare()} is ever called) is
- * this task's own production change.
+ * {@link McpRequestDispatcher} (stage 1, schema validation before {@code prepare()} is ever called)
+ * is the production code under test here.
  *
  * <p>A real server, bound and connected on the literal {@code 127.0.0.1} (never {@code listen(0)},
- * never {@code "localhost"} — see {@code docs/standards/testing.md} § Dynamic Port Allocation).
+ * never {@code "localhost"}).
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpInputPipelineIT {
@@ -126,7 +126,7 @@ class McpInputPipelineIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t015ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 SHOULD_INVOKE_VALID,
                 SHOULD_REJECT_UNKNOWN_PROPERTIES,
@@ -151,9 +151,9 @@ class McpInputPipelineIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t015ContractRows")
-    @DisplayName("T015 input pipeline matrix: fixed stage order, fail-closed, zero invocation on rejection")
-    void shouldEnforceT015ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("input pipeline matrix: fixed stage order, fail-closed, zero invocation on rejection")
+    void shouldEnforceInputPipelineContractMatrix(String row) throws Exception {
         startServer();
         PipelineToolInvoker tool = fixture.tool();
 
@@ -261,12 +261,12 @@ class McpInputPipelineIT {
                         .isZero();
                 assertStages2To4TerminalClassification(fixture);
             }
-            default -> fail("unknown T015 input pipeline matrix row: " + row);
+            default -> fail("unknown input pipeline matrix row: " + row);
         }
     }
 
     /**
-     * DECISIVE (P04 remediation, issue W2): a stage 1 (schema) rejection must record {@link
+     * DECISIVE: a stage 1 (schema) rejection must record {@link
      * McpOutcome#TOOL_ERROR}/{@link McpErrorType#INPUT_VALIDATION}/{@link McpResultType#COMPLETE} on
      * the terminal event — never {@link McpErrorType#HANDLER}, which would misclassify a rejection no
      * handler ever ran as a genuine handler fault. The wire body is identical across every rejection
@@ -282,7 +282,7 @@ class McpInputPipelineIT {
     }
 
     /**
-     * DECISIVE (P04 remediation, issue W2): a stages 2-4 ({@link McpInputRejectionException}) rejection
+     * DECISIVE: a stages 2-4 ({@link McpInputRejectionException}) rejection
      * must record {@link McpOutcome#TOOL_ERROR}/{@link McpErrorType#INPUT_PROCESSING}/{@link
      * McpResultType#COMPLETE} on the terminal event — never {@link McpErrorType#HANDLER}.
      */
@@ -370,8 +370,8 @@ class McpInputPipelineIT {
      * Builds and starts one real MCP mount with one anonymous-only, {@code PERMIT_ALL},
      * record-argument tool: {@link PipelineToolInvoker} stands in for a real generated invoker's
      * {@code prepare()}, running stages 2-4 for real through production {@link InputObjectProcessor},
-     * {@link ObjectMapper}, and {@link McpBeanValidation#validate} instances (T015 owns the request-time
-     * pipeline; no reflection, no interceptor stage — matching T014's precedent).
+     * {@link ObjectMapper}, and {@link McpBeanValidation#validate} instances (this fixture owns the request-time
+     * pipeline; no reflection, no interceptor stage).
      */
     private static final class Fixture {
 
@@ -405,7 +405,7 @@ class McpInputPipelineIT {
             McpToolDescriptor descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T015 fixture tool " + TOOL_NAME + ".",
+                    "Input pipeline fixture tool " + TOOL_NAME + ".",
                     new McpToolAnnotations(true, false, true, false),
                     INPUT_SCHEMA,
                     null,
@@ -499,8 +499,8 @@ class McpInputPipelineIT {
      * Stands in for one {@code @McpTool}-generated invoker's {@code prepare()}: the generated fixed
      * input boundary that owns stages 2-4 — canonicalization/sanitization
      * at {@code InputLocation.PAYLOAD}, materialization through the effective mapper, and Bean
-     * Validation — exactly as {@code McpPreparedToolCallTestFixture}'s {@code GeneratedInvoker} stood
-     * in for T014's boundary. Every stage counter here is incremented at the point that stage is
+     * Validation — exactly as {@code McpPreparedToolCallTestFixture}'s {@code GeneratedInvoker} stands
+     * in for the generated boundary. Every stage counter here is incremented at the point that stage is
      * genuinely attempted, so a test reading it has proof the stage ran (or did not), never an assertion
      * that merely could not fail.
      */
@@ -661,7 +661,7 @@ class McpInputPipelineIT {
         }
     }
 
-    // --- Input schema (hand-authored: matches what T009's generator + hardener would produce for the
+    // --- Input schema (hand-authored: matches what the generator + hardener would produce for the
     //     Args/Contact shape above; the compiled Validator itself is always the real McpSchemaRegistry) ---
 
     private static final String CONTACT_SCHEMA = "{\"oneOf\":["

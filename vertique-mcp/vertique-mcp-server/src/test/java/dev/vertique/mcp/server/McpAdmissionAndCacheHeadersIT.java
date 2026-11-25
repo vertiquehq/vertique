@@ -55,8 +55,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * P04 remediation proof for issues W9 (Origin deny-by-default and mandatory Content-Type) and W10
- * (identity-filtered responses must carry HTTP cache directives), against the real port-0 mount with
+ * Proof that Origin is deny-by-default with a mandatory Content-Type, and that identity-filtered
+ * responses carry HTTP cache directives, against the real port-0 mount with
  * its <strong>default</strong> configuration: an empty {@code mcp.allowedOrigins}, no authentication
  * scheme, and one {@code @PermitAll} tool.
  */
@@ -136,7 +136,7 @@ class McpAdmissionAndCacheHeadersIT {
                 .isEqualTo(403);
     }
 
-    // --- Row 1b (review finding #2): a rejected request must not consume its body ---
+    // --- Row 1b: a rejected request must not consume its body ---
 
     /**
      * DECISIVE — proves body-consumption ordering, not merely the resulting status code. The request
@@ -145,7 +145,7 @@ class McpAdmissionAndCacheHeadersIT {
      *
      * <p>If cheap admission ran before {@code BodyHandler} (the fix), the 403 is decided from the
      * request line and headers alone and the response arrives immediately, independent of the
-     * incomplete body. If {@code BodyHandler} ran first (the pre-fix ordering this proof would catch),
+     * incomplete body. If {@code BodyHandler} ran first (the ordering this proof would catch),
      * it would aggregate indefinitely waiting for the rest of a body that never arrives, and {@code
      * response()} would never resolve — the bounded {@link #await} below would time out. A same-status
      * assertion alone cannot distinguish the two orderings, since both eventually answer 403 once a
@@ -167,7 +167,7 @@ class McpAdmissionAndCacheHeadersIT {
         request.reset();
     }
 
-    // --- Row 2 (W9b): an absent Content-Type is now rejected, not admitted ---
+    // --- Row 2: an absent Content-Type is rejected, not admitted ---
 
     private void shouldRejectAbsentContentTypeAsUnsupportedMediaType() throws Exception {
         HttpResponse<Buffer> response = await(client.post(fixture.port(), LOOPBACK, REQUEST_PATH)
@@ -175,12 +175,12 @@ class McpAdmissionAndCacheHeadersIT {
 
         assertThat(response.statusCode())
                 .as("DECISIVE: every admitted request is a POST carrying the protocol's required JSON body, "
-                        + "so an absent Content-Type must now be HTTP 415, not silently admitted (which "
+                        + "so an absent Content-Type must be HTTP 415, not silently admitted (which "
                         + "would reopen the CORS simple-request path)")
                 .isEqualTo(415);
     }
 
-    // --- Row 3 (W10): discovery carries private, no-store cache directives ---
+    // --- Row 3: discovery carries private, no-store cache directives ---
 
     private void shouldCarryPrivateCacheHeadersOnDiscovery() throws Exception {
         HttpResponse<Buffer> response =
@@ -195,7 +195,7 @@ class McpAdmissionAndCacheHeadersIT {
                 .isEqualTo("Authorization");
     }
 
-    // --- Row 4 (W10): tools/list carries private, no-store cache directives ---
+    // --- Row 4: tools/list carries private, no-store cache directives ---
 
     private void shouldCarryPrivateCacheHeadersOnToolsList() throws Exception {
         JsonObject meta = new JsonObject()
@@ -341,7 +341,7 @@ class McpAdmissionAndCacheHeadersIT {
             McpToolDescriptor descriptor = new McpToolDescriptor(
                     PUBLIC_TOOL,
                     null,
-                    "W9/W10 fixture tool.",
+                    "Admission and cache headers fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,

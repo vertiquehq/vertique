@@ -45,13 +45,13 @@ import org.junit.jupiter.api.Timeout;
  * servers share no state, so discovery requests alternate between them with no initialization
  * handshake, cookie, session id, or affinity header.
  *
- * <p>This is a green invariant guard, not a from-red proof. Two independent servers already serve
- * discovery statelessly, so the value of the test is proving that T004's HTTP/lifecycle hardening
- * (origin admission, session-header rejection, completion-coordinator wiring) introduces no session
- * affinity. Its decisive assertion is the sensitivity mutation: closing only one instance drops that
- * instance's discovery success from 1 to 0 while the other instance remains independently available.
- * If a future change made the two instances share session state, that mutation would stop isolating
- * the failure and this guard would fail.
+ * <p>This is an invariant guard. Two independent servers serve discovery statelessly, so the value
+ * of the test is proving that the HTTP/lifecycle hardening (origin admission, session-header
+ * rejection, completion-coordinator wiring) introduces no session affinity. Its decisive assertion
+ * is the sensitivity mutation: closing only one instance drops that instance's discovery success
+ * from 1 to 0 while the other instance remains independently available. If a future change made
+ * the two instances share session state, that mutation would stop isolating the failure and this
+ * guard would fail.
  *
  * <p>The client is a {@link WebClient} wrapping a raw {@link HttpClient}: {@code WebClient}
  * aggregates the body before its future resolves, while the wrapped raw client keeps the awaitable

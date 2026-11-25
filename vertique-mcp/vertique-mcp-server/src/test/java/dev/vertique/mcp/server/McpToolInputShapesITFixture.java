@@ -75,16 +75,16 @@ import org.hibernate.validator.HibernateValidator;
 import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 
 /**
- * Framework wiring and argument shapes for {@link McpToolInputShapesIT} (T005 TP-003 to TP-005).
+ * Framework wiring and argument shapes for {@link McpToolInputShapesIT}.
  *
  * <p>Every tool here is composed through the real {@link McpToolRuntimeFactory}, so its published
- * input schema is what JSON-005's {@code forInputProfile} generator produces for the argument type and
+ * input schema is what the {@code forInputProfile} generator produces for the argument type and
  * what {@code McpSchemaHardener} then hardens — never a hand-authored document. Each tool takes one
  * parameter, published as {@code payload}, whose type is the shape under test: the shape's own object
- * is therefore a <em>non-root</em> schema, which is exactly the position FR-014's closure rule governs
- * (the root carrier stays closed unconditionally).
+ * is therefore a <em>non-root</em> schema, which is exactly the position the hardener's closure rule
+ * governs (the root carrier stays closed unconditionally).
  *
- * <p>The shape types mirror T004's corpus fixtures and T007's and T008's generator fixtures; they are
+ * <p>The shape types mirror the corpus fixtures and the generator fixtures of other modules; they are
  * restated here because those live in other modules' test sources.
  *
  * <p>Nothing here decides Given values or asserts outcomes — that stays in the test class.
@@ -100,8 +100,8 @@ final class McpToolInputShapesITFixture {
     static final String GETTER_ONLY_LIST_TOOL = "shapes.getterOnlyList";
     static final String GETTER_ONLY_MAP_TOOL = "shapes.getterOnlyMap";
     static final String GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL = "shapes.getterOnlyCollectionNoBackingField";
-    static final String BG1_TOOL = "shapes.bg1LombokBuilderNoGetter";
-    static final String AC005_TOOL = "shapes.ac005CaseInsensitiveAnySetter";
+    static final String LOMBOK_BUILDER_NO_GETTER_TOOL = "shapes.lombokBuilderNoGetter";
+    static final String NON_ASCII_KEY_TOOL = "shapes.nonAsciiFoldedKey";
     static final String NESTED_PRIVATE_DATE_TOOL = "shapes.nestedPrivateDate";
     static final String ANY_SETTER_NAMED_TOOL = "shapes.anySetterWithNamedProperties";
     static final String ANY_SETTER_ONLY_TOOL = "shapes.anySetterOnly";
@@ -132,7 +132,7 @@ final class McpToolInputShapesITFixture {
     static final String POSITIVE_FAMILY_CONSTRUCTOR_TOOL = "shapes.positiveFamilyConstructor";
     static final String POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL = "shapes.positiveFamilyConstructorValidator";
 
-    /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
+    /** The profile the strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
 
     private final HttpServer server;
@@ -159,18 +159,18 @@ final class McpToolInputShapesITFixture {
                 GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
                 GetterOnlyCollectionNoBackingFieldPayload.class,
                 null);
-        // BG1: registered through a separate, validator-backed factory — every other tool above stays
-        // on the validator-less factory, so this is the sole validator-present row.
-        Validator bg1Validator = Validation.byProvider(HibernateValidator.class)
+        // Lombok builder: registered through a separate, validator-backed factory — every other tool
+        // above stays on the validator-less factory, so this is the sole validator-present row.
+        Validator validatorBackedValidator = Validation.byProvider(HibernateValidator.class)
                 .configure()
                 .messageInterpolator(new ParameterMessageInterpolator())
                 .buildValidatorFactory()
                 .getValidator();
         register(
                 tools,
-                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
-                BG1_TOOL,
-                Bg1Payload.class,
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(validatorBackedValidator),
+                LOMBOK_BUILDER_NO_GETTER_TOOL,
+                LombokBuilderNoGetterPayload.class,
                 null);
         register(tools, factory, NESTED_PRIVATE_DATE_TOOL, NestedPrivateDatePayload.class, null);
         register(tools, factory, ANY_SETTER_NAMED_TOOL, AnySetterNamedPayload.class, null);
@@ -190,7 +190,7 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, SPELLING_NAMES_HIDDEN_CLOSED_TOOL, SpellingNamesHiddenMemberClosedPayload.class, null);
         register(tools, factory, CASE_INSENSITIVE_TOOL, CaseInsensitivePayload.class, null);
         register(tools, factory, CASE_INSENSITIVE_CLOSED_TOOL, CaseInsensitiveClosedPayload.class, null);
-        register(tools, factory, AC005_TOOL, Ac005Payload.class, null);
+        register(tools, factory, NON_ASCII_KEY_TOOL, NonAsciiKeyPayload.class, null);
         register(tools, factory, SIBLING_UNWRAPPED_TOOL, SiblingUnwrappedPayload.class, null);
         register(tools, factory, OPTIONAL_EXTRAS_TOOL, OptionalAnySetterExtrasPayload.class, null);
         register(tools, factory, MAP_VALUE_SHAPES_TOOL, MapValueShapesPayload.class, null);
@@ -198,20 +198,20 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, SHARED_ANY_SETTER_CONJUNCTION_TOOL, SharedAnySetterConjunctionPayload.class, null);
         register(tools, factory, OBJECT_VALUED_ANY_SETTER_PAIR_TOOL, ObjectValuedAnySetterPairPayload.class, null);
         register(tools, factory, MEMBER_LEVEL_CLOSURE_TOOL, MemberLevelClosurePayload.class, null);
-        // T006 TP-002: the Positive/Negative family — C3p and C3c, each registered on both the
-        // validator-less factory (every other tool above) and the same validator-backed factory BG1
-        // uses, so the fixture carries both constraint-source modes for each shape.
+        // The Positive/Negative family — static factory and constructor, each registered on both the
+        // validator-less factory (every other tool above) and the same validator-backed factory the
+        // Lombok builder uses, so the fixture carries both constraint-source modes for each shape.
         register(tools, factory, POSITIVE_FAMILY_STATIC_FACTORY_TOOL, PositiveFamilyStaticFactoryPayload.class, null);
         register(
                 tools,
-                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(validatorBackedValidator),
                 POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
                 PositiveFamilyStaticFactoryPayload.class,
                 null);
         register(tools, factory, POSITIVE_FAMILY_CONSTRUCTOR_TOOL, PositiveFamilyConstructorPayload.class, null);
         register(
                 tools,
-                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(validatorBackedValidator),
                 POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
                 PositiveFamilyConstructorPayload.class,
                 null);
@@ -303,7 +303,7 @@ final class McpToolInputShapesITFixture {
         McpToolRuntime<I> runtime = factory.create(
                 name,
                 null,
-                "T005 shape fixture tool " + name + ".",
+                "Shape fixture tool " + name + ".",
                 new McpToolAnnotations(true, false, true, false),
                 carrierType,
                 null,
@@ -342,7 +342,7 @@ final class McpToolInputShapesITFixture {
      *
      * <p>A materialization failure is reported as {@link McpInputRejectionException}, which the
      * dispatcher classifies as {@code INPUT_PROCESSING} — never {@code INPUT_VALIDATION}. That is what
-     * keeps a binder rejection distinguishable from the stage-1 schema rejection every T005 proof
+     * keeps a binder rejection distinguishable from the stage-1 schema rejection every proof here
      * asserts.
      *
      * @param <I> the input-carrier record type
@@ -467,7 +467,8 @@ final class McpToolInputShapesITFixture {
     record GetterOnlyCollectionNoBackingFieldPayload(
             @JsonProperty("payload") GetterOnlyCollectionNoBackingFieldDto argument0) {}
 
-    record Bg1Payload(@JsonProperty("payload") Bg1Dto argument0) {}
+    record LombokBuilderNoGetterPayload(
+            @JsonProperty("payload") LombokBuilderNoGetterDto argument0) {}
 
     record NestedPrivateDatePayload(@JsonProperty("payload") NestedPrivateDateDto argument0) {}
 
@@ -506,7 +507,7 @@ final class McpToolInputShapesITFixture {
     record CaseInsensitiveClosedPayload(
             @JsonProperty("payload") CaseInsensitiveClosedType argument0) {}
 
-    record Ac005Payload(@JsonProperty("payload") Ac005CaseInsensitiveAnySetterType argument0) {}
+    record NonAsciiKeyPayload(@JsonProperty("payload") NonAsciiKeyAnySetterType argument0) {}
 
     record SiblingUnwrappedPayload(@JsonProperty("payload") SiblingUnwrappedParent argument0) {}
 
@@ -527,7 +528,7 @@ final class McpToolInputShapesITFixture {
     record MemberLevelClosurePayload(
             @JsonProperty("payload") MemberLevelClosureDto argument0) {}
 
-    // --- T006 TP-002: the Positive/Negative family ---
+    // --- The Positive/Negative family ---
 
     record PositiveFamilyStaticFactoryPayload(
             @JsonProperty("payload") PositiveFamilyStaticFactoryDto argument0) {}
@@ -535,7 +536,7 @@ final class McpToolInputShapesITFixture {
     record PositiveFamilyConstructorPayload(
             @JsonProperty("payload") PositiveFamilyConstructorDto argument0) {}
 
-    // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
+    // --- The five input-discovery shapes, as the corpus fixtures define them ---
 
     /** A private field Jackson fills through reflection, reachable only through a getter. */
     static final class PrivateDatePropertyDto {
@@ -596,7 +597,7 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * H4: a getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
+     * A getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
      * only storage is {@link #internal}, an unrelated field name Jackson populates in place through
      * the getter (no setter is declared).
      */
@@ -615,22 +616,23 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * A Lombok {@code @Builder @Jacksonized} type with a constrained private field and
      * deliberately no getter. Jackson's own introspection does not see {@code name} as a property at
      * all without a public accessor, so the validator-less floor's builder-constraint borrow finds
      * nothing to borrow; Bean Validation is unaffected, since it reads the constrained field directly
-     * by Java name. Registered only through the validator-backed factory ({@link #BG1_TOOL}).
+     * by Java name. Registered only through the validator-backed factory ({@link
+     * #LOMBOK_BUILDER_NO_GETTER_TOOL}).
      */
     @Builder
     @Jacksonized
-    static final class Bg1Dto {
+    static final class LombokBuilderNoGetterDto {
 
         @Size(max = 5)
         private final String name;
     }
 
     /**
-     * T006 C3p: a static-factory {@code @JsonCreator} with {@code @Positive} directly on its own
+     * A static-factory {@code @JsonCreator} with {@code @Positive} directly on its own
      * parameter. Bean Validation exposes constrained constructors only, so the metadata supplement
      * contributes nothing for this parameter's owner (a static method, never a constructor); only the
      * floor — reading the parameter's own merged annotation map directly — can ever close this shape.
@@ -652,11 +654,11 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * T006 C3c: a constructor {@code @JsonCreator} with {@code @Positive} directly on its own
-     * parameter. Bean Validation exposes a constrained constructor's own parameters directly, so the
-     * metadata supplement already renders {@code exclusiveMinimum: 0} for this shape today — {@link
+     * A constructor {@code @JsonCreator} with {@code @Positive} directly on its own parameter. Bean
+     * Validation exposes a constrained constructor's own parameters directly, so the metadata
+     * supplement renders {@code exclusiveMinimum: 0} for this shape — {@link
      * #POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL}'s own characterization control; {@link
-     * #POSITIVE_FAMILY_CONSTRUCTOR_TOOL} (no validator) is the red-until-the-floor-is-widened row.
+     * #POSITIVE_FAMILY_CONSTRUCTOR_TOOL} (no validator) relies on the floor.
      */
     static final class PositiveFamilyConstructorDto {
 
@@ -683,7 +685,7 @@ final class McpToolInputShapesITFixture {
         }
     }
 
-    // --- TP-004 shapes: any-setter types ---
+    // --- Any-setter shapes ---
 
     /** A named property beside a field-level any-setter over {@code String} values. */
     static final class FieldAnySetterOverStrings {
@@ -727,7 +729,7 @@ final class McpToolInputShapesITFixture {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** A named property beside an any-setter whose value type is a plain DTO (design proof v2, V07). */
+    /** A named property beside an any-setter whose value type is a plain DTO. */
     static final class AnySetterOverDtos {
 
         /** An ordinary property. */
@@ -765,7 +767,7 @@ final class McpToolInputShapesITFixture {
         }
     }
 
-    // --- TP-005 shapes: aliases, reserved names, and storage names ---
+    // --- Alias, reserved-name, and storage-name shapes ---
 
     /** An any-setter type with one aliased, constrained property and unconstrained extras. */
     static final class AliasedAnySetterType {
@@ -804,7 +806,7 @@ final class McpToolInputShapesITFixture {
 
     /**
      * An any-setter type carrying a read-only name, an ignored name, and a method
-     * {@code @JsonAnyGetter} over the private storage field {@code extras} (design proof v4, SG1).
+     * {@code @JsonAnyGetter} over the private storage field {@code extras}.
      */
     static final class ReservedNamesAnySetterType {
 
@@ -884,7 +886,7 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * AC-005.2: a case-insensitively bound, extras-described (any-setter) type whose real member's
+     * A case-insensitively bound, extras-described (any-setter) type whose real member's
      * name starts with 'k' — the MCP-level counterpart to {@code
      * CaseInsensitiveUnicodeFoldingTest.CaseInsensitiveWithExtras} in {@code vertique-json-schema},
      * whose own proof only matches the generated {@code propertyNames} regex against the confusable
@@ -894,7 +896,7 @@ final class McpToolInputShapesITFixture {
      * type's document carries refuses any non-ASCII key outright instead.
      */
     @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
-    static final class Ac005CaseInsensitiveAnySetterType {
+    static final class NonAsciiKeyAnySetterType {
 
         @Size(max = 3)
         public String key;
@@ -903,7 +905,7 @@ final class McpToolInputShapesITFixture {
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** An any-setter type declaring one alias spelling on two properties (design proof v7, DA1/DA2). */
+    /** An any-setter type declaring one alias spelling on two properties. */
     static final class ContestedSpellingWithAnySetter {
 
         /** The unconstrained claimant of the contested spelling. */
@@ -920,7 +922,7 @@ final class McpToolInputShapesITFixture {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** An any-setter type whose {@code admin} is bound only by a setter (design proof v7, SO1). */
+    /** An any-setter type whose {@code admin} is bound only by a setter. */
     static final class SetterOnlyNameAnySetterType {
 
         /** An ordinary property. */
@@ -940,7 +942,7 @@ final class McpToolInputShapesITFixture {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** An any-setter type with a hidden, aliased, constrained field (design proof v9, AH1). */
+    /** An any-setter type with a hidden, aliased, constrained field. */
     static final class HiddenAliasedFieldAnySetterType {
 
         /** An ordinary property. */
@@ -958,7 +960,7 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * T010 CO-007's measured shape: a published property whose alias spelling is already the name of a
+     * A published property whose alias spelling is already the name of a
      * member the document never publishes, on an any-setter type.
      *
      * <p>The two bounds differ so a document publishing the spelling is visible as the wrong number:
@@ -1000,7 +1002,7 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * C1 (spike/deserializer-driven-schema round 4, CRITICAL): the first unwrapped sibling, carrying no
+     * The first unwrapped sibling, carrying no
      * any-setter of its own — an aliased, constrained member and a hidden, constrained member, so a key
      * spelling either the alias or the hidden member is either published nowhere or reserved nowhere
      * when {@code foldUnwrappedChildIntoParentPlan}'s own any-setter-type signal has not yet been set at
@@ -1023,7 +1025,7 @@ final class McpToolInputShapesITFixture {
     }
 
     /**
-     * C1: two {@code @JsonUnwrapped} siblings, in this order, where only the *second*
+     * Two {@code @JsonUnwrapped} siblings, in this order, where only the *second*
      * ({@link SiblingUnwrappedB}) carries the {@code @JsonAnySetter}.
      */
     static final class SiblingUnwrappedParent {
@@ -1034,9 +1036,9 @@ final class McpToolInputShapesITFixture {
         public SiblingUnwrappedB b;
     }
 
-    // --- rest-023 T002 (D002, N14/N14n): Optional-typed extras value ---
+    // --- Optional-typed extras value ---
 
-    /** A named property beside an any-setter whose extras value is {@code Optional<Plain>} (N14/N14n). */
+    /** A named property beside an any-setter whose extras value is {@code Optional<Plain>}. */
     static final class OptionalAnySetterExtrasDto {
 
         /** An ordinary property. */
@@ -1049,27 +1051,27 @@ final class McpToolInputShapesITFixture {
         /** {@code Plain}'s own schema is what a declared-{@code Optional} extras value must describe. */
         static final class Plain {
 
-            /** The constraint an {@code Optional<Plain>} extras value must still describe (N14). */
+            /** The constraint an {@code Optional<Plain>} extras value must still describe. */
             @Size(max = 3)
             public String name;
         }
     }
 
-    // --- rest-023 T003 (D001): map value shapes and the single any-setter N16 shape ---
+    // --- Map value shapes and the single any-setter shape ---
 
-    /** S2a/S2b/S2c/S2d — one holder carrying every rest-023 T003 ordinary-map-property value shape. */
+    /** One holder carrying every ordinary-map-property value shape. */
     static final class MapValueShapesDto {
 
-        /** S2b — a type-use-constrained String value. */
+        /** A type-use-constrained String value. */
         public Map<String, @Size(max = 3) String> tags;
 
-        /** S2a — a bean value, whose own constraint must be described too. */
+        /** A bean value, whose own constraint must be described too. */
         public Map<String, MapValuePlain> labels;
 
-        /** S2d — an Optional-wrapped bean value. */
+        /** An Optional-wrapped bean value. */
         public Map<String, Optional<MapValuePlain>> opts;
 
-        /** S2c — an opaque, unconstrained control value. */
+        /** An opaque, unconstrained control value. */
         public Map<String, com.fasterxml.jackson.databind.JsonNode> raw;
     }
 
@@ -1081,7 +1083,7 @@ final class McpToolInputShapesITFixture {
         public String name;
     }
 
-    /** N16 — a single, non-conjoined any-setter whose value type carries a type-use constraint. */
+    /** A single, non-conjoined any-setter whose value type carries a type-use constraint. */
     static final class SingleAnySetterTypeUseDto {
 
         /** The any-setter's backing storage: the type-use-constrained value position under test. */
@@ -1089,17 +1091,17 @@ final class McpToolInputShapesITFixture {
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 
-    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+    // --- Several any-setters sharing a wire key ---
 
-    /** UW-2AS child: a type-use-constrained any-setter, sharing its wire key with the parent's own. */
+    /** The unwrapped child: a type-use-constrained any-setter, sharing its wire key with the parent's. */
     static final class SharedAnySetterConjunctionChild {
 
-        /** The child's own any-setter, type-use-constrained (N16 shape). */
+        /** The child's own any-setter, type-use-constrained. */
         @JsonAnySetter
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 
-    /** UW-2AS parent: its own any-setter, plus the unwrapped child's own, sharing every wire key. */
+    /** Parent: its own any-setter, plus the unwrapped child's own, sharing every wire key. */
     static final class SharedAnySetterConjunctionDto {
 
         /** The unwrapped child, declaring its own any-setter. */
@@ -1149,7 +1151,7 @@ final class McpToolInputShapesITFixture {
         public Map<String, ConjunctionLeft> extras = new LinkedHashMap<>();
     }
 
-    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+    // --- Member-level closure ---
 
     /** The value type both the FALSE-closed member and the unannotated open control member reference. */
     static final class ClosedChild {
@@ -1163,7 +1165,7 @@ final class McpToolInputShapesITFixture {
         public Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    /** M10: a member-level FALSE-closed reference to {@link ClosedChild}, plus an unannotated control. */
+    /** A member-level FALSE-closed reference to {@link ClosedChild}, plus an unannotated control. */
     static final class MemberLevelClosureDto {
 
         /** The FALSE-closed member under test. */

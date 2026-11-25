@@ -76,8 +76,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T011 authorized {@code tools/list} pagination contract (§4.7) through the real
- * port-0 identity-establishment and dispatch pipeline: a twelve-tool registry, {@code
+ * Exercises the authorized {@code tools/list} pagination contract through the real port-0
+ * identity-establishment and dispatch pipeline: a twelve-tool registry, {@code
  * mcp.tools.pageSize=2} (examination budget {@code 4 * 2 = 8}), and callers anonymous and bearer
  * {@code alice} (role {@code ops}).
  *
@@ -89,7 +89,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * produce: with budget == total candidates, a scan from any anchor always reaches the registry's end
  * at or before the budget is exhausted, so "budget exhausted while candidates remain" is
  * mathematically unreachable. The registry is extended to twelve tools solely so this row has a real,
- * non-vacuous proof (bounded-discretion fixture sizing).
+ * non-vacuous proof.
  *
  * <p>Reauthorization and the examination budget are proven with a counting {@link
  * SecurityPolicyEnforcer} subclass: {@link McpPolicyEnforcer#decide} unconditionally delegates to
@@ -122,7 +122,7 @@ class McpToolPaginationIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t011ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(VISIBLE_ROW, UNDERFILLED_ROW, BUDGET_ROW, REAUTHORIZE_ROW, CACHE_ROW);
     }
 
@@ -153,9 +153,9 @@ class McpToolPaginationIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t011ContractRows")
-    @DisplayName("T011 tools/list matrix: bounded, authorized pagination and cache hints")
-    void shouldEnforceT011ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("tools/list matrix: bounded, authorized pagination and cache hints")
+    void shouldEnforceContractMatrix(String row) throws Exception {
         startServer();
         switch (row) {
             case VISIBLE_ROW -> {
@@ -165,11 +165,10 @@ class McpToolPaginationIT {
                         .as("page 1 must carry a cursor while tool10–tool12 remain")
                         .isNotNull();
 
-                // SENSITIVITY PROOF (TP-001): the caller literal on the next line is the mutation
-                // point. Replacing only BEARER_ALICE with null (anonymous) drops tool11 (role-gated)
-                // from this page's visible set, shifting the composition to the public subset
-                // ([tool10, tool12]) while the examined-candidate budget assertion in BUDGET_ROW's own
-                // scan stays satisfied — verified manually and restored.
+                // SENSITIVITY: the caller literal on the next line decides the page's composition.
+                // Replacing only BEARER_ALICE with null (anonymous) would drop tool11 (role-gated)
+                // from this page's visible set, shifting it to the public subset ([tool10, tool12])
+                // while the examined-candidate budget assertion in BUDGET_ROW's own scan stays satisfied.
                 JsonObject page2 = listToolsResult(await(listTools(BEARER_ALICE, cursor)));
                 List<String> visibleNames = toolNames(page2);
                 // DECISIVE: tool09 (@DenyAll) is examined in this page's scan window but must never
@@ -189,8 +188,8 @@ class McpToolPaginationIT {
                         .as("an underfilled/empty page must still carry nextCursor while candidates remain")
                         .isNotNull();
 
-                // Closes the T005/T011 -32602 indistinguishability obligation (issue #420) for the
-                // cursor path: a tampered cursor must yield the exact same body and HTTP status as
+                // The -32602 indistinguishability obligation for the cursor path:
+                // a tampered cursor must yield the exact same body and HTTP status as
                 // McpPolicyEnforcer#unknownOrUnauthorizedError(), never a distinct code/status that
                 // would let a caller distinguish "malformed cursor" from any other -32602 cause.
                 String tamperedCursor = McpToolPaginationITFixture.tamperDigest(cursor);
@@ -246,7 +245,7 @@ class McpToolPaginationIT {
                 assertThat(page1.getLong("ttlMs")).isEqualTo(TOOLS_TTL_MS);
                 assertThat(page1.getString("cacheScope")).isEqualTo("private");
             }
-            default -> fail("unknown T011 pagination matrix row: " + row);
+            default -> fail("unknown pagination matrix row: " + row);
         }
     }
 
@@ -277,18 +276,17 @@ class McpToolPaginationIT {
     }
 
     /**
-     * R40 (C5): the budget-exhaustion cursor anchor must never disclose a denied candidate's name.
+     * The budget-exhaustion cursor anchor must never disclose a denied candidate's name.
      *
      * <p>Reuses the twelve-tool fixture's decisive layout: {@code tool01}–{@code tool09} are {@code
      * @DenyAll} and the {@code 4 * pageSize = 8} examination budget for page 1 exhausts on the eighth
      * candidate, {@code tool09}'s predecessor {@code tool08} — a denied tool — before any visible tool
-     * is ever reached. Today the emitted {@code nextCursor} names that denied candidate verbatim
-     * (finding C5); the fix replaces it with an opaque scan position that is not a registry name at
-     * all, so this asserts the broader "not any name" property rather than pinning the fix's exact
-     * grammar.
+     * is ever reached. The emitted {@code nextCursor} must not name that denied candidate; it carries
+     * an opaque scan position that is not a registry name at all, so this asserts the broader "not
+     * any name" property rather than pinning the exact grammar.
      */
     @Test
-    @DisplayName("R40 (C5): a budget-exhaustion cursor anchor must not disclose a denied tool's name")
+    @DisplayName("a budget-exhaustion cursor anchor must not disclose a denied tool's name")
     void shouldNotDiscloseADeniedToolNameWhenTheExaminationBudgetExhausts() throws Exception {
         startServer();
 
@@ -303,14 +301,14 @@ class McpToolPaginationIT {
 
         String rawAnchor = McpToolPaginationITFixture.decodeRawAnchor(cursor);
 
-        // DECISIVE (RED today): the eighth examined candidate is tool08 (@DenyAll), so today's
-        // encoded anchor equals "tool08" verbatim — the exact disclosure finding C5 describes.
+        // DECISIVE: the eighth examined candidate is tool08 (@DenyAll), so an anchor equal to
+        // "tool08" verbatim would disclose a denied tool's name.
         assertThat(rawAnchor)
                 .as("the budget-exhaustion anchor must never equal the denied candidate's own name")
                 .isNotEqualTo("tool08");
 
-        // Fix-shape-agnostic guard: not merely "not that one name" but "not any registry name at
-        // all" on this path, so this proof does not overfit the fix's exact positional grammar.
+        // Grammar-agnostic guard: not merely "not that one name" but "not any registry name at
+        // all" on this path, so this proof does not overfit the exact positional grammar.
         assertThat(McpToolPaginationITFixture.registryToolNames())
                 .as("the budget-exhaustion anchor must not be any registry tool name at all")
                 .doesNotContain(rawAnchor);
@@ -320,7 +318,6 @@ class McpToolPaginationIT {
      * Resumption equivalence: paging through cursors to completion must visit every permitted tool
      * exactly once, in registry order — regardless of whether a budget-exhaustion anchor names a
      * candidate or is an opaque scan position, since both must resume scanning at the same place.
-     * Holds before and after R40's fix.
      */
     @Test
     @DisplayName("paging through cursors to completion visits every permitted tool exactly once, in order")
@@ -351,7 +348,7 @@ class McpToolPaginationIT {
     /**
      * Page-full anchor unchanged: a page that fills purely by reaching {@code pageSize} (never
      * exhausting the examination budget) must still anchor on the last emitted, permitted tool's own
-     * name — existing behavior, unaffected by R40. Page 2 of the twelve-tool fixture is decisive: it
+     * name — existing behavior. Page 2 of the twelve-tool fixture is decisive: it
      * resumes at {@code tool09} (denied, examined but not budget-exhausting), then fills on {@code
      * tool10} and {@code tool11} (both permitted) after examining only 3 of the 8-candidate budget.
      */
@@ -537,7 +534,7 @@ class McpToolPaginationIT {
 
         /**
          * Decodes {@code cursor}'s raw {@code lastScannedToolName} field verbatim, without routing
-         * through {@link McpCursorCodec#decode} — R40 (C5): the fixed-shape codec validates that the
+         * through {@link McpCursorCodec#decode} — the fixed-shape codec validates that the
          * field is *syntactically* a valid tool name, which a synthetic decimal position string would
          * also satisfy, so this reads the field exactly as the wire cursor carries it instead, the same
          * way a caller inspecting the deliberately unsigned cursor could.
@@ -573,7 +570,7 @@ class McpToolPaginationIT {
         /**
          * Base64url-decodes {@code cursor}, flips the registry {@code registryDigest} field to an unrelated
          * value, and re-encodes — the minimal single-field tamper that must be rejected identically
-         * to any other invalid cursor (§4.7, issue #420).
+         * to any other invalid cursor.
          */
         static String tamperDigest(String cursor) throws Exception {
             ObjectMapper mapper = new ObjectMapper();
@@ -637,7 +634,7 @@ class McpToolPaginationIT {
             return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
         }
 
-        /** A tool-invoker double that only publishes a fixed descriptor; T011 never invokes a tool. */
+        /** A tool-invoker double that only publishes a fixed descriptor; tools/list never invokes a tool. */
         private static final class FixtureToolInvoker implements McpToolInvoker {
             private final McpToolDescriptor descriptor;
 
@@ -652,7 +649,7 @@ class McpToolPaginationIT {
 
             @Override
             public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-                throw new AssertionError("T011 tools/list never invokes a tool");
+                throw new AssertionError("tools/list never invokes a tool");
             }
         }
     }

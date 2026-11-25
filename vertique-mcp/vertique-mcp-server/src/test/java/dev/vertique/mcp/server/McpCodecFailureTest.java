@@ -17,7 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-004 — proves failure frames settle through a bounded, non-leaking external response.
+ * Proves failure frames settle through a bounded, non-leaking external response.
  *
  * <p>Malformed JSON, an invalid envelope, an unknown method, and a duplicate-id frame each produce
  * the pinned bounded JSON-RPC error with the original usable id or a null id and never leak internal
@@ -84,21 +84,21 @@ class McpCodecFailureTest {
                             utf8("{\"jsonrpc\":\"2.0\",\"id\":1,\"id\":2,\"method\":\"server/discover\"}"),
                             -32700,
                             null),
-                    // F4: an absent id is a structurally invalid request envelope (id must be a string
+                    // An absent id is a structurally invalid request envelope (id must be a string
                     // or integer); it classifies as -32600 with a null usable id.
                     new Row(
                             "missingId",
                             utf8("{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}"),
                             -32600,
                             null),
-                    // F4: a fractional id is neither a string nor an integer, so it is untrustworthy to
+                    // A fractional id is neither a string nor an integer, so it is untrustworthy to
                     // echo; the envelope is -32600 and the usable id is null.
                     new Row(
                             "fractionalId",
                             utf8("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\",\"params\":{}}"),
                             -32600,
                             null),
-                    // F4: params, when present, must be an object; a non-object params is -32600, and the
+                    // Params, when present, must be an object; a non-object params is -32600, and the
                     // valid integer id is still echoed.
                     new Row(
                             "nonObjectParams",

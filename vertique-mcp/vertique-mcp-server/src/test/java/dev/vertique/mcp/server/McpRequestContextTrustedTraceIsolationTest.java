@@ -41,24 +41,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R51 (trace-reference consolidation) — no-leak pin: proves the request's <em>trusted</em>
- * correlation-identity path never observes MCP's client-supplied body trace reference.
+ * No-leak pin: proves the request's <em>trusted</em> correlation-identity path never observes
+ * MCP's client-supplied body trace reference.
  *
- * <p>D004 / repair task R47's adjudicated trust posture is that the body {@code
- * params._meta.traceparent}/{@code tracestate} reference is untrusted, link-only data — the same
- * trust posture as an inbound HTTP {@code traceparent} header, which an anonymous caller already
- * fully controls. R51's contract requires that once the body reference travels only as {@code
+ * <p>The trust posture is that the body {@code params._meta.traceparent}/{@code tracestate}
+ * reference is untrusted, link-only data — the same trust posture as an inbound HTTP {@code
+ * traceparent} header, which an anonymous caller already fully controls. The contract requires that
+ * once the body reference travels only as {@code
  * dev.vertique.mcp.lifecycle.McpRequestTerminalObservation#linkedTrace()} — the payload-free
- * lifecycle observation, never {@code CorrelationContextSnapshot}, which R51 deliberately does not
- * modify — "the correlation identity paths provably ignore the untrusted reference" — concretely,
+ * lifecycle observation, never {@code CorrelationContextSnapshot} — "the correlation identity paths
+ * provably ignore the untrusted reference" — concretely,
  * {@link CorrelationContextSnapshot#trace()} (the trusted, identity-bearing trace slot mirrored
  * into MDC by {@code CorrelationContextMutator#setTrace}) must never be populated from the body
  * reference.
  *
  * <p>This is a plausible, easy implementation mistake precisely because both fields are named
- * "trace": a fix that threads the newly extracted {@code TraceReference} into {@code
- * CorrelationContextSnapshot.trace()} instead of the new {@code linkedTrace()} slot would satisfy
- * every existing body-trace-visibility assertion (which only ever inspected the old {@code
+ * "trace": an implementation that threads the extracted {@code TraceReference} into {@code
+ * CorrelationContextSnapshot.trace()} instead of the {@code linkedTrace()} slot would satisfy
+ * every body-trace-visibility assertion (which only inspect the {@code
  * bodyTraceContext}/{@code McpTraceContext} side channel) while silently smuggling untrusted,
  * client-supplied trace data into the framework's trusted correlation-identity field — and, via
  * {@code CorrelationContextMutator#setTrace}, into log MDC.
@@ -72,12 +72,12 @@ import org.junit.jupiter.api.Timeout;
  * exchange through {@link McpRouterMount} instead, mirroring {@code McpCorrelationLifecycleIT}'s
  * harness, so {@code correlation()} is genuinely populated and the pin is meaningful.
  *
- * <p><strong>Green today.</strong> The dispatcher's live {@link CorrelationContextSnapshot} for an
+ * <p><strong>What holds.</strong> The dispatcher's live {@link CorrelationContextSnapshot} for an
  * MCP request is minted fresh by {@code correlationContextFactory.seed("mcp")} in {@code begin}
  * and stored on the routing context before the body is ever decoded — {@code trace()} is
- * unconditionally {@code null} regardless of what the body carries, since nothing in today's
- * dispatch path ever calls {@code CorrelationContextMutator#setTrace} for MCP. That already-true
- * fact is exactly what this test pins, so a future wiring mistake described above turns it red.
+ * unconditionally {@code null} regardless of what the body carries, since nothing in the
+ * dispatch path ever calls {@code CorrelationContextMutator#setTrace} for MCP. That fact is exactly
+ * what this test pins, so a wiring mistake described above turns it red.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpRequestContextTrustedTraceIsolationTest {
@@ -113,7 +113,7 @@ class McpRequestContextTrustedTraceIsolationTest {
     }
 
     @Test
-    @DisplayName("R51 no-leak pin: a valid body _meta.traceparent never populates "
+    @DisplayName("no-leak pin: a valid body _meta.traceparent never populates "
             + "correlation().trace() (the trusted identity slot MDC mirrors)")
     void bodyTraceparentNeverPopulatesTheTrustedCorrelationTraceSlot() throws Exception {
         ContextHolder contextHolder = new DefaultContextHolder();
@@ -139,7 +139,7 @@ class McpRequestContextTrustedTraceIsolationTest {
 
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
-                .serverName("r51-trusted-trace-isolation-test")
+                .serverName("trusted-trace-isolation-test")
                 .serverVersion("1.0")
                 .build();
         HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
@@ -202,7 +202,7 @@ class McpRequestContextTrustedTraceIsolationTest {
                 .isNotNull();
         CorrelationContextSnapshot correlation = observed.correlation();
         assertThat(correlation)
-                .as("R09/R47: correlation is always established before dispatch on the real router path")
+                .as("correlation is always established before dispatch on the real router path")
                 .isNotNull();
         assertThat(correlation.trace())
                 .as("DECISIVE: the trusted correlation trace slot must stay null — the body reference"

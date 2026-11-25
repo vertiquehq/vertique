@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T014 TP-002 — {@link McpPreparedToolCall} exposes exactly its two frozen members;
+ * {@link McpPreparedToolCall} exposes exactly its two frozen members;
  * {@code normalizedArguments()} is an unmodifiable, normalized (not raw-wire) defensive copy; and
  * cancelling the fixture-held signal makes {@code invoke()} settle as cancelled.
  *

@@ -23,7 +23,7 @@ import java.lang.reflect.Field;
 import java.util.Optional;
 
 /**
- * Framework wiring for {@link McpAuthorizationCompositionTest} (T005 TP-003): the real production
+ * Framework wiring for {@link McpAuthorizationCompositionTest}: the real production
  * Dagger graph — {@code AuthModule} + {@code SecurityModule} (the REST security modules),
  * {@code McpServerModule} (the MCP server module), and the externals a real application graph would
  * supply from elsewhere ({@link ContextHolder}, the app-provided {@link AuthorizationDecisionPoint}).

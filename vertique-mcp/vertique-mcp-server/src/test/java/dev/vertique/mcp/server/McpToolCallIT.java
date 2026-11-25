@@ -76,8 +76,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T012 TP-001 — exercises the zero-argument authorized {@code tools/call} vertical through the real
- * port-0 identity-establishment and dispatch pipeline: one public zero-argument tool, one {@code
+ * Exercises the zero-argument authorized {@code tools/call} vertical through the real port-0
+ * identity-establishment and dispatch pipeline: one public zero-argument tool, one {@code
  * @RolesAllowed} zero-argument tool, and one {@code @DenyAll} zero-argument tool, with callers
  * anonymous and bearer {@code alice} (role {@code ops}).
  *
@@ -115,7 +115,7 @@ class McpToolCallIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> t012ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(
                 SHOULD_INVOKE_PUBLIC,
                 SHOULD_MATCH_UNKNOWN_AND_DENIED,
@@ -150,9 +150,9 @@ class McpToolCallIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t012ContractRows")
-    @DisplayName("T012 tools/call matrix: zero-argument dispatch, indistinguishable denial, and SSE selection")
-    void shouldEnforceT012ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("tools/call matrix: zero-argument dispatch, indistinguishable denial, and SSE selection")
+    void shouldEnforceContractMatrix(String row) throws Exception {
         startServer();
         switch (row) {
             case SHOULD_INVOKE_PUBLIC -> {
@@ -179,7 +179,7 @@ class McpToolCallIT {
                 HttpResponse<Buffer> denied = await(callTool(null, DENY_TOOL, 7));
                 int decisionsAfterDenied = fixture.decisionEvents().size();
 
-                // Then (DECISIVE — P04 remediation, issue W8): an unknown name must reach the same
+                // Then (DECISIVE): an unknown name must reach the same
                 // McpPolicyEnforcer#decide decision point a denied name reaches — exactly one emitted
                 // AuthorizationDecisionEvent each — closing the timing/observability side channel a
                 // direct-to-response short-circuit for "unknown" would otherwise leave open (a caller
@@ -297,7 +297,7 @@ class McpToolCallIT {
                         .as("a denied @RolesAllowed tool must never be invoked")
                         .isZero();
             }
-            default -> fail("unknown T012 tools/call matrix row: " + row);
+            default -> fail("unknown tools/call matrix row: " + row);
         }
     }
 
@@ -403,10 +403,10 @@ class McpToolCallIT {
                     descriptor(PUBLIC_TOOL, permitAllAccess()),
                     () -> Future.succeededFuture(McpToolResult.text(DEFAULT_PUBLIC_TOOL_TEXT)));
             this.rolesTool = new ControllableToolInvoker(descriptor(ROLES_TOOL, rolesAccess()), () -> {
-                throw new AssertionError("T012 must never invoke a denied @RolesAllowed tool");
+                throw new AssertionError("a denied @RolesAllowed tool must never be invoked");
             });
             this.denyTool = new ControllableToolInvoker(descriptor(DENY_TOOL, denyAllAccess()), () -> {
-                throw new AssertionError("T012 must never invoke a @DenyAll tool");
+                throw new AssertionError("a @DenyAll tool must never be invoked");
             });
             McpToolRegistry registry = McpToolRegistry.build(Set.of(publicTool, rolesTool, denyTool));
 
@@ -487,7 +487,7 @@ class McpToolCallIT {
 
         private static McpToolDescriptor descriptor(String name, McpToolAccess access) {
             return new McpToolDescriptor(
-                    name, null, "T012 fixture tool " + name + ".", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, access);
+                    name, null, "Fixture tool " + name + ".", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, access);
         }
 
         private static McpToolAccess permitAllAccess() {

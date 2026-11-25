@@ -71,7 +71,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T028 TP-001 — exercises anonymous, valid-bearer, and invalid-bearer flows through the pinned
+ * Exercises anonymous, valid-bearer, and invalid-bearer flows through the pinned
  * stable TypeScript client and one real final-2026 Streamable HTTP server.
  */
 @ExtendWith(VertxExtension.class)
@@ -113,14 +113,14 @@ public class McpTypeScriptClientInteropIT {
         fixture.server().close().onComplete(context.succeeding(ignored -> context.completeNow()));
     }
 
-    private static Stream<String> t028ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(ANONYMOUS_ROW, BEARER_ROW, INVALID_BEARER_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t028ContractRows")
-    @DisplayName("T028 stable TypeScript client interoperability matrix")
-    void shouldEnforceT028ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("stable TypeScript client interoperability matrix")
+    void shouldEnforceContractMatrix(String row) throws Exception {
         fixture.resetObservations();
 
         Path clientScript = resourcePath(CLIENT_RESOURCE);
@@ -151,7 +151,7 @@ public class McpTypeScriptClientInteropIT {
             case BEARER_ROW ->
                 assertSuccessfulCall(report, RESTRICTED_TOOL, RESTRICTED_RESULT, List.of(PUBLIC_TOOL, RESTRICTED_TOOL));
             case INVALID_BEARER_ROW -> assertInvalidBearerFailure(report);
-            default -> throw new AssertionError("unrecognized T028 row: " + row);
+            default -> throw new AssertionError("unrecognized row: " + row);
         }
     }
 
@@ -166,7 +166,7 @@ public class McpTypeScriptClientInteropIT {
         assertThat(report.getString("calledTool")).isEqualTo(expectedTool);
         JsonObject result = report.getJsonObject("result");
         // The modern client validates the mandatory wire discriminator, classifies the result, and
-        // deliberately removes resultType from the public CallToolResult it returns. R22's direct
+        // deliberately removes resultType from the public CallToolResult it returns. A direct
         // production-wire proof owns the byte-level assertion; reaching this API result proves the
         // pinned client accepted that discriminator.
         assertThat(result.getBoolean("isError")).isFalse();
@@ -219,7 +219,7 @@ public class McpTypeScriptClientInteropIT {
     }
 
     private static JsonObject resultReport(String output) {
-        String prefix = "T028_RESULT=";
+        String prefix = "TYPESCRIPT_CLIENT_RESULT=";
         List<String> reports = output.lines()
                 .filter(line -> line.startsWith(prefix))
                 .map(line -> line.substring(prefix.length()))

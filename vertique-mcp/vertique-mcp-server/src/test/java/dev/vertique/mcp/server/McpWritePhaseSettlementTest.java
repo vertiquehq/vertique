@@ -43,7 +43,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T013 TP-002 — the determinism claim for the write-phase settlement race.
+ * The determinism claim for the write-phase settlement race.
  *
  * <p>Drives {@link McpRequestDispatcher#write(RoutingContext, int, byte[], McpRequestTerminalEvent)}
  * (made package-private for exactly this seam) against a mocked {@link RoutingContext}/{@link
@@ -51,7 +51,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * owns and completes explicitly — no socket, no buffer sizing, and no timing dependency: the write
  * future simply never completes until a row says so. Every row also drives {@link
  * McpCompletionCoordinator#settleReset}/{@link McpCompletionCoordinator#settleDisconnected} directly,
- * using the T004 manual clock the coordinator already accepts, so the whole race is reproduced
+ * using the manual clock the coordinator already accepts, so the whole race is reproduced
  * deterministically on one Vert.x context with no reliance on real transport timing.
  *
  * <p>{@code HttpServerResponse#ended()} is never stubbed here — the write path this class exercises
@@ -91,8 +91,8 @@ class McpWritePhaseSettlementTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("writePhaseSettlementRows")
-    @DisplayName("T013 write-phase determinism: exactly-once settlement when the write future never "
-            + "completes on its own")
+    @DisplayName(
+            "write-phase determinism: exactly-once settlement when the write future never " + "completes on its own")
     void shouldSettleOnceWhenTheWriteFutureNeverCompletes(String row) throws Exception {
         Context context = vertx.getOrCreateContext();
         ManualClock clock = new ManualClock(COMPLETED_AT);
@@ -226,7 +226,7 @@ class McpWritePhaseSettlementTest {
                                 + "from the response's real state by write()'s own onEnd handler")
                         .isTrue();
             }
-            default -> fail("unknown T013 write-phase settlement row: " + row);
+            default -> fail("unknown write-phase settlement row: " + row);
         }
     }
 
@@ -287,7 +287,7 @@ class McpWritePhaseSettlementTest {
     }
 
     /**
-     * The T013 TP-002 write seam: a mocked {@link RoutingContext}/{@link HttpServerResponse} whose
+     * The write seam: a mocked {@link RoutingContext}/{@link HttpServerResponse} whose
      * {@code end(Buffer)} returns a {@link Promise}-backed future this fixture hands to the caller to
      * complete or fail explicitly, and whose {@code headWritten()} reflects only whether {@code
      * end(Buffer)} was actually invoked — a live value, not a stub the test hard-codes.

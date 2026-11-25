@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * R41 — proves {@link McpRouterMount}'s empty-registry WARN: an unconditional, single WARN naming
+ * Proves {@link McpRouterMount}'s empty-registry WARN: an unconditional, single WARN naming
  * both likely causes (the generated Dagger module not installed; the {@code vertique-codegen-all}
  * facade, which carries {@code vertique-codegen-mcp}, missing from the processor path) fires
  * exactly when the composed {@link McpToolRegistry} publishes no tools, and never fires for a
@@ -158,7 +158,7 @@ class McpRouterMountEmptyRegistryWarnTest {
 
     private static McpToolDescriptor descriptor(String name, McpToolAccess access) {
         return new McpToolDescriptor(
-                name, null, "R41 empty-registry-warn fixture tool.", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, access);
+                name, null, "Empty-registry-warn fixture tool.", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, access);
     }
 
     /** A zero-argument tool invoker whose handler is never expected to run in this composition-only test. */

@@ -61,7 +61,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Printf("T029_RESULT=%s\n", encoded)
+	fmt.Printf("GO_CLIENT_RESULT=%s\n", encoded)
 }
 
 func run(serverURL, scenario string) (report, error) {
@@ -73,7 +73,7 @@ func run(serverURL, scenario string) (report, error) {
 		httpClient.Transport = bearerTransport{token: token, base: http.DefaultTransport}
 	}
 	client := mcp.NewClient(
-		&mcp.Implementation{Name: "vertique-t029-client", Version: "1.0.0"},
+		&mcp.Implementation{Name: "vertique-go-client", Version: "1.0.0"},
 		&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}},
 	)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{

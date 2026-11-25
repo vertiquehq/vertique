@@ -78,11 +78,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R09 (merge blocker 2) — proves that {@link McpRequestDispatcher#begin} binds one live {@code
+ * Proves that {@link McpRequestDispatcher#begin} binds one live {@code
  * CorrelationContext} onto the shared {@code ContextHolder} substrate through the real request
  * pipeline (identity establishment, authorization, tool interception, terminal-event construction),
- * rather than the pre-fix behaviour of a routing-context-only snapshot with an independently
- * generated id.
+ * rather than a routing-context-only snapshot with an independently generated id.
  *
  * <p>Every collaborator in this harness — {@link McpRequestDispatcher}, {@link
  * IdentityResolutionMiddleware}, and {@link SecurityPolicyEnforcer} — shares the <em>same</em> live
@@ -96,14 +95,14 @@ import org.junit.jupiter.api.Timeout;
  * <p>One authenticated, authorized {@code tools/call} request drives all five consequences through
  * the real path in a single exchange:
  * <ol>
- *   <li>{@link CredentialAcceptedEvent} is observed (was suppressed pre-fix: {@code
- *       IdentityResolutionMiddleware} found no bound correlation and skipped emission).</li>
+ *   <li>{@link CredentialAcceptedEvent} is observed ({@code
+ *       IdentityResolutionMiddleware} must find a bound correlation and not skip emission).</li>
  *   <li>The {@link AuthorizationDecisionEvent} carries a <em>bound</em> correlation whose request id
- *       matches the generator's id (was pre-fix {@code CorrelationContext.unbound()}, whose request
+ *       matches the generator's id (not {@code CorrelationContext.unbound()}, whose request
  *       id is the sentinel {@code "unavailable"}).</li>
- *   <li>The {@link McpToolInterceptor} observes a non-null correlation matching the same id (was
- *       pre-fix a hardcoded {@code null}).</li>
- *   <li>The generator's id is the one that reaches the terminal event (was pre-fix bypassed by a raw
+ *   <li>The {@link McpToolInterceptor} observes a non-null correlation matching the same id
+ *       (never a hardcoded {@code null}).</li>
+ *   <li>The generator's id is the one that reaches the terminal event (not bypassed by a raw
  *       {@code UUID.randomUUID()} call in the dispatcher's own {@code establishCorrelation}).</li>
  *   <li>All four facts share the identical request id — terminal and audit correlation are reliably
  *       joinable to the same live request.</li>
@@ -125,10 +124,10 @@ class McpCorrelationLifecycleIT {
 
     @AfterEach
     void tearDown() throws Exception {
-        // R48 W4: the raw HttpClient WebClient wraps must be retained and its close propagated too —
-        // pre-fix, only the server's close was awaited and the wrapped client's underlying connections
-        // were silently discarded, mirroring the R46 teardown discipline (McpToolsListDisconnectIT,
-        // McpDisconnectBeforeInvocationIT) applied to every sibling IT in this package.
+        // The raw HttpClient WebClient wraps must be retained and its close propagated too — awaiting
+        // only the server's close would silently discard the wrapped client's underlying connections,
+        // the same teardown discipline (McpToolsListDisconnectIT, McpDisconnectBeforeInvocationIT)
+        // applied to every sibling IT in this package.
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
         Future<Void> clientClose = rawClient != null ? rawClient.close() : Future.succeededFuture();
         CompletableFuture<Void> closed = new CompletableFuture<>();
@@ -147,7 +146,7 @@ class McpCorrelationLifecycleIT {
     }
 
     @Test
-    @DisplayName("R09: one live bound CorrelationContext reaches identity, authorization, "
+    @DisplayName("one live bound CorrelationContext reaches identity, authorization, "
             + "the tool interceptor, and the terminal event — all with the same, generator-minted id")
     void shouldJoinCorrelationAcrossIdentityAuthorizationInterceptionAndTerminal() throws Exception {
         // --- Shared collaborators: one live ContextHolder, one app-supplied generator ---
@@ -214,7 +213,7 @@ class McpCorrelationLifecycleIT {
         McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R09 fixture tool.",
+                "Correlation lifecycle fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,
@@ -296,11 +295,11 @@ class McpCorrelationLifecycleIT {
                 .hasSizeGreaterThanOrEqualTo(2);
         String expectedRequestId = generator.generated().get(0);
 
-        // Consequence 1: authenticated CredentialAcceptedEvent emission is no longer suppressed.
+        // Consequence 1: authenticated CredentialAcceptedEvent emission must not be suppressed.
         assertThat(acceptedEvents)
-                .as("CONSEQUENCE 1: an authenticated request must emit CredentialAcceptedEvent — pre-fix "
-                        + "this was suppressed because IdentityResolutionMiddleware found no bound "
-                        + "CorrelationContext and logged a warning instead of emitting")
+                .as("CONSEQUENCE 1: an authenticated request must emit CredentialAcceptedEvent — "
+                        + "IdentityResolutionMiddleware must find a bound CorrelationContext rather than "
+                        + "logging a warning instead of emitting")
                 .hasSize(1);
         assertThat(acceptedEvents.get(0).correlation().requestId().value())
                 .as("the emitted event's correlation must be the live, generator-minted request id")
@@ -319,16 +318,16 @@ class McpCorrelationLifecycleIT {
 
         // Consequence 3: tool interceptors receive a non-null correlation matching the live context.
         assertThat(interceptorObservedCorrelation.get())
-                .as("CONSEQUENCE 3: a tool interceptor must observe a non-null correlation — pre-fix this "
-                        + "was a hardcoded null in the McpToolInvocationContext construction")
+                .as("CONSEQUENCE 3: a tool interceptor must observe a non-null correlation — it "
+                        + "must not be a hardcoded null in the McpToolInvocationContext construction")
                 .isNotNull();
         assertThat(interceptorObservedCorrelation.get().requestId().value())
                 .as("the interceptor-observed correlation must match the live request id")
                 .isEqualTo(expectedRequestId);
 
         // Consequence 4: the application-provided CorrelationIdGenerator produces the id that reaches
-        // the terminal event — pre-fix, McpRequestDispatcher#establishCorrelation minted its own id via
-        // a raw UUID.randomUUID() call, bypassing the generator entirely.
+        // the terminal event — McpRequestDispatcher#establishCorrelation must not mint its own id via
+        // a raw UUID.randomUUID() call, bypassing the generator.
         assertThat(terminalEvent.get())
                 .as("the terminal-event observer must have fired")
                 .isNotNull();
@@ -404,7 +403,7 @@ class McpCorrelationLifecycleIT {
 
         @Override
         public String generate() {
-            String id = "r09-generator-id-" + generated.size();
+            String id = "generator-id-" + generated.size();
             generated.add(id);
             return id;
         }

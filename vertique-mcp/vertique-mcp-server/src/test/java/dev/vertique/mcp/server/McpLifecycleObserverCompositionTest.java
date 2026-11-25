@@ -111,7 +111,7 @@ class McpLifecycleObserverCompositionTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("compositionRows")
     @DisplayName("composes neutral observers and completion listeners without shared request state")
-    void shouldEnforceT001ContractMatrix(String row, Composition composition) throws Exception {
+    void shouldEnforceCompositionContractMatrix(String row, Composition composition) throws Exception {
         vertx = Vertx.vertx();
         int port = mountDiscoveryServer(composition.mount());
 
@@ -251,7 +251,7 @@ class McpLifecycleObserverCompositionTest {
     private int mountServer(RouterMount mount, BodyHandler rootBodyHandler, List<Path> spooledUploads)
             throws Exception {
         Router router = Router.router(vertx);
-        // R09: production composes RequestContextLifecycle as a ROOT-scoped middleware ahead of every
+        // Production composes RequestContextLifecycle as a ROOT-scoped middleware ahead of every
         // RouterMount sub-router (HttpVerticle); this hand-assembled router must install it too, or
         // McpRequestDispatcher#begin's correlation binding has no lifecycle handle to register with.
         router.route().handler(new RequestContextLifecycle());
@@ -452,7 +452,7 @@ class McpLifecycleObserverCompositionTest {
         @Provides
         @Singleton
         static HttpConfig httpConfig() {
-            // idleTimeoutSeconds armed: McpServerConfigValidator's startup gate (P04, issue W1) refuses
+            // idleTimeoutSeconds armed: McpServerConfigValidator's startup gate refuses
             // an enabled mount unless at least one HttpConfig liveness timeout is nonzero.
             return HttpConfig.builder().idleTimeoutSeconds(60).build();
         }
@@ -478,7 +478,7 @@ class McpLifecycleObserverCompositionTest {
 
         /**
          * Declares the optional core {@link dev.vertique.security.authz.Authorizer} binding {@link
-         * McpServerModule#routerMount} now requires (issue #421 mount-time gate), mirroring {@code
+         * McpServerModule#routerMount} requires for its mount-time gate, mirroring {@code
          * AuthModule#optionalAuthorizer}. This graph never installs {@code AuthModule}, so the binding
          * resolves empty — correct here since {@code Set<McpToolInvoker>} is also empty, so no {@code
          * @RequiresAction} tool can ever trip the gate this test does not exercise.

@@ -58,13 +58,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Framework wiring and argument shapes for {@link McpUnmergedAllOfAcceptanceIT}: the false-reject
- * fixtures. {@code HJ03} is a discriminator-carrying polymorphic property whose
+ * fixtures. {@code PolymorphicShape} is a discriminator-carrying polymorphic property whose
  * subtypes' generated {@code allOf} parts victools cannot consolidate (the discriminator {@code kind}
  * is declared on both the base and each subtype, once as {@code const} and once as a plain string);
- * {@code UW2UnwrappedAlias} is a {@code @JsonUnwrapped} child whose definition provider leaves an
- * {@code allOf} part carrying the child's own properties. Both are copied verbatim (identifiers kept)
- * from the probe harness that measured the pre-fix rejection (HJ03, J03Base, J03AnySub,
- * J03PlainSub, UW2AliasChild, UW2UnwrappedAlias).
+ * {@code UnwrappedAliasShape} is a {@code @JsonUnwrapped} child whose definition provider leaves an
+ * {@code allOf} part carrying the child's own properties.
  *
  * <p>Every tool here is composed through the real {@link McpToolRuntimeFactory}, so its published
  * input schema is what {@code forInputProfile} produces for the argument type and what {@code
@@ -74,8 +72,8 @@ final class McpUnmergedAllOfAcceptanceITFixture {
 
     static final String LOOPBACK = "127.0.0.1";
 
-    static final String HJ03_TOOL = "shapes.hj03PolymorphicAnySetterSubtype";
-    static final String UW2_TOOL = "shapes.uw2UnwrappedAlias";
+    static final String POLYMORPHIC_TOOL = "shapes.polymorphicAnySetterSubtype";
+    static final String UNWRAPPED_TOOL = "shapes.unwrappedAlias";
 
     private final HttpServer server;
     private final int port;
@@ -91,8 +89,8 @@ final class McpUnmergedAllOfAcceptanceITFixture {
         McpToolRuntimeFactory factory = McpToolRuntimeFactoryTestSupport.factory();
 
         Map<String, CountingToolInvoker<?>> tools = new LinkedHashMap<>();
-        register(tools, factory, HJ03_TOOL, Hj03Payload.class);
-        register(tools, factory, UW2_TOOL, Uw2Payload.class);
+        register(tools, factory, POLYMORPHIC_TOOL, PolymorphicPayload.class);
+        register(tools, factory, UNWRAPPED_TOOL, UnwrappedPayload.class);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -135,7 +133,7 @@ final class McpUnmergedAllOfAcceptanceITFixture {
     }
 
     /**
-     * Composes and starts one real MCP mount carrying the HJ03 and UW2 shape tools.
+     * Composes and starts one real MCP mount carrying the polymorphic-subtype and unwrapped-alias shape tools.
      *
      * @param vertx the Vert.x instance owning the server
      * @return the started fixture
@@ -180,7 +178,7 @@ final class McpUnmergedAllOfAcceptanceITFixture {
         McpToolRuntime<I> runtime = factory.create(
                 name,
                 null,
-                "gap-3c89fb8e shape fixture tool " + name + ".",
+                "shape fixture tool " + name + ".",
                 new McpToolAnnotations(true, false, true, false),
                 carrierType,
                 null,
@@ -328,51 +326,50 @@ final class McpUnmergedAllOfAcceptanceITFixture {
 
     // --- Carriers: the generated shape, one parameter published as "payload" ---
 
-    record Hj03Payload(@JsonProperty("payload") HJ03 argument0) {}
+    record PolymorphicPayload(@JsonProperty("payload") PolymorphicShape argument0) {}
 
-    record Uw2Payload(@JsonProperty("payload") UW2UnwrappedAlias argument0) {}
+    record UnwrappedPayload(@JsonProperty("payload") UnwrappedAliasShape argument0) {}
 
-    // ---- HJ03: any-setter on a polymorphic subtype (copied verbatim from Shapes.java) ----
+    // ---- Polymorphic subtype: any-setter on a polymorphic subtype ----
 
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = "kind")
     @JsonSubTypes({
-        @JsonSubTypes.Type(value = J03AnySub.class, name = "any"),
-        @JsonSubTypes.Type(value = J03PlainSub.class, name = "plain")
+        @JsonSubTypes.Type(value = AnySetterSub.class, name = "any"),
+        @JsonSubTypes.Type(value = PlainSub.class, name = "plain")
     })
-    abstract static class J03Base {
+    abstract static class PolymorphicBase {
         public String kind;
     }
 
-    static final class J03AnySub extends J03Base {
+    static final class AnySetterSub extends PolymorphicBase {
         public String name;
 
         @JsonAnySetter
         private Map<String, String> extras = new LinkedHashMap<>();
     }
 
-    static final class J03PlainSub extends J03Base {
+    static final class PlainSub extends PolymorphicBase {
         public String other;
     }
 
-    static final class HJ03 {
+    static final class PolymorphicShape {
         public String label;
-        public J03Base value;
+        public PolymorphicBase value;
     }
 
-    // ---- UW2: @JsonUnwrapped child whose alias is folded, plus an any-setter on the parent
-    // (copied verbatim from Shapes.java's UW2AliasChild / UW2UnwrappedAlias) ----
+    // ---- Unwrapped alias: @JsonUnwrapped child whose alias is folded, plus an any-setter on the parent ----
 
-    static final class UW2AliasChild {
+    static final class AliasedChild {
         @JsonAlias("nm")
         @Size(max = 3)
         public String name;
     }
 
-    static final class UW2UnwrappedAlias {
+    static final class UnwrappedAliasShape {
         public String label;
 
         @JsonUnwrapped
-        public UW2AliasChild inner;
+        public AliasedChild inner;
 
         @JsonAnySetter
         private Map<String, Object> extras = new LinkedHashMap<>();

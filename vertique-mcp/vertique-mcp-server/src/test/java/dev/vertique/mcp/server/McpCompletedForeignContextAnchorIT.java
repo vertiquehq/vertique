@@ -53,14 +53,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * RED proof for repair task R47 (phase-exit Critical C1): {@link McpRequestDispatcher}'s private
- * {@code anchoredOnContext(Future, Context)} helper (around line 610) treats an
- * already-{@code isComplete()} future exactly like a {@code null} owning-context — an identity
- * no-op that returns the future unchanged, without ever re-anchoring it onto the request-owning
- * context.
+ * Proof that {@link McpRequestDispatcher}'s private {@code anchoredOnContext(Future, Context)}
+ * helper must not treat an already-{@code isComplete()} future like a {@code null} owning-context —
+ * an identity no-op that returns the future unchanged, without ever re-anchoring it onto the
+ * request-owning context.
  *
- * <p>That identity-no-op reasoning silently assumes a completed future carries no context binding
- * of its own. Per Vert.x's {@code FutureBase.emitResult} (see {@code
+ * <p>An identity no-op would silently assume a completed future carries no context binding of its
+ * own. Per Vert.x's {@code FutureBase.emitResult} (see {@code
  * io.vertx.core.impl.future.FutureBase#emitResult}), a future that <em>is</em> bound to a
  * non-{@code null} context — for instance one minted via {@code
  * ((ContextInternal) context).promise()} — dispatches every listener attached to it via {@code
@@ -77,7 +76,7 @@ import org.junit.jupiter.api.Timeout;
  * request is ever issued, so the future handed to the first request-interceptor is both {@code
  * isComplete() == true} and bound to a context the dispatcher never owns. The second, ordered
  * interceptor then probes {@link Vertx#currentContext()} the instant its own {@code beforeRequest}
- * is invoked — which, per T017/T016's ordering guarantee, only ever happens inside the
+ * is invoked — which, per the interceptor ordering guarantee, only ever happens inside the
  * continuation chained directly onto the first interceptor's returned future.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -130,7 +129,7 @@ class McpCompletedForeignContextAnchorIT {
     }
 
     @Test
-    @DisplayName("R47 C1: a completed-but-foreign-context-bound interceptor future must still be "
+    @DisplayName("a completed-but-foreign-context-bound interceptor future must still be "
             + "anchored onto the request's own Vert.x context, never dispatched on the foreign one")
     void shouldAnchorAnAlreadyCompleteForeignContextBoundFutureOntoTheRequestOwningContext() throws Exception {
         Context foreignContext = foreignVertx.getOrCreateContext();
@@ -138,7 +137,7 @@ class McpCompletedForeignContextAnchorIT {
         assertThat(foreignCompletedFuture.isComplete())
                 .as("SETUP: the foreign-bound future must already be complete before the dispatcher "
                         + "ever composes onto it — otherwise this proof would exercise the pending-future "
-                        + "redispatch path instead of the isComplete() fast path under repair")
+                        + "redispatch path instead of the isComplete() fast path")
                 .isTrue();
 
         fixture = Fixture.start(vertx, foreignCompletedFuture);

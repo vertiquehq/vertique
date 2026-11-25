@@ -33,7 +33,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** T029 TP-001 — pinned stable Go client interoperability over Streamable HTTP. */
+/** Pinned stable Go client interoperability over Streamable HTTP. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 120, unit = TimeUnit.SECONDS)
 public class McpGoClientInteropIT {
@@ -80,14 +80,14 @@ public class McpGoClientInteropIT {
         fixture.server().close().onComplete(result -> finishTeardown(context, result.cause()));
     }
 
-    private static Stream<String> t029ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(ANONYMOUS_ROW, BEARER_ROW, INVALID_BEARER_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t029ContractRows")
-    @DisplayName("T029 stable Go client interoperability matrix")
-    void shouldEnforceT029ContractMatrix(String row) throws Exception {
+    @MethodSource("contractRows")
+    @DisplayName("stable Go client interoperability matrix")
+    void shouldEnforceGoClientInteropMatrix(String row) throws Exception {
         fixture.resetObservations();
 
         McpSubprocessHarness.Invocation invocation = McpSubprocessHarness.Invocation.of(
@@ -124,7 +124,7 @@ public class McpGoClientInteropIT {
                         McpGoClientInteropITFixture.RESTRICTED_RESULT,
                         List.of(McpGoClientInteropITFixture.PUBLIC_TOOL, McpGoClientInteropITFixture.RESTRICTED_TOOL));
             case INVALID_BEARER_ROW -> assertInvalidBearerFailure(report);
-            default -> throw new AssertionError("unrecognized T029 row: " + row);
+            default -> throw new AssertionError("unrecognized interoperability row: " + row);
         }
     }
 
@@ -188,7 +188,7 @@ public class McpGoClientInteropIT {
     }
 
     private static JsonObject resultReport(String output) {
-        String prefix = "T029_RESULT=";
+        String prefix = "GO_CLIENT_RESULT=";
         List<String> reports = output.lines()
                 .filter(line -> line.startsWith(prefix))
                 .map(line -> line.substring(prefix.length()))
@@ -205,7 +205,7 @@ public class McpGoClientInteropIT {
      */
     private static Path buildClient() throws IOException {
         Path fixtureDirectory = resourcePath(CLIENT_RESOURCE).getParent();
-        Path binary = goCacheRoot.resolve("bin").resolve("t029-client");
+        Path binary = goCacheRoot.resolve("bin").resolve("go-interop-client");
         McpSubprocessHarness.Invocation build = McpSubprocessHarness.Invocation.of(List.of(
                         goExecutable(),
                         "-C",

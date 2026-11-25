@@ -68,7 +68,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** T033's fixed characterization of configured, single-pass result encoding. */
+/** A fixed characterization of configured, single-pass result encoding. */
 class McpResultEncodingCharacterizationTest {
 
     private static final String SEED_RESOURCE = "/mcp/characterization/result-seeds.jsonl";
@@ -149,7 +149,7 @@ class McpResultEncodingCharacterizationTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("seeds")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    @DisplayName("T033: every result seed retains its configured bounded encoding")
+    @DisplayName("every result seed retains its configured bounded encoding")
     void shouldEncodeEverySeedWithinTheOutputCap(Seed seed) throws Exception {
         // Given: one literal result seed and the shared structural value it references, when any.
         var fixture = McpResultEncodingCharacterizationTestFixture.start(seed, vertx);
@@ -174,7 +174,7 @@ class McpResultEncodingCharacterizationTest {
                         .contains(new String(corpusRow(seed.value()).renderedUtf8(), UTF_8));
             }
             if (seed.kind() == ResultKind.TEXT_AND_STRUCTURED) {
-                // DECISIVE (R37): a handler-authored explicit text item is left exactly as authored —
+                // DECISIVE: a handler-authored explicit text item is left exactly as authored —
                 // no canonical text is ever appended once result.textContent() is already non-empty.
                 var content = envelope.getJsonObject("result").getJsonArray("content");
                 assertThat(content)
@@ -223,7 +223,7 @@ class McpResultEncodingCharacterizationTest {
         return McpJsonTokenCorpus.rowsForConsumer(RESULT_CORPUS_CONSUMER).stream()
                 .filter(candidate -> candidate.id().equals(id))
                 .findFirst()
-                .orElseThrow(() -> new IllegalStateException("Missing T033 shared corpus row " + id));
+                .orElseThrow(() -> new IllegalStateException("Missing shared corpus row " + id));
     }
 
     private enum ResultKind {
@@ -384,7 +384,7 @@ class McpResultEncodingCharacterizationTest {
                 case CORPUS ->
                     McpToolResult.structured(
                             new CountingStructuredValue(corpusValue(seed.value()), rawSerializationAttempts));
-                // R37: a handler-authored explicit text item alongside structured content must reach
+                // A handler-authored explicit text item alongside structured content must reach
                 // the wire exactly as authored — no canonical text is ever appended when
                 // result.textContent() is already non-empty. Bypasses the named factories deliberately
                 // (McpToolResult's own canonical constructor accepts this combination even though no

@@ -41,15 +41,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves the P04 remediation for issue W5 — {@code McpServerConfigValidator}'s registry-visibility
- * rule (§4.5) is reachable from the one real production entry point, {@link McpRouterMount}'s
- * constructor, not merely from a test fixture that calls {@code McpServerConfigValidator} directly.
+ * Proves {@code McpServerConfigValidator}'s registry-visibility rule is reachable from the one real
+ * production entry point, {@link McpRouterMount}'s constructor, not merely from a test fixture that
+ * calls {@code McpServerConfigValidator} directly.
  *
- * <p>Before the fix, {@code McpServerModule#routerMount} did not depend on {@link McpToolRegistry} at
- * all, so {@code McpRouterMount}'s constructor called only the two-argument {@code validate(config,
- * routeAuthHandlers)} overload — an enabled, no-scheme mount publishing a {@code @RolesAllowed} tool
- * would start successfully and serve that tool exclusively to anonymous callers, since an
- * unconfigured scheme can never satisfy a {@link McpAccessMode#RESTRICTED} requirement.
+ * <p>{@code McpServerModule#routerMount} depends on {@link McpToolRegistry}, so {@code
+ * McpRouterMount}'s constructor must call the registry-aware {@code validate} overload rather than
+ * only the two-argument {@code validate(config, routeAuthHandlers)} — otherwise an enabled, no-scheme
+ * mount publishing a {@code @RolesAllowed} tool would start successfully and serve that tool
+ * exclusively to anonymous callers, since an unconfigured scheme can never satisfy a {@link
+ * McpAccessMode#RESTRICTED} requirement.
  *
  * <p>Constructs {@link McpRouterMount} directly — the exact constructor {@code McpServerModule}
  * calls — with a real {@link McpToolRegistry}, mirroring {@link McpToolCallIT}'s fixture wiring.
@@ -129,7 +130,7 @@ class McpRouterMountRegistryVisibilityTest {
 
     private static McpToolDescriptor descriptor(String name, McpToolAccess access) {
         return new McpToolDescriptor(
-                name, null, "W5 registry-visibility fixture tool.", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, access);
+                name, null, "Registry-visibility fixture tool.", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, access);
     }
 
     /** A zero-argument tool invoker whose handler is never expected to run in this composition-only test. */

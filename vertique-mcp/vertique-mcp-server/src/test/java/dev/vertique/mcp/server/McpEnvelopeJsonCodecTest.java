@@ -22,12 +22,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001 — pins the T007 {@link McpEnvelopeJsonCodec} contract matrix: a well-formed envelope decodes,
+ * Pins the {@link McpEnvelopeJsonCodec} contract matrix: a well-formed envelope decodes,
  * and every named boundary violation — duplicate keys, trailing tokens, over-deep nesting, an
  * over-long number literal, invalid UTF-8 (both malformed and overlong), an overflowing decimal
  * exponent, and an over-scaled decimal — maps to the same bounded rejection. The depth and
  * number-length rows assert the frozen boundary from both sides in the same row: exactly 1000 is
- * accepted, exactly 1001 is rejected. The structural row distinguishes the R18-configured
+ * accepted, exactly 1001 is rejected. The structural row distinguishes the configured
  * {@code maxTokenCount} and the {@link HttpConfig}-derived {@code maxDocumentLength} from Jackson's
  * remaining frozen constraints. Document-length behavior is proved separately in
  * {@link #shouldRejectOnlyPastTheConfiguredMaxDocumentLength()}.
@@ -49,7 +49,7 @@ class McpEnvelopeJsonCodecTest {
     private static final String NESTED_OVER_SCALE_ROW = "shouldRejectAnOverScaledDecimalNestedInAContainer";
     private static final String STRUCTURAL_CONSTRAINTS_ROW = "shouldFreezeAllSixStreamReadConstraints";
 
-    /** The frozen {@code maxNestingDepth} and {@code maxNumberLength} boundary (T007 contract). */
+    /** The frozen {@code maxNestingDepth} and {@code maxNumberLength} boundary. */
     private static final int FROZEN_BOUNDARY = 1_000;
 
     /** The fixed internal decimal scale-magnitude hardening bound (see {@code MAX_DECIMAL_SCALE}). */
@@ -76,8 +76,8 @@ class McpEnvelopeJsonCodecTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("contractRows")
-    @DisplayName("T007 contract matrix: a well-formed envelope decodes and every boundary violation is rejected")
-    void shouldEnforceT007ContractMatrix(String row) {
+    @DisplayName("contract matrix: a well-formed envelope decodes and every boundary violation is rejected")
+    void shouldEnforceEnvelopeCodecContractMatrix(String row) {
         switch (row) {
             case WELL_FORMED_ROW -> {
                 // Given: a well-formed final-2026 discover request envelope.
@@ -186,8 +186,8 @@ class McpEnvelopeJsonCodecTest {
                 // direction, while staying well under the frozen maxNumberLength bound. Jackson throws
                 // an UNCHECKED NumberFormatException for these, not an IOException.
                 //
-                // DECISIVE: before the fix, decode() let the NumberFormatException escape uncaught,
-                // failing this test with an error (not merely a wrong assertion) instead of returning a
+                // DECISIVE: decode() must not let the NumberFormatException escape uncaught, which would
+                // fail this test with an error (not merely a wrong assertion) instead of returning a
                 // classified rejection.
                 assertThat(codec.decode("1E2147483649".getBytes(StandardCharsets.UTF_8))
                                 .isRejected())
@@ -276,7 +276,7 @@ class McpEnvelopeJsonCodecTest {
                 StreamReadConstraints constraints = codec.mapper().getFactory().streamReadConstraints();
 
                 // DECISIVE: reads every configured or frozen constraint back off the live parser
-                // configuration, so a change to any of them — including the R18 maxTokenCount — fails.
+                // configuration, so a change to any of them — including the maxTokenCount — fails.
                 assertThat(constraints.getMaxNestingDepth())
                         .as("maxNestingDepth must stay frozen at 1000")
                         .isEqualTo(1_000);
@@ -296,12 +296,12 @@ class McpEnvelopeJsonCodecTest {
                         .as("maxTokenCount must equal the independently configured ingress token budget")
                         .isEqualTo(McpServerConfig.defaults().ingressMaxTokens());
             }
-            default -> fail("unknown T007 contract row: " + row);
+            default -> fail("unknown envelope codec contract row: " + row);
         }
     }
 
     /**
-     * P03 item 5: proves {@code maxDocumentLength} is actually wired to the codec's configured {@link
+     * Proves {@code maxDocumentLength} is actually wired to the codec's configured {@link
      * HttpConfig#maxBodySize()} rather than being hard-coded or omitted. Every other test in this class
      * uses the default {@code HttpConfig}, whose 2 MB body limit no realistic document exercises; a
      * codec that ignored {@code maxDocumentLength} entirely would pass every other row.
@@ -327,7 +327,7 @@ class McpEnvelopeJsonCodecTest {
                 .isTrue();
     }
 
-    /** Framework wiring for the T007 contract matrix: codec construction and boundary fixture bytes. */
+    /** Framework wiring for the contract matrix: codec construction and boundary fixture bytes. */
     private static final class McpEnvelopeJsonCodecTestFixture {
 
         private McpEnvelopeJsonCodecTestFixture() {}

@@ -11,7 +11,7 @@ import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** R18 proof that the ingress parser consumes its configured token budget and no output budget. */
+/** Proof that the ingress parser consumes its configured token budget and no output budget. */
 class McpEnvelopeTokenBudgetTest {
 
     private static final int MIN_TOKENS = 1_024;
@@ -26,7 +26,7 @@ class McpEnvelopeTokenBudgetTest {
             "byte-first-precedence");
 
     @Test
-    @DisplayName("R18: enforces configured ingress token boundaries from the canonical JSON corpus")
+    @DisplayName("enforces configured ingress token boundaries from the canonical JSON corpus")
     void shouldEnforceConfiguredIngressTokenBoundaries() {
         var rows = McpJsonTokenCorpus.ingressUnitRows();
 

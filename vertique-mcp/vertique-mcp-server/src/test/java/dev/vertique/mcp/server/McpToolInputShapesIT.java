@@ -33,8 +33,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T005 TP-003 to TP-005 — what the MCP tool-input boundary accepts, proven through the real
- * {@code tools/call} path against schemas the real generator produced and the real hardener hardened.
+ * What the MCP tool-input boundary accepts, proven through the real {@code tools/call} path against
+ * schemas the real generator produced and the real hardener hardened.
  *
  * <p>Every rejection row asserts the terminal event's {@link McpErrorType#INPUT_VALIDATION}
  * classification, which only the dispatcher's stage-1 schema check produces, and that {@code prepare()}
@@ -44,8 +44,7 @@ import org.junit.jupiter.api.Timeout;
  * cannot be mistaken for a schema rejection: a binder failure in this fixture is reported as
  * {@code INPUT_PROCESSING}, and a coerced value would reach the handler and increment its counter.
  *
- * <p>A real server, bound and connected on the literal {@code 127.0.0.1} (see
- * {@code docs/standards/testing.md} § Dynamic Port Allocation).
+ * <p>A real server, bound and connected on the literal {@code 127.0.0.1}.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class McpToolInputShapesIT {
@@ -78,10 +77,10 @@ class McpToolInputShapesIT {
         client = null;
     }
 
-    // --- TP-003: the five restored AC-013.1 shapes ---
+    // --- The five restored input-discovery shapes ---
 
     @Test
-    @DisplayName("TP-003: a coercible wrong-typed value at a restored position is INPUT_VALIDATION")
+    @DisplayName("a coercible wrong-typed value at a restored position is INPUT_VALIDATION")
     void restoredShapesRejectCoercibleWrongTypesAsInputValidation() throws Exception {
         startServer();
 
@@ -104,7 +103,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-003: an unknown key on a restored shape is INPUT_VALIDATION")
+    @DisplayName("an unknown key on a restored shape is INPUT_VALIDATION")
     void restoredShapesRejectUnknownKeysAsInputValidation() throws Exception {
         startServer();
 
@@ -122,21 +121,21 @@ class McpToolInputShapesIT {
         }
     }
 
-    // --- H4: getter-only collection with no backing field ---
+    // --- Getter-only collection with no backing field ---
 
     /**
-     * The MCP-level half of the H4 proof. {@code GetterOnlyCollectionNoBackingFieldDto.getItems()} has
-     * no backing field named {@code items} at all — the property's only storage is a private field
-     * named {@code internal}, populated in place through the getter, which is how Jackson binds a
-     * getter-only mutable collection with no setter. The REST-level half is {@code
-     * ProfiledSchemaSynthesisIT
+     * The MCP-level half of the getter-only-collection proof. {@code
+     * GetterOnlyCollectionNoBackingFieldDto.getItems()} has no backing field named {@code items} at
+     * all — the property's only storage is a private field named {@code internal}, populated in place
+     * through the getter, which is how Jackson binds a getter-only mutable collection with no setter.
+     * The REST-level half is {@code ProfiledSchemaSynthesisIT
      * .getterOnlyCollectionWithNoBackingFieldGateRejectsWrongTypedItemsAndAcceptsValidBody}; the
      * unit-level half (that the property is published with its item schema) is {@code
      * dev.vertique.json.schema.GetterOnlyCollectionDescriptionTest
      * .getterOnlyCollectionWithNoBackingFieldPublishesItsItemSchema} in {@code vertique-json-schema}.
      */
     @Test
-    @DisplayName("H4: a wrong-typed item on a getter-only collection with no backing field is INPUT_VALIDATION,"
+    @DisplayName("a wrong-typed item on a getter-only collection with no backing field is INPUT_VALIDATION,"
             + " a well-typed body reaches the handler")
     void getterOnlyCollectionWithNoBackingFieldRejectsWrongTypedItemsAndAcceptsValidBody() throws Exception {
         startServer();
@@ -151,15 +150,15 @@ class McpToolInputShapesIT {
                 "a well-typed body must reach the handler");
     }
 
-    // --- BG1: Lombok builder, constrained private field, no getter — validator-present case ---
+    // --- Lombok builder, constrained private field, no getter — validator-present case ---
 
     /**
-     * The MCP-level half of the BG1 proof, validator-present only: {@code
-     * McpToolInputShapesITFixture.BG1_TOOL} is registered through a separate, validator-backed {@link
-     * dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} — every other tool in this fixture stays
-     * on the validator-less one. The REST-level half is {@code ProfiledSchemaSynthesisIT
-     * .bg1GateRejectsTooLongNameAndAcceptsValidNameUnderAValidator}; the unit-level half (type-only
-     * without a validator, {@code maxLength} with one) is {@code
+     * The MCP-level half of the Lombok-builder proof, validator-present only: {@code
+     * McpToolInputShapesITFixture.LOMBOK_BUILDER_NO_GETTER_TOOL} is registered through a separate,
+     * validator-backed {@link dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} — every other
+     * tool in this fixture stays on the validator-less one. The REST-level half is the matching case
+     * in {@code ProfiledSchemaSynthesisIT}; the unit-level half (type-only without a validator, {@code
+     * maxLength} with one) is {@code
      * dev.vertique.json.schema.MetadataConstraintSourceCoverageTest
      * .lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne} in {@code
      * vertique-json-schema}. Only the validator-present case has a row here: without a validator, the
@@ -167,29 +166,29 @@ class McpToolInputShapesIT {
      * gap this proof needs to re-demonstrate at the MCP boundary.
      */
     @Test
-    @DisplayName("BG1: on the validator-backed tool, a too-long name is INPUT_VALIDATION and a valid name reaches"
+    @DisplayName("on the validator-backed tool, a too-long name is INPUT_VALIDATION and a valid name reaches"
             + " the handler, for a Lombok builder's constrained, getter-less private field")
-    void bg1RejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
+    void lombokBuilderRejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpToolInputShapesITFixture.BG1_TOOL,
+                McpToolInputShapesITFixture.LOMBOK_BUILDER_NO_GETTER_TOOL,
                 new JsonObject().put("name", "toolong"),
                 "a 7-character name must be rejected against the metadata-supplement-rendered maxLength: 5");
         assertAccepted(
-                McpToolInputShapesITFixture.BG1_TOOL,
+                McpToolInputShapesITFixture.LOMBOK_BUILDER_NO_GETTER_TOOL,
                 new JsonObject().put("name", "ada"),
                 "a 3-character name must reach the handler");
     }
 
-    // --- T006 TP-002: the Positive/Negative family — C3p and C3c parity, both validator modes ---
+    // --- The Positive/Negative family — static-factory and constructor parity, both validator modes ---
 
     /**
-     * rest-023 T006 TP-002. {@code PositiveFamilyStaticFactoryDto} (C3p: a {@code @JsonCreator} static
-     * factory) and {@code PositiveFamilyConstructorDto} (C3c: a {@code @JsonCreator} constructor), each
+     * {@code PositiveFamilyStaticFactoryDto} (a {@code @JsonCreator} static
+     * factory) and {@code PositiveFamilyConstructorDto} (a {@code @JsonCreator} constructor), each
      * carrying {@code @Positive} directly on the creator parameter, each registered twice — on the
      * validator-less factory every other tool in this fixture uses, and on the same validator-backed
-     * factory {@link #bg1RejectsTooLongNameAndAcceptsValidNameUnderAValidator} uses. The unit-level
+     * factory {@link #lombokBuilderRejectsTooLongNameAndAcceptsValidNameUnderAValidator} uses. The unit-level
      * halves of the same fixtures are {@code
      * dev.vertique.json.schema.StaticFactoryConstraintParityTest
      * .staticFactoryCreatorParameterRendersThePositiveFamily} and {@code
@@ -197,16 +196,16 @@ class McpToolInputShapesIT {
      * REST-level half is {@code
      * ProfiledSchemaSynthesisIT.positiveFamilyRejectsAViolatingValueAtBothBoundaries}.
      *
-     * <p>Expected initial result (baseline, unmodified floor): C3p is {@code INPUT_VALIDATION} at
-     * neither {@code amount=-5} nor {@code amount=0} in <em>either</em> mode — red — since neither the
-     * floor nor the metadata supplement (Bean Validation exposes no metadata for a static factory at
-     * all) can see this constraint yet. C3c is not rejected on the validator-less tool — red — but
-     * already rejected on the validator-backed tool — a CHARACTERIZATION CONTROL, not a red: Bean
-     * Validation exposes a constrained constructor's own parameters directly. Every {@code amount=5}
-     * case is the sensitivity control, accepted (reaches the handler) in every mode/fixture combination.
+     * <p>The static factory is {@code INPUT_VALIDATION} at both {@code amount=-5} and {@code
+     * amount=0} in <em>either</em> mode: Bean Validation exposes no metadata for a static factory at
+     * all, so only the floor renders the constraint. The constructor is rejected on the
+     * validator-less tool by the floor and on the validator-backed tool by the metadata supplement,
+     * because Bean Validation exposes a constrained constructor's own parameters directly. Every
+     * {@code amount=5} case is the sensitivity control, accepted (reaches the handler) in every
+     * mode/fixture combination.
      */
     @Test
-    @DisplayName("T006 TP-002: a violating value at a static-factory or constructor parameter is rejected at both"
+    @DisplayName("a violating value at a static-factory or constructor parameter is rejected at both"
             + " boundaries, in both validator modes as measured")
     void positiveFamilyRejectsAViolatingValueAtBothBoundaries() throws Exception {
         startServer();
@@ -215,7 +214,7 @@ class McpToolInputShapesIT {
         // recorded in one run rather than stopping at the first failure (assertSchemaRejection and
         // assertAccepted are otherwise sequential, direct assertions elsewhere in this class).
         assertAll(
-                // C3p, no validator: expected red now — the floor renders no Positive-family keyword yet.
+                // Static factory, no validator: the floor renders the Positive-family keyword.
                 () -> assertSchemaRejection(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_TOOL,
                         new JsonObject().put("amount", -5),
@@ -229,12 +228,12 @@ class McpToolInputShapesIT {
                         new JsonObject().put("amount", 5),
                         "sensitivity control: amount=5 must reach the handler"),
 
-                // C3p, validator-backed: expected red now too — Bean Validation exposes no metadata for
-                // a static factory at all, so only the floor (once widened) closes this.
+                // Static factory, validator-backed: Bean Validation exposes no metadata for a static
+                // factory at all, so only the floor closes this.
                 () -> assertSchemaRejection(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
                         new JsonObject().put("amount", -5),
-                        "amount=-5 must be rejected once the floor renders exclusiveMinimum: 0 (the"
+                        "amount=-5 must be rejected because the floor renders exclusiveMinimum: 0 (the"
                                 + " metadata supplement alone cannot see a static factory)"),
                 () -> assertSchemaRejection(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
@@ -245,7 +244,7 @@ class McpToolInputShapesIT {
                         new JsonObject().put("amount", 5),
                         "sensitivity control: amount=5 must reach the handler"),
 
-                // C3c, no validator: expected red now — the floor renders no Positive-family keyword yet.
+                // Constructor, no validator: the floor renders the Positive-family keyword.
                 () -> assertSchemaRejection(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_TOOL,
                         new JsonObject().put("amount", -5),
@@ -259,27 +258,27 @@ class McpToolInputShapesIT {
                         new JsonObject().put("amount", 5),
                         "sensitivity control: amount=5 must reach the handler"),
 
-                // C3c, validator-backed: CHARACTERIZATION CONTROL — already green at main. Bean
-                // Validation exposes a constrained constructor's own parameters directly.
+                // Constructor, validator-backed: Bean Validation exposes a constrained constructor's
+                // own parameters directly.
                 () -> assertSchemaRejection(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
                         new JsonObject().put("amount", -5),
-                        "CHARACTERIZATION CONTROL (already green at main): the metadata supplement already"
-                                + " renders exclusiveMinimum for a constructor parameter"),
+                        "CHARACTERIZATION CONTROL: the metadata supplement renders exclusiveMinimum for a"
+                                + " constructor parameter"),
                 () -> assertSchemaRejection(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
                         new JsonObject().put("amount", 0),
-                        "CHARACTERIZATION CONTROL (already green at main)"),
+                        "CHARACTERIZATION CONTROL: amount=0 is rejected by the metadata supplement too"),
                 () -> assertAccepted(
                         McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
                         new JsonObject().put("amount", 5),
                         "sensitivity control: amount=5 must reach the handler"));
     }
 
-    // --- TP-004: any-setter types ---
+    // --- Any-setter types ---
 
     @Test
-    @DisplayName("TP-004: an any-setter type with named properties accepts a typed extra")
+    @DisplayName("an any-setter type with named properties accepts a typed extra")
     void anySetterWithNamedPropertiesAcceptsTypedExtras() throws Exception {
         startServer();
         CountingToolInvoker<?> tool = fixture.tool(McpToolInputShapesITFixture.ANY_SETTER_NAMED_TOOL);
@@ -297,7 +296,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: an any-setter-only type accepts a typed extra")
+    @DisplayName("an any-setter-only type accepts a typed extra")
     void anySetterOnlyTypeAcceptsTypedExtras() throws Exception {
         startServer();
         CountingToolInvoker<?> tool = fixture.tool(McpToolInputShapesITFixture.ANY_SETTER_ONLY_TOOL);
@@ -312,7 +311,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: an Object-valued any-setter accepts any extra, including a nested object")
+    @DisplayName("an Object-valued any-setter accepts any extra, including a nested object")
     void objectValuedAnySetterAcceptsAnyExtra() throws Exception {
         startServer();
         CountingToolInvoker<?> tool = fixture.tool(McpToolInputShapesITFixture.OBJECT_ANY_SETTER_TOOL);
@@ -329,7 +328,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: a DTO-valued any-setter accepts a well-formed DTO extra")
+    @DisplayName("a DTO-valued any-setter accepts a well-formed DTO extra")
     void plainDtoExtraIsAccepted() throws Exception {
         startServer();
         CountingToolInvoker<?> tool = fixture.tool(McpToolInputShapesITFixture.DTO_ANY_SETTER_TOOL);
@@ -347,7 +346,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: a coercible wrong-typed extra is INPUT_VALIDATION")
+    @DisplayName("a coercible wrong-typed extra is INPUT_VALIDATION")
     void anySetterRejectsCoercibleWrongTypedExtrasAsInputValidation() throws Exception {
         startServer();
 
@@ -363,7 +362,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: a class-level additionalProperties FALSE rejects every extra")
+    @DisplayName("a class-level additionalProperties FALSE rejects every extra")
     void classLevelFalseRejectsExtrasAsInputValidation() throws Exception {
         startServer();
 
@@ -375,7 +374,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: an unknown key inside a DTO extra is INPUT_VALIDATION")
+    @DisplayName("an unknown key inside a DTO extra is INPUT_VALIDATION")
     void plainDtoExtraRejectsAnUnknownNestedKeyAsInputValidation() throws Exception {
         startServer();
 
@@ -385,11 +384,11 @@ class McpToolInputShapesIT {
                         .put("name", "ada")
                         .put("x", new JsonObject().put("name", "b").put("zzz", 1)),
                 "the DTO used as an extras value must itself be closed, so an unknown nested key is a "
-                        + "schema rejection and never reaches the binder (design proof v2, V07)");
+                        + "schema rejection and never reaches the binder");
     }
 
     @Test
-    @DisplayName("TP-004: a map subclass with an any-setter is described as the map the binder fills")
+    @DisplayName("a map subclass with an any-setter is described as the map the binder fills")
     void mapSubclassWithAnAnySetterIsDescribedAsAMap() throws Exception {
         startServer();
 
@@ -405,10 +404,10 @@ class McpToolInputShapesIT {
                 "the entries are described with the map's value type, so a wrong-typed entry is refused");
     }
 
-    // --- TP-005: aliases, reserved names, and storage names ---
+    // --- Aliases, reserved names, and storage names ---
 
     @Test
-    @DisplayName("TP-005: an alias-routed key carrying a coercible value is INPUT_VALIDATION")
+    @DisplayName("an alias-routed key carrying a coercible value is INPUT_VALIDATION")
     void aliasRoutedKeysAreRejectedAsInputValidation() throws Exception {
         startServer();
 
@@ -416,16 +415,16 @@ class McpToolInputShapesIT {
                 McpToolInputShapesITFixture.ALIASED_QUANTITY_TOOL,
                 new JsonObject().put("qty", "999"),
                 "the alias spelling carries the property's own schema, so the numeric string the binder "
-                        + "coerces is rejected before it reaches the @Max(10) slot (security round 7, N1)");
+                        + "coerces is rejected before it reaches the @Max(10) slot");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.ALIASED_ENUM_TOOL,
                 new JsonObject().put("r", "ADMIN"),
                 "the alias spelling carries the enum's own constants, so a spelling the profile would bind "
-                        + "to the @JsonEnumDefaultValue constant is rejected (security round 7, E)");
+                        + "to the @JsonEnumDefaultValue constant is rejected");
     }
 
     @Test
-    @DisplayName("TP-005: a valid alias spelling beside a valid extra reaches the handler")
+    @DisplayName("a valid alias spelling beside a valid extra reaches the handler")
     void validAliasBesideAValidExtraIsAccepted() throws Exception {
         startServer();
         CountingToolInvoker<?> tool = fixture.tool(McpToolInputShapesITFixture.ALIASED_QUANTITY_TOOL);
@@ -445,7 +444,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-005: under vertique-strict, a property sent under both spellings is INPUT_VALIDATION")
+    @DisplayName("under vertique-strict, a property sent under both spellings is INPUT_VALIDATION")
     void bothSpellingsAreRejectedUnderVertiqueStrict() throws Exception {
         startServer();
 
@@ -457,45 +456,42 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-005: reserved, contested, storage, and never-published names are INPUT_VALIDATION")
+    @DisplayName("reserved, contested, storage, and never-published names are INPUT_VALIDATION")
     void reservedAndStorageNamesAreRejectedAsInputValidation() throws Exception {
         startServer();
 
         assertSchemaRejection(
                 McpToolInputShapesITFixture.RESERVED_NAMES_TOOL,
                 new JsonObject().put("role", "admin"),
-                "a read-only name is bound by Jackson and never published, so it must stay rejected "
-                        + "(security round 7, N4)");
+                "a read-only name is bound by Jackson and never published, so it must stay rejected");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.RESERVED_NAMES_TOOL,
                 new JsonObject().put("id", "forged"),
-                "an ignored name is bound into the extras map and must stay rejected (security round 7, N3)");
+                "an ignored name is bound into the extras map and must stay rejected");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.RESERVED_NAMES_TOOL,
                 new JsonObject().put("extras", new JsonObject().put("role", "admin")),
-                "a method any-getter's storage name fills the map directly and must stay rejected "
-                        + "(design proof v4, SG1)");
+                "a method any-getter's storage name fills the map directly and must stay rejected");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SHARED_ALIAS_TOOL,
                 new JsonObject().put("x", "TOOLONG"),
                 "a spelling two properties claim is published with the claimant the binder routes it to, "
-                        + "the @Size(max = 3) property, so an over-long value is refused before it reaches it "
-                        + "(design proof v7, DA1 and DA2)");
+                        + "the @Size(max = 3) property, so an over-long value is refused before it reaches it");
         assertAccepted(
                 McpToolInputShapesITFixture.SETTER_ONLY_TOOL,
                 new JsonObject().put("admin", true),
                 "a name bound only through a setter is described with the setter's parameter type, so a "
-                        + "well-typed value reaches the member (design proof v7, SO1)");
+                        + "well-typed value reaches the member");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SETTER_ONLY_TOOL,
                 new JsonObject().put("admin", "yes"),
                 "a name bound only through a setter is described with the setter's parameter type, so a "
-                        + "wrong-typed value never reaches the member (design proof v7, SO1)");
+                        + "wrong-typed value never reaches the member");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.HIDDEN_ALIAS_TOOL,
                 new JsonObject().put("lvl", 999),
                 "an alias of a @Schema(hidden = true) property is released nowhere, so it must not reach the "
-                        + "@Max(10) slot — the 0.2.0 verdict (design proof v9, AH1-hidden-alias-any)");
+                        + "@Max(10) slot");
 
         String publishedSchema =
                 fixture.tool(McpToolInputShapesITFixture.SHARED_ALIAS_TOOL).inputSchema();
@@ -516,17 +512,18 @@ class McpToolInputShapesIT {
                 .isEqualTo(shape.getJsonObject("properties").getJsonObject(claimant));
     }
 
-    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+    // --- Sibling-ordered unwrapped pair ---
 
     /**
-     * C1: {@code SiblingUnwrappedParent} declares two {@code @JsonUnwrapped} siblings, in this order,
+     * {@code SiblingUnwrappedParent} declares two {@code @JsonUnwrapped} siblings, in this order,
      * where only the *second* sibling ({@code SiblingUnwrappedB}) carries the {@code @JsonAnySetter}.
      * The *first* sibling ({@code SiblingUnwrappedA}) carries an aliased, constrained member
-     * ({@code @JsonAlias("ak")}) and a hidden, constrained member — the exact shape T010's own hidden
-     * -member probe uses, just moved onto a sibling processed before the any-setter is known.
+     * ({@code @JsonAlias("ak")}) and a hidden, constrained member — the same shape as a hidden
+     * member on the parent itself, just moved onto a sibling processed before the any-setter is
+     * known.
      */
     @Test
-    @DisplayName("C1: a sibling unwrapped child's alias key is rejected at the gate whatever sibling carries"
+    @DisplayName("a sibling unwrapped child's alias key is rejected at the gate whatever sibling carries"
             + " the any-setter, and its hidden member's spelling is refused rather than reaching the handler")
     void siblingOrderedUnwrappedChildKeysAreRejectedAsInputValidation() throws Exception {
         startServer();
@@ -534,12 +531,12 @@ class McpToolInputShapesIT {
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
                 new JsonObject().put("ak", "abcdefgh"),
-                "C1: the first-processed unwrapped sibling's alias \"ak\" carries its own @Size(max = 3),"
+                "the first-processed unwrapped sibling's alias \"ak\" carries its own @Size(max = 3),"
                         + " so an over-long value must be refused before it reaches the handler");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
                 new JsonObject().put("secret", 5),
-                "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must be"
+                "DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must be"
                         + " refused rather than reaching the handler through the extras bucket unconstrained,"
                         + " even though the any-setter is declared on the second sibling, processed later");
         assertAccepted(
@@ -548,10 +545,10 @@ class McpToolInputShapesIT {
                 "the first sibling's own canonical property must still be admitted");
     }
 
-    // --- T010 TP-002: an alias spelling naming a member the document never publishes ---
+    // --- An alias spelling naming a member the document never publishes ---
 
     @Test
-    @DisplayName("TP-002: an alias naming a hidden member is refused, with and without an any-setter")
+    @DisplayName("an alias naming a hidden member is refused, with and without an any-setter")
     void anAliasNamingAHiddenMemberIsRefused() throws Exception {
         startServer();
 
@@ -563,10 +560,10 @@ class McpToolInputShapesIT {
     }
 
     /**
-     * Asserts one CO-007 shape: the colliding spelling is refused whatever value it carries, and the
+     * Asserts one colliding-spelling shape: the colliding spelling is refused whatever value it carries, and the
      * aliasing property itself still reaches the handler.
      *
-     * <p>The decisive value is {@code 5}. At T010's parent the document publishes {@code secret}
+     * <p>The decisive value is {@code 5}. At the parent the document would publish {@code secret}
      * carrying the aliasing property's own {@code {"maximum":10}}, so a larger value is refused by that
      * misplaced copy rather than admitted through the hole; {@code 5} satisfies the published maximum
      * and violates the hidden member's own {@code @Max(3)}, which is the member the key actually binds.
@@ -575,13 +572,13 @@ class McpToolInputShapesIT {
         assertSchemaRejection(
                 toolName,
                 new JsonObject().put("secret", 5),
-                "DECISIVE (CO-007): the spelling 'secret' is already this type's own property name, so it "
+                "DECISIVE: the spelling 'secret' is already this type's own property name, so it "
                         + "is published nowhere and, where extras are described, stays reserved. Published "
                         + "with the aliasing property's @Max(10) schema it admits 5 into a member declared "
                         + "@Max(3) that the document deliberately hides, and because 'level' is published "
                         + "the reserved set releases its spellings and the guard disappears with it. The "
-                        + "closed shape is the regression row: 0.2.0 refused this key because the hardener "
-                        + "closed a type with no declared extras");
+                        + "closed shape pins that the hardener refuses this key because it closes a type "
+                        + "with no declared extras");
         assertSchemaRejection(
                 toolName,
                 new JsonObject().put("secret", 99),
@@ -594,22 +591,22 @@ class McpToolInputShapesIT {
                         + "cannot satisfy the two rows above");
     }
 
-    // --- TP-006: case-insensitive binding (Change 3) ---
+    // --- Case-insensitive binding ---
 
     @Test
-    @DisplayName("TP-006: a case-insensitively bound property is accepted under another ASCII casing")
+    @DisplayName("a case-insensitively bound property is accepted under another ASCII casing")
     void caseInsensitiveShapeAcceptsAnotherCasingOfAPublishedProperty() throws Exception {
         startServer();
 
         assertAccepted(
                 McpToolInputShapesITFixture.CASE_INSENSITIVE_TOOL,
                 new JsonObject().put("NAME", "ab"),
-                "the binder accepts \"NAME\" case-insensitively, and the schema must too — this is the"
-                        + " gap Change 3 closes: the generator used to refuse the whole type outright");
+                "the binder accepts \"NAME\" case-insensitively, and the schema must too — a type bound"
+                        + " case-insensitively must not be refused outright by the generator");
     }
 
     @Test
-    @DisplayName("TP-006: a reserved name is rejected under every ASCII casing, not just its own")
+    @DisplayName("a reserved name is rejected under every ASCII casing, not just its own")
     void caseInsensitiveShapeRejectsAReservedNameUnderAnotherCasing() throws Exception {
         startServer();
 
@@ -622,8 +619,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName(
-            "TP-006: DECISIVE — the MCP hardener keeps accepting a patternProperties match on an otherwise-closed type")
+    @DisplayName("DECISIVE — the MCP hardener keeps accepting a patternProperties match on an otherwise-closed type")
     void caseInsensitiveClosedShapeAcceptsAnotherCasingThroughTheHardenerClosure() throws Exception {
         startServer();
 
@@ -639,8 +635,7 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName(
-            "TP-006: a case-insensitive, otherwise-closed shape still rejects a key that matches no folded pattern")
+    @DisplayName("a case-insensitive, otherwise-closed shape still rejects a key that matches no folded pattern")
     void caseInsensitiveClosedShapeStillRejectsATrulyUnknownKey() throws Exception {
         startServer();
 
@@ -652,39 +647,35 @@ class McpToolInputShapesIT {
     }
 
     /**
-     * AC-005.2: the MCP-level half of the proof. {@code
+     * The MCP-level half of the non-ASCII-key proof. {@code
      * dev.vertique.json.schema.CaseInsensitiveUnicodeFoldingTest.nonAsciiKeyRefusedByPropertyNames}
      * only matches the generated {@code propertyNames} regex against the confusable spelling — nothing
-     * there exercises a real tool call. The REST-level half is {@code ProfiledSchemaSynthesisIT
-     * .ac005NonAsciiKeyRejectedAtTheGateWithAValueFreeDetail}. U+212A KELVIN SIGN folds to ASCII
+     * there exercises a real tool call. The REST-level half is the matching case in {@code
+     * ProfiledSchemaSynthesisIT}. U+212A KELVIN SIGN folds to ASCII
      * {@code 'k'} under Jackson's locale-independent case fold, so the binder's own case-insensitive
      * lookup would route a key spelled with it straight into the real, constrained {@code key} member
      * if the schema check did not refuse it first.
      */
     @Test
-    @DisplayName("AC-005.2: a U+212A-folded key on a case-insensitive any-setter type is INPUT_VALIDATION, the"
+    @DisplayName("a U+212A-folded key on a case-insensitive any-setter type is INPUT_VALIDATION, the"
             + " handler is never entered")
-    void ac005NonAsciiKeyRejectedAsInputValidation() throws Exception {
+    void nonAsciiFoldedKeyRejectedAsInputValidation() throws Exception {
         startServer();
 
         assertSchemaRejection(
-                McpToolInputShapesITFixture.AC005_TOOL,
-                new JsonObject().put("Key", "AC5"),
+                McpToolInputShapesITFixture.NON_ASCII_KEY_TOOL,
+                new JsonObject().put("Key", "x"),
                 "the propertyNames rule must refuse the U+212A-folded key before the binder's own"
                         + " case-insensitive lookup ever gets a chance to route it to the real \"key\" member");
     }
 
-    // --- rest-023 T002 (D002): Optional-typed extras value ---
+    // --- Optional-typed extras value ---
 
     /**
-     * rest-023 T002 (D002; {@code evidence/probe-report-327531b4.md} § N14, § N14n). An any-setter
-     * extras value of declared type {@code Optional<Plain>} admits an explicit {@code null} (Jackson's
-     * own {@code Optional.empty()} mapping, closing N14n) and rejects a non-null value violating {@code
-     * Plain}'s own {@code @Size(max = 3)} constraint (closing N14), distinguished from a broken request
-     * path by a companion body that satisfies the constraint.
-     *
-     * <p>Expected initial result: red for both bodies — {@code main} rejects the {@code null} body and
-     * accepts the constraint-violating body (the undescribed gap).
+     * An any-setter extras value of declared type {@code Optional<Plain>} admits an explicit {@code
+     * null} (Jackson's own {@code Optional.empty()} mapping) and rejects a non-null value violating
+     * {@code Plain}'s own {@code @Size(max = 3)} constraint, distinguished from a broken request path
+     * by a companion body that satisfies the constraint.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -696,11 +687,11 @@ class McpToolInputShapesIT {
         assertAccepted(
                 McpToolInputShapesITFixture.OPTIONAL_EXTRAS_TOOL,
                 new JsonObject().put("label", "l").putNull("x"),
-                "N14n: an explicit null must bind to Optional.empty(), matching Jackson's own mapping");
+                "an explicit null must bind to Optional.empty(), matching Jackson's own mapping");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.OPTIONAL_EXTRAS_TOOL,
                 new JsonObject().put("label", "l").put("x", new JsonObject().put("name", "TOOLONG")),
-                "N14: a non-null value violating Plain's own @Size(max = 3) must now be rejected");
+                "a non-null value violating Plain's own @Size(max = 3) must be rejected");
         assertAccepted(
                 McpToolInputShapesITFixture.OPTIONAL_EXTRAS_TOOL,
                 new JsonObject().put("label", "l").put("x", new JsonObject().put("name", "ab")),
@@ -708,19 +699,14 @@ class McpToolInputShapesIT {
                         + " distinguishing the constraint rejection from a broken request path");
     }
 
-    // --- rest-023 T003 (D001): TP-004, map value shapes ---
+    // --- Map value shapes ---
 
     /**
-     * rest-023 T003 TP-004 (D001; {@code evidence/probe-report-327531b4.md} §§ S2a, S2b, rest023b §
-     * S2d). Every {@code tags}/{@code labels}/{@code opts} argument is rejected, including a {@code
+     * Every {@code tags}/{@code labels}/{@code opts} argument is rejected, including a {@code
      * null} inside the non-{@code Optional} {@code tags} map value (the explicit null rule); a
      * companion {@code opts} argument carrying {@code null} is accepted, since {@code opts}'s own
      * declared value type is {@code Optional<Plain>}; the {@code raw} argument stays accepted,
      * unaffected.
-     *
-     * <p>Expected initial result: red for every {@code tags}/{@code labels}/{@code opts} argument —
-     * {@code main} accepts all of them; the {@code raw} argument's own acceptance is a characterization
-     * control, not a red.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -761,15 +747,12 @@ class McpToolInputShapesIT {
                 "raw: an opaque JsonNode value must stay accepted, unaffected");
     }
 
-    // --- rest-023 T003 (D001): TP-010, the single any-setter N16 shape ---
+    // --- The single any-setter shape ---
 
     /**
-     * rest-023 T003 TP-010 (N16, architecture round-3 R1's own alternative, ruling X1). An argument
-     * violating the single any-setter's own type-use constraint is rejected; a companion argument
-     * satisfying the constraint is accepted, distinguishing the rejection from a broken request path.
-     *
-     * <p>Expected initial result: red — {@code main} accepts {@code {"k":"TOOLONG"}} (the any-setter's
-     * own extras value carries no maxLength today).
+     * An argument violating the single any-setter's own type-use constraint is rejected; a companion
+     * argument satisfying the constraint is accepted, distinguishing the rejection from a broken
+     * request path.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -789,18 +772,15 @@ class McpToolInputShapesIT {
                         + " broken request path");
     }
 
-    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+    // --- Several any-setters sharing a wire key ---
 
     /**
-     * rest-023 T004 TP-002. An argument violating either any-setter's own constraint on a wire key both
-     * a parent's own and an unwrapped child's own any-setter share (UW-2AS) is rejected; a companion
+     * An argument violating either any-setter's own constraint on a wire key both a parent's own and
+     * an unwrapped child's own any-setter share is rejected; a companion
      * argument satisfying both is accepted. An object-valued two-any-setter pair (both value types are
      * beans) is rejected when either bean's own constraint is violated, and accepted — with the handler
      * running exactly once, the zero-false-reject proof — when both are satisfied.
      *
-     * <p>Expected initial result: red for the object-valued pair's own conjunction (only one any-setter's
-     * own value schema is described today); the UW-2AS argument's own rejection may already be green —
-     * reported honestly against the actual baseline run, not assumed.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -814,12 +794,12 @@ class McpToolInputShapesIT {
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SHARED_ANY_SETTER_CONJUNCTION_TOOL,
                 new JsonObject().put("x", "TOOLONG"),
-                "UW-2AS: a body violating the unwrapped child's own type-use constraint on the shared key"
+                "a body violating the unwrapped child's own type-use constraint on the shared key"
                         + " must be rejected");
         assertAccepted(
                 McpToolInputShapesITFixture.SHARED_ANY_SETTER_CONJUNCTION_TOOL,
                 new JsonObject().put("x", "ab"),
-                "UW-2AS: a body satisfying both any-setters' own constraints on the shared key must stay"
+                "a body satisfying both any-setters' own constraints on the shared key must stay"
                         + " accepted, distinguishing the rejection from a broken request path");
 
         assertSchemaRejection(
@@ -839,17 +819,13 @@ class McpToolInputShapesIT {
                         + " with the handler running exactly once — the zero-false-reject proof");
     }
 
-    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+    // --- Member-level closure ---
 
     /**
-     * rest-023 T005 TP-003 (D005; M10). An argument carrying an extra key under the member-level
-     * FALSE-closed member is rejected; the same extra-key shape under the unannotated control member is
-     * accepted, unaffected — distinguishing this task's own rule's scope from a global tightening. A
-     * companion argument satisfying the closed member (no extra key) is accepted.
-     *
-     * <p>Expected initial result: red for the annotated member ({@code main} accepts it —
-     * {@code evidence/probe-report-327531b4.md} § M10); the control member's own acceptance is already
-     * green and stays green throughout.
+     * An argument carrying an extra key under the member-level FALSE-closed member is rejected; the
+     * same extra-key shape under the unannotated control member is accepted, unaffected —
+     * distinguishing this rule's scope from a global tightening. A companion argument satisfying the
+     * closed member (no extra key) is accepted.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -867,7 +843,7 @@ class McpToolInputShapesIT {
                 McpToolInputShapesITFixture.MEMBER_LEVEL_CLOSURE_TOOL,
                 new JsonObject().put("open", new JsonObject().put("name", "a").put("x", "1")),
                 "the same extra-key shape under the unannotated control member must stay accepted,"
-                        + " proving this task's own rule is scoped to the annotated member");
+                        + " proving the rule is scoped to the annotated member");
         assertAccepted(
                 McpToolInputShapesITFixture.MEMBER_LEVEL_CLOSURE_TOOL,
                 new JsonObject().put("child", new JsonObject().put("name", "a")),

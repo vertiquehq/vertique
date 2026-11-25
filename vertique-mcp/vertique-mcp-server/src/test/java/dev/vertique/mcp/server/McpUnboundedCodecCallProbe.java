@@ -7,7 +7,7 @@ import dev.vertique.rest.core.config.HttpConfig;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The synthetic sensitivity probe for {@code McpBoundedWritePathArchitectureTest} (R14 item 4): one
+ * The synthetic sensitivity probe for {@code McpBoundedWritePathArchitectureTest}: one
  * class, outside {@link McpProtocolCodec} itself, that calls each of the three surviving
  * byte-unbounded codec error helpers exactly once.
  *

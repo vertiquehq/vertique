@@ -150,7 +150,7 @@ class McpToolAdmissionWalkingSkeletonIT {
     }
 
     @Test
-    void shouldBehaveIdenticallyToMcp001WhenNoPolicyIsConfigured() throws Exception {
+    void shouldInvokeToolNormallyWhenNoPolicyIsConfigured() throws Exception {
         // Given: no default policy and no RateLimiters binding or backend of any kind.
         McpToolAdmissionWalkingSkeletonFixture fixture = startFixture(McpRateLimitConfig.defaults(), Optional.empty());
 

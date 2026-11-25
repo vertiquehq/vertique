@@ -45,10 +45,10 @@ import org.junit.jupiter.api.Test;
 /**
  * Proves {@link McpRequestDispatcher#handleFailure(RoutingContext)}'s already-ended path: no second
  * write on a response Vert.x has already ended, and — when an owned completion coordinator is present
- * — exactly one terminal then one completion (T004 S-b / #407). Without a coordinator the early
+ * — exactly one terminal then one completion. Without a coordinator the early
  * return remains a pure no-op.
  *
- * <p>Per the T007 review caution: {@code HttpServerResponse#ended()} is set synchronously by {@code
+ * <p>Note: {@code HttpServerResponse#ended()} is set synchronously by {@code
  * end()} and is never mocked {@code false} after an {@code end()} call here — this test mocks {@code
  * ended()} as unconditionally {@code true} for the entire call, modeling a response that was already
  * ended by an earlier point on the request path, not a race with an in-flight {@code end()}.
@@ -156,7 +156,7 @@ class McpHandleFailureAlreadyEndedTest {
                 new CorrelationContextFactory(Optional.empty()));
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

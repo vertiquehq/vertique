@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/** Framework wiring for {@link McpActionAuthorizerStartupTest} (R01 TP-002, issue #421). */
+/** Framework wiring for {@link McpActionAuthorizerStartupTest}. */
 final class McpActionAuthorizerStartupTestFixture {
 
     private static final McpToolAnnotations ANNOTATIONS = new McpToolAnnotations(true, false, true, false);
@@ -52,10 +52,10 @@ final class McpActionAuthorizerStartupTestFixture {
      * ever reached — not merely whether an exception was thrown.
      *
      * <p>{@code config} always selects {@value #SCHEME_NAME} with a matching optional-capable {@link
-     * RouteAuthHandler} already installed, so the pre-existing registry-visibility rule (§4.5) — which
+     * RouteAuthHandler} already installed, so the registry-visibility rule — which
      * would otherwise reject <em>any</em> {@link McpAccessMode#RESTRICTED} tool (role- or action-gated)
      * under an unconfigured scheme — never fires here. This isolates the one concern this fixture
-     * exists to test: the {@code @RequiresAction}-without-{@code Authorizer} gate (issue #421).
+     * exists to test: the {@code @RequiresAction}-without-{@code Authorizer} gate.
      */
     static ComposeResult compose(
             Vertx vertx, Set<McpToolInvoker> invokers, McpServerConfig config, Optional<Authorizer> authorizer) {
@@ -85,7 +85,7 @@ final class McpActionAuthorizerStartupTestFixture {
     static Set<McpToolInvoker> oneRequiresActionInvoker(String toolName) {
         McpToolAccess actionOnly = new McpToolAccess(McpAccessMode.RESTRICTED, List.of(), SAMPLE_ACTION);
         McpToolDescriptor descriptor = new McpToolDescriptor(
-                toolName, null, "R01 TP-002 fixture tool.", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, actionOnly);
+                toolName, null, "Action-authorizer fixture tool.", ANNOTATIONS, CLOSED_OBJECT_SCHEMA, null, actionOnly);
         return Set.of(new FixtureToolInvoker(descriptor));
     }
 
@@ -110,7 +110,7 @@ final class McpActionAuthorizerStartupTestFixture {
 
         @Override
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-            throw new AssertionError("an R01 TP-002 startup-validation fixture invoker must never be prepared");
+            throw new AssertionError("an action-authorizer startup-validation fixture invoker must never be prepared");
         }
     }
 

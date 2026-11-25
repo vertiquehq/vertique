@@ -59,11 +59,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T013 TP-003 — real-transport supporting evidence for the stalled-write settlement race.
+ * Real-transport supporting evidence for the stalled-write settlement race.
  *
  * <p>A real port-0 server bound to the literal {@code 127.0.0.1}, with a client pinned to the same
  * literal, whose peer stops reading after sending the request. Socket buffer sizes are a kernel hint,
- * not a capacity guarantee (§ task caution): this test asserts the stall is actually established —
+ * not a capacity guarantee: this test asserts the stall is actually established —
  * the terminal write has started (its terminal event published) but has not yet completed — before it
  * acts, and skips with a recorded reason when the platform absorbed the whole body before that could
  * be observed. Real transport nondeterminism means this is <strong>supporting evidence, not the
@@ -155,8 +155,8 @@ class McpStalledWriteIT {
                 stallEstablished,
                 "the platform absorbed the entire " + RESULT_CHARS + "-byte body into its socket buffers "
                         + "before the reset could land while the write was still pending; "
-                        + "SO_RCVBUF/SO_SNDBUF are a kernel hint, not a capacity guarantee — see the T013 task's "
-                        + "explicit allowance to skip this real-transport supporting-evidence proof");
+                        + "SO_RCVBUF/SO_SNDBUF are a kernel hint, not a capacity guarantee, so this "
+                        + "real-transport supporting-evidence proof is skipped when that happens");
 
         McpRequestCompletedEvent completed = fixture.observer().lastCompleted();
         assertThat(completed.transportOutcome())
@@ -378,7 +378,7 @@ class McpStalledWriteIT {
             return new McpToolDescriptor(
                     STALL_TOOL,
                     null,
-                    "T013 TP-003 fixture tool.",
+                    "Stalled-write fixture tool.",
                     ANNOTATIONS,
                     CLOSED_OBJECT_SCHEMA,
                     null,

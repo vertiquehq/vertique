@@ -105,7 +105,7 @@ final class McpOptionalCapabilityStartupTestFixture {
 
         @Override
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-            throw new AssertionError("a T010 startup-validation fixture invoker must never be prepared");
+            throw new AssertionError("an optional-capability startup fixture invoker must never be prepared");
         }
     }
 

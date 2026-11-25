@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Proves the response write is bounded at {@code mcp.output.maxBytes} <em>as bytes are produced</em>:
  * the cap aborts serialization the instant the running byte count would exceed it, so the full
- * over-cap byte array is never materialized (the T003-review output-cap obligation on T004).
+ * over-cap byte array is never materialized.
  */
 class McpOutputCapTest {
 

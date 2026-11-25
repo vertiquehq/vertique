@@ -21,9 +21,9 @@ import java.util.Map;
 import java.util.concurrent.CancellationException;
 
 /**
- * Framework wiring for {@link McpPreparedToolCallTest} (T014 TP-002).
+ * Framework wiring for {@link McpPreparedToolCallTest}.
  *
- * <p>{@link GeneratedInvoker} stands in for a real generated invoker's {@code prepare(...)} (T012's
+ * <p>{@link GeneratedInvoker} stands in for a real generated invoker's {@code prepare(...)} (its
  * frozen shape): it closes over one
  * descriptor, the cancellation signal, the effective mapper, and a materialized carrier — all four
  * held here, by this fixture, at the exact point they are passed in — and returns an
@@ -31,7 +31,7 @@ import java.util.concurrent.CancellationException;
  * {@code invoke()}.
  *
  * <p>{@link #NORMALIZED_VALUE} is deliberately not {@link #RAW_VALUE}: {@code prepare(...)} stands
- * in for the INP-001 normalization a later slice (T015) wires for real, so a test reading
+ * in for the real input normalization, so a test reading
  * {@code normalizedArguments()} cannot pass by accident on an unprocessed pass-through of the raw
  * wire argument.
  */
@@ -70,7 +70,7 @@ final class McpPreparedToolCallTestFixture {
         McpToolDescriptor descriptor = new McpToolDescriptor(
                 "prepared-call.fixture",
                 null,
-                "T014 TP-002 fixture tool.",
+                "Prepared-call fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,
@@ -160,7 +160,7 @@ final class McpPreparedToolCallTestFixture {
 
         @Override
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-            // Stands in for INP-001 normalization (T015 owns the real request-time pipeline): produces
+            // Stands in for the real input normalization (the request-time pipeline owns it): produces
             // a value that deliberately differs from the raw wire argument above.
             Map<String, Object> normalized = new LinkedHashMap<>();
             normalized.put(ARGUMENT_KEY, NORMALIZED_VALUE);
@@ -168,7 +168,7 @@ final class McpPreparedToolCallTestFixture {
 
             // This anonymous class is defined inside an instance method of GeneratedInvoker, so it
             // implicitly closes over this.descriptor, this.effectiveMapper, and this.materializedCarrier
-            // — the real generated invocation (T015 owns the actual pipeline) would call the
+            // — the real generated invocation would call the
             // application method through them. None of the three is exposed as a member below.
             return new McpPreparedToolCall() {
                 @Override
@@ -181,7 +181,7 @@ final class McpPreparedToolCallTestFixture {
                     Promise<McpToolResult<?>> settlement = Promise.promise();
                     // References descriptor/materializedCarrier/effectiveMapper (GeneratedInvoker's own
                     // fields) only to make the closure capture in the javadoc above real rather than
-                    // asserted; the real generated invocation (T015) would call the application method
+                    // asserted; the real generated invocation would call the application method
                     // through them instead. Never exposed as a member of this returned call.
                     cancellation
                             .cancelled()

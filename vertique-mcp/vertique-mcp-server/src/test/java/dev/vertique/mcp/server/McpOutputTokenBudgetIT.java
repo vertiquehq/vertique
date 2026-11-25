@@ -81,7 +81,7 @@ public class McpOutputTokenBudgetIT {
     }
 
     @Test
-    @DisplayName("R19: enforces configured output token boundaries without reserializing")
+    @DisplayName("enforces configured output token boundaries without reserializing")
     void shouldEnforceConfiguredOutputTokenBoundariesWithoutReserializing() throws Exception {
         for (Scenario scenario : List.of(
                 Scenario.boundary("minimum exact", "minimum-flat-array-exact"),
@@ -98,7 +98,7 @@ public class McpOutputTokenBudgetIT {
     }
 
     @Test
-    @DisplayName("R19: preserves the canonical corpus numeric representation on the raw SSE wire")
+    @DisplayName("preserves the canonical corpus numeric representation on the raw SSE wire")
     void shouldPreserveCanonicalCorpusNumericRepresentationOnWire() throws Exception {
         Row row = Scenario.outputRow("output-numeric-fidelity");
         String canonicalJson = new String(row.renderedUtf8(), StandardCharsets.UTF_8);
@@ -266,7 +266,7 @@ public class McpOutputTokenBudgetIT {
         int scalarCount() {
             Object value = row.generator().parameters().get("elementCount");
             if (!row.generator().description().equals("flat-scalar-array") || !(value instanceof Number number)) {
-                throw new IllegalStateException("R19 HTTP boundary row must use flat-scalar-array: " + row.id());
+                throw new IllegalStateException("HTTP boundary row must use flat-scalar-array: " + row.id());
             }
             return number.intValue();
         }
@@ -275,7 +275,7 @@ public class McpOutputTokenBudgetIT {
             return McpJsonTokenCorpus.outputNormalizationRows().stream()
                     .filter(row -> row.id().equals(id))
                     .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("Missing R19 output corpus row: " + id));
+                    .orElseThrow(() -> new IllegalStateException("Missing output corpus row: " + id));
         }
     }
 
@@ -287,7 +287,7 @@ public class McpOutputTokenBudgetIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R19 configured output-token fixture.",
+                "Configured output-token fixture.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 null,
@@ -328,7 +328,7 @@ public class McpOutputTokenBudgetIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R19 numeric wire-fidelity fixture.",
+                "Numeric wire-fidelity fixture.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 null,

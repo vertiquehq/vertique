@@ -56,7 +56,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * R15 TP-002 — a present non-object {@code tools/call.arguments} member is an official-method-params
+ * A present non-object {@code tools/call.arguments} member is an official-method-params
  * violation, rejected at the protocol boundary before lookup, authorization, SSE selection, or tool
  * invocation.
  *
@@ -108,7 +108,7 @@ public class McpToolCallMalformedArgumentsIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("malformedArgumentsCases")
-    @DisplayName("R15: malformed arguments are JSON invalid params before authorization or SSE")
+    @DisplayName("malformed arguments are JSON invalid params before authorization or SSE")
     void shouldRejectMalformedArgumentsBeforeLookupAuthorizationAndSseSelection(MalformedArgumentsCase argumentsCase)
             throws Exception {
         startServer();
@@ -131,7 +131,7 @@ public class McpToolCallMalformedArgumentsIT {
     }
 
     @Test
-    @DisplayName("R15 control: valid object arguments reach policy and tool invocation")
+    @DisplayName("control: valid object arguments reach policy and tool invocation")
     void shouldReachPolicyAndToolInvocationForValidObjectArguments() throws Exception {
         startServer();
         HttpResponse<Buffer> response = await(callTool("{}"));

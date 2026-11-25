@@ -61,29 +61,28 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R48 (W3) — an abort settlement terminal must carry the identity the dispatcher legitimately
+ * An abort settlement terminal must carry the identity the dispatcher legitimately
  * already knows at the point of disconnect, never an invented one and never the caller-supplied raw
  * string.
  *
- * <p>Before this repair, {@code McpRequestDispatcher#settlementTerminal} unconditionally synthesizes
- * every disconnect/reset abort terminal with {@code McpMethod.OTHER} and {@code
- * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}, regardless of how far the request actually progressed —
- * so a disconnect that happens strictly after a real {@code tools/call} was resolved to a real,
- * registered tool still reports the same unresolved identity as a disconnect that happens before the
- * envelope was even classified.
+ * <p>{@code McpRequestDispatcher#settlementTerminal} must not synthesize every disconnect/reset abort
+ * terminal with {@code McpMethod.OTHER} and {@code McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}
+ * regardless of how far the request actually progressed — a disconnect that happens strictly after a
+ * real {@code tools/call} was resolved to a real, registered tool must not report the same unresolved
+ * identity as a disconnect that happens before the envelope was even classified.
  *
  * <ul>
- *   <li><strong>Row 1 (RED today):</strong> disconnect strictly after tool resolution — gated during
+ *   <li><strong>Row 1:</strong> disconnect strictly after tool resolution — gated during
  *       the post-validation tool-interceptor stage, the same technique {@code
  *       McpDisconnectBeforeInvocationIT} uses to hold that seam open — must carry {@code
  *       McpMethod#TOOLS_CALL} and the real, resolved tool name.
- *   <li><strong>Row 2 (RED today):</strong> disconnect strictly before tool resolution — gated during
+ *   <li><strong>Row 2:</strong> disconnect strictly before tool resolution — gated during
  *       the pre-dispatch request-interceptor stage, which {@code McpRequestDispatcher#dispatch} always
  *       runs strictly after {@code classifyMethod} but strictly before {@code writeToolsCall}'s
  *       registry lookup — must carry the already-classified {@code McpMethod#TOOLS_CALL} (legitimately
  *       known at this stage; inventing {@code OTHER} here would be a regression of its own), but
  *       {@code UNKNOWN_TOOL_NAME} for the tool name: no real {@link McpToolDescriptor} was ever
- *       resolved, so the never-invent rule (W3) forbids retaining the raw, caller-supplied candidate
+ *       resolved, so the never-invent rule forbids retaining the raw, caller-supplied candidate
  *       string.
  * </ul>
  */
@@ -123,7 +122,7 @@ class McpAbortTerminalIdentityIT {
     }
 
     @Test
-    @DisplayName("Row 1 (RED): a disconnect after tool resolution carries TOOLS_CALL and the real "
+    @DisplayName("Row 1: a disconnect after tool resolution carries TOOLS_CALL and the real "
             + "resolved tool name on the abort terminal")
     void shouldCarryClassifiedMethodAndResolvedToolNameWhenDisconnectHappensAfterToolResolution() throws Exception {
         GatedToolInterceptor toolInterceptor = new GatedToolInterceptor();
@@ -163,7 +162,7 @@ class McpAbortTerminalIdentityIT {
     }
 
     @Test
-    @DisplayName("Row 2 (RED): a disconnect before tool resolution keeps the already-classified TOOLS_CALL "
+    @DisplayName("Row 2: a disconnect before tool resolution keeps the already-classified TOOLS_CALL "
             + "but never invents a tool name")
     void shouldKeepMethodKnownButToolNameUnresolvedWhenDisconnectHappensDuringRequestInterception() throws Exception {
         GatedRequestInterceptor requestInterceptor = new GatedRequestInterceptor();
@@ -196,7 +195,7 @@ class McpAbortTerminalIdentityIT {
                         + "TOOLS_CALL at this stage")
                 .isEqualTo(McpMethod.TOOLS_CALL);
         assertThat(terminal.toolName())
-                .as("DECISIVE: no tool was ever resolved at this stage — the never-invent rule (W3) "
+                .as("DECISIVE: no tool was ever resolved at this stage — the never-invent rule "
                         + "forbids retaining the raw caller-supplied name, so this must stay "
                         + "UNKNOWN_TOOL_NAME")
                 .isEqualTo(McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
@@ -328,7 +327,7 @@ class McpAbortTerminalIdentityIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R48 W3 fixture tool.",
+                "Abort terminal identity fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,

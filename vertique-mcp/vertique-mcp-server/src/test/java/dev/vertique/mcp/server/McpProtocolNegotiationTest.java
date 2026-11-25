@@ -54,7 +54,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 /**
- * R05 TP-001 — {@code shouldValidateHeadersAndMethodSchemasBeforeAnyDispatch} (issues #429/#438).
+ * {@code shouldValidateHeadersAndMethodSchemasBeforeAnyDispatch}.
  *
  * <p>Every row drives {@link McpRequestDispatcher#dispatch} directly against a mocked {@link
  * RoutingContext} — mirroring {@code McpRequestInterceptorPipelineTest}'s driving style — carrying a
@@ -73,7 +73,7 @@ import org.mockito.ArgumentCaptor;
  * accidentally triggering {@code -32020} or {@code -32022}, so a negative row's rejection is
  * attributable to the one mutated fact it names.
  *
- * <p>R15 separately proves the official per-method schema boundary. Those failures are JSON-RPC
+ * <p>The official per-method schema boundary is proved separately. Those failures are JSON-RPC
  * {@code -32602}, not protocol-version negotiation failures, so they deliberately do not share this
  * matrix's {@code -32020}/{@code -32022} assertion.
  */
@@ -100,47 +100,48 @@ class McpProtocolNegotiationTest {
     private static final String NULL_ARGUMENTS_ROW = "tools/call with explicit null arguments";
 
     /**
-     * R07 item 1 (security review): HTAB (0x09) survives Netty's own non-first-byte header validation
+     * HTAB (0x09) survives Netty's own non-first-byte header validation
      * ({@code c < 32 && c != 9}), so a header/body-mirrored {@code protocolVersion} carrying one is
-     * neither textually blank nor over-length — the two checks {@code validateNegotiation} previously
-     * enforced — yet still satisfies {@link Character#isISOControl}, the exact bound {@code
+     * neither textually blank nor over-length — the two textual checks {@code validateNegotiation}
+     * enforces — yet still satisfies {@link Character#isISOControl}, the exact bound {@code
      * McpRequestTerminalEvent}'s own compact constructor throws on. This row proves the mirrored bound
-     * added to {@code validateNegotiation} rejects it before any terminal-event construction site can
+     * in {@code validateNegotiation} rejects it before any terminal-event construction site can
      * ever see it.
      */
     private static final String CONTROL_CHARACTER_ROW = "shouldRejectAControlCharacterInProtocolVersionBeforeDispatch";
 
     /**
-     * R07 item 2 (security review): a well-formed, non-blank, ≤64-char, control-character-free version
-     * the header and body still agree on — so neither pre-existing check catches it — but that is not
+     * A well-formed, non-blank, ≤64-char, control-character-free version
+     * the header and body still agree on — so none of the textual checks catches it — but that is not
      * {@code McpCursorCodec#PROTOCOL_VERSION}, the single version this server actually supports.
      */
     private static final String UNSUPPORTED_VERSION_ROW = "shouldRejectAnUnsupportedProtocolVersionBeforeDispatch";
 
     /**
-     * Repair task R33 defect 1: {@code headerMatches} (~{@code McpProtocolCodec} line 291) reads only
+     * {@code headerMatches} in {@code McpProtocolCodec} must not read only
      * {@link MultiMap#get(String)}, which silently returns the <em>first</em> value of a duplicated
      * header and never notices the duplication itself. This row duplicates {@code Mcp-Method} with an
      * identical repeated value — a value that agrees with the negotiated body on both occurrences — so
-     * the only fact that can make this row fail is the duplication itself, never a value mismatch. RED
-     * today: the first value matches, so negotiation wrongly succeeds and this fully valid-looking
-     * {@code server/discover} request reaches the interceptor stage exactly like {@link #BASELINE_ROW}.
+     * the only fact that can make this row fail is the duplication itself, never a value mismatch. If
+     * only the first value were checked, negotiation would wrongly succeed and this fully valid-looking
+     * {@code server/discover} request would reach the interceptor stage exactly like {@link
+     * #BASELINE_ROW}.
      */
     private static final String DUPLICATE_METHOD_HEADER_ROW = "shouldRejectADuplicatedMcpMethodHeaderBeforeDispatch";
 
-    /** Repair task R33 defect 1, the {@code MCP-Protocol-Version} sibling of {@link #DUPLICATE_METHOD_HEADER_ROW}. */
+    /** The {@code MCP-Protocol-Version} sibling of {@link #DUPLICATE_METHOD_HEADER_ROW}. */
     private static final String DUPLICATE_PROTOCOL_VERSION_HEADER_ROW =
             "shouldRejectADuplicatedProtocolVersionHeaderBeforeDispatch";
 
     /**
-     * Repair task R33 defect 1, the {@code tools/call} {@code Mcp-Name} sibling of {@link
+     * The {@code tools/call} {@code Mcp-Name} sibling of {@link
      * #DUPLICATE_METHOD_HEADER_ROW}. {@code Mcp-Name} is the one required header this codec only checks
      * for {@code tools/call}, so this row is the only one of the three that can observe the defect on
      * that header at all.
      */
     private static final String DUPLICATE_NAME_HEADER_ROW = "shouldRejectADuplicatedToolsCallNameHeaderBeforeDispatch";
 
-    private static Stream<String> r05Tp001Rows() {
+    private static Stream<String> negotiationRows() {
         return Stream.of(
                 BASELINE_ROW,
                 MISSING_HEADER_ROW,
@@ -155,8 +156,8 @@ class McpProtocolNegotiationTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("r05Tp001Rows")
-    @DisplayName("R05 TP-001: protocol negotiation runs before interceptors, lookup, or authorization")
+    @MethodSource("negotiationRows")
+    @DisplayName("protocol negotiation runs before interceptors, lookup, or authorization")
     void shouldValidateHeadersAndMethodSchemasBeforeAnyDispatch(String row) {
         switch (row) {
             case BASELINE_ROW -> shouldPermitAFullyNegotiatedRequestAsTheControl();
@@ -169,7 +170,7 @@ class McpProtocolNegotiationTest {
             case DUPLICATE_METHOD_HEADER_ROW -> shouldRejectADuplicatedMcpMethodHeaderBeforeDispatch();
             case DUPLICATE_PROTOCOL_VERSION_HEADER_ROW -> shouldRejectADuplicatedProtocolVersionHeaderBeforeDispatch();
             case DUPLICATE_NAME_HEADER_ROW -> shouldRejectADuplicatedToolsCallNameHeaderBeforeDispatch();
-            default -> throw new IllegalArgumentException("unknown R05 TP-001 row: " + row);
+            default -> throw new IllegalArgumentException("unknown negotiation row: " + row);
         }
     }
 
@@ -212,10 +213,10 @@ class McpProtocolNegotiationTest {
                         validHeaders("tools/call", "different-tool")));
     }
 
-    /** D010: each standard routing header is required only when its official body mirror applies. */
+    /** Each standard routing header is required only when its official body mirror applies. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("applicableStandardHeaderCases")
-    @DisplayName("R21: standard request headers are required only when applicable")
+    @DisplayName("standard request headers are required only when applicable")
     void shouldRequireOnlyApplicableStandardHeaders(StandardHeaderCase standardHeaderCase) {
         McpProtocolCodec codec = new McpProtocolCodec(
                 HttpConfig.builder().build(), McpServerConfig.defaults().ingressMaxTokens());
@@ -306,14 +307,14 @@ class McpProtocolNegotiationTest {
     }
 
     /**
-     * R15 TP-001: the complete pinned official params shape is a protocol boundary, before all
+     * The complete pinned official params shape is a protocol boundary, before all
      * application-policy work. Each row changes exactly one official-schema fact and proves the
      * resulting {@code -32602} response is not a later authorization or invocation failure that happens
      * to share HTTP 400.
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("officialParamsViolations")
-    @DisplayName("R15: official params violations are rejected before application policy")
+    @DisplayName("official params violations are rejected before application policy")
     void shouldRejectOfficialParamsViolationsAsInvalidParamsBeforeApplicationPolicy(OfficialParamsViolation violation) {
         Outcome outcome = drive(violation.body(), violation.headers());
 
@@ -335,7 +336,7 @@ class McpProtocolNegotiationTest {
      * restriction at the protocol boundary.
      */
     @Test
-    @DisplayName("R15: an unknown official-schema extension remains accepted")
+    @DisplayName("an unknown official-schema extension remains accepted")
     void shouldAcceptUnknownExtensionPropertyPermittedByTheOfficialSchema() {
         JsonObject body = discoverBody();
         body.getJsonObject("params").put("io.vertique.test/extension", new JsonObject().put("enabled", true));
@@ -388,7 +389,7 @@ class McpProtocolNegotiationTest {
         assertRejectedBeforeDispatch(outcome, "a header value that disagrees with the negotiated body value");
     }
 
-    // --- Repair task R33 defect 1: duplicated routing headers ---
+    // --- Duplicated routing headers ---
 
     private void shouldRejectADuplicatedMcpMethodHeaderBeforeDispatch() {
         MultiMap headers = standardHeaders("server/discover");
@@ -439,7 +440,7 @@ class McpProtocolNegotiationTest {
         assertRejectedBeforeDispatch(outcome, "a tools/call params carrying the reserved inputResponses field");
     }
 
-    // --- R07 item 1: a control character in protocolVersion ---
+    // --- A control character in protocolVersion ---
 
     private void shouldRejectAControlCharacterInProtocolVersionBeforeDispatch() {
         // HTAB (0x09) specifically: Netty's own non-first-byte header-value validation
@@ -458,7 +459,7 @@ class McpProtocolNegotiationTest {
         assertRejectedBeforeDispatch(outcome, "a protocolVersion carrying an embedded HTAB control character");
     }
 
-    // --- R07 item 2: a well-formed but unsupported protocolVersion ---
+    // --- A well-formed but unsupported protocolVersion ---
 
     private void shouldRejectAnUnsupportedProtocolVersionBeforeDispatch() {
         // Well-formed, non-blank, under the length cap, no control characters — the header and body
@@ -477,28 +478,28 @@ class McpProtocolNegotiationTest {
                 -32022);
     }
 
-    // --- R07 item 1 (decisive): the control-character row settles bounded, not with a crash, and ---
+    // --- Decisive: the control-character row settles bounded, not with a crash, and ---
     // --- still emits a terminal event ---
 
     /**
-     * R07 item 1's fully decisive proof: {@link #shouldRejectAControlCharacterInProtocolVersionBeforeDispatch()}
+     * The fully decisive proof: {@link #shouldRejectAControlCharacterInProtocolVersionBeforeDispatch()}
      * above (part of the shared negotiation matrix) proves the response is rejected {@code -32020} and
      * that the interceptor stage never runs, but the shared {@link #drive} fixture never calls {@link
      * McpRequestDispatcher#begin}, so it cannot observe whether a terminal event is actually published
-     * through the lifecycle-observation pipeline — the exact question this defect turns on: before the
-     * fix, the same poisoned value reached {@code McpRequestTerminalEvent}'s compact constructor twice
-     * (once on the direct construction path, once from inside the {@code catch (RuntimeException |
-     * StackOverflowError)} recovery that reconstructs the identical record with the identical poisoned
-     * value), so the recovery itself threw and no terminal was ever published — a request that settles
-     * with nothing: no bounded response actually reaching the wire in that failure mode, and a total
-     * audit blackout for that request class. This test drives the full {@code begin()} → {@code
+     * through the lifecycle-observation pipeline — the exact question this turns on: if the same poisoned
+     * value reached {@code McpRequestTerminalEvent}'s compact constructor twice (once on the direct
+     * construction path, once from inside the {@code catch (RuntimeException | StackOverflowError)}
+     * recovery that reconstructs the identical record with the identical poisoned value), the recovery
+     * itself would throw and no terminal would ever be published — a request that settles with nothing:
+     * no bounded response actually reaching the wire in that failure mode, and a total audit blackout
+     * for that request class. This test drives the full {@code begin()} → {@code
      * dispatch()} pipeline against a real {@link McpCompletionCoordinator} and a real recording {@link
      * McpRequestLifecycleObserver} session (mirroring {@code McpLifecycleFactsTest}'s harness), and
      * asserts both that {@code dispatch()} returns normally (no crash escapes past it) and that exactly
      * one terminal event was published.
      */
     @Test
-    @DisplayName("R07 item 1 (decisive): a control character settles bounded and still emits a terminal event")
+    @DisplayName("a control character settles bounded and still emits a terminal event")
     void shouldSettleBoundedAndStillEmitATerminalForAControlCharacter() {
         String poisoned = PROTOCOL_VERSION + "\t";
         JsonObject body = discoverBody();
@@ -526,14 +527,14 @@ class McpProtocolNegotiationTest {
                 new CorrelationContextFactory(Optional.empty()));
 
         RoutingContext context = mockStatefulRoutingContext(body, headers);
-        // R09: begin() registers the correlation bind scope with RequestContextLifecycle's per-request
+        // begin() registers the correlation bind scope with RequestContextLifecycle's per-request
         // handle; this synthetic RoutingContext has no real ROOT-scoped middleware chain, so the test
         // installs the lifecycle handle itself, exactly as production's HttpVerticle does.
         new RequestContextLifecycle().handle(context);
 
         // DECISIVE: dispatch() must return normally — a crash here (e.g. an IllegalArgumentException
         // escaping from a poisoned McpRequestTerminalEvent construction, and then again from its own
-        // recovery path) is exactly the pre-fix failure mode this proof exists to catch.
+        // recovery path) is exactly the failure mode this proof exists to catch.
         dispatcher.begin(context);
         dispatcher.dispatch(context);
 
@@ -543,7 +544,7 @@ class McpProtocolNegotiationTest {
                 .isEqualTo(400);
         assertThat(observer.terminals)
                 .as("DECISIVE: exactly one terminal event must still be published for this request — the "
-                        + "pre-fix double-construction failure mode published none at all")
+                        + "a double-construction failure mode would publish none at all")
                 .hasSize(1);
         assertThat(observer.terminals.get(0).event().protocolErrorCode())
                 .as("the published terminal must carry the -32020 negotiation-mismatch code")
@@ -796,7 +797,7 @@ class McpProtocolNegotiationTest {
         }
     }
 
-    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    /** A {@link ContextHolder} that resolves nothing and discards every binding. */
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override
         public <T> Optional<T> current(Class<T> type) {

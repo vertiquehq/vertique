@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T010 TP-002 — a configured authentication scheme whose selected {@link
+ * A configured authentication scheme whose selected {@link
  * dev.vertique.rest.core.security.RouteAuthHandler} does not expose the optional-authentication
  * capability fails composition, before any route mounts.
  *
@@ -24,11 +24,11 @@ import org.junit.jupiter.api.Test;
  * lives in {@link McpOptionalCapabilityStartupTestFixture}; this method keeps only the Given values,
  * the one action, and the decisive assertions.
  *
- * <p><strong>Deviation from the task's stated test location:</strong> this class lives in {@code
- * dev.vertique.mcp.server}, not {@code dev.vertique.mcp.server.runtime}, for the same package-private
- * access reason recorded on {@link McpSchemaStartupTest}.
+ * <p>This class lives in {@code dev.vertique.mcp.server}, not {@code
+ * dev.vertique.mcp.server.runtime}, for the same package-private access reason recorded on {@link
+ * McpSchemaStartupTest}.
  */
-@DisplayName("MCP optional-authentication capability startup validation — T010 TP-002")
+@DisplayName("MCP optional-authentication capability startup validation")
 class McpOptionalCapabilityStartupTest {
 
     private static final String SELECTED_SCHEME = "selected-scheme";

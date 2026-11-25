@@ -25,9 +25,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * R48 proof-gap closure — a composition-level test proving a REAL {@code @McpTool}-generated,
+ * A composition-level test proving a REAL {@code @McpTool}-generated,
  * parameterized invoker's constructor-injected {@code Optional<jakarta.validation.Validator>}
- * (R38/W7) is resolved through the PRODUCTION Dagger graph ({@link McpServerModule}'s own {@code
+ * is resolved through the PRODUCTION Dagger graph ({@link McpServerModule}'s own {@code
  * @BindsOptionalOf Validator} seam), not merely constructed by hand as {@code
  * McpDaggerAwareValidatorInjectionTest}'s {@code InjectOnlyToolInvoker} fixture does.
  *
@@ -62,7 +62,7 @@ class McpGeneratedInvokerDaggerValidatorCompositionTest {
     private static final String RESTRICTED_VALUE = "forbidden";
 
     @Test
-    @DisplayName("R48 proof-gap: a real generated parameterized invoker, constructed through the "
+    @DisplayName("a real generated parameterized invoker, constructed through the "
             + "production Dagger graph, receives the bound Dagger-aware Validator and its constraint fires")
     void shouldThreadTheProductionDaggerBoundValidatorIntoAGeneratedInvokerAndFireItsConstraint() throws Exception {
         // Given: one real @McpTool source with an @Inject-only Bean Validation constraint on its
@@ -104,14 +104,14 @@ class McpGeneratedInvokerDaggerValidatorCompositionTest {
                 .isEqualTo(TOOL_NAME);
 
         // Then — DECISIVE: the constraint whose only constructor is @Inject-only and takes a
-        // Dagger-injected dependency actually evaluated. A validator-resolution failure (the
-        // pre-R38/W7 defect) would instead settle as the internal-error fallback the dispatcher
+        // Dagger-injected dependency actually evaluated. A validator-resolution failure would
+        // instead settle as the internal-error fallback the dispatcher
         // produces for a RuntimeException/LinkageError escaping prepare(), not this bounded rejection.
         //
         // Message-content is deliberately NOT asserted here: McpToolInvokerEmitter's shipped Bean
         // Validation rejection is always the fixed, non-interpolated literal "Invalid tool arguments:
         // constraint validation failed" — never a ConstraintViolation#getMessage() — a message-safety
-        // policy recorded by the R38/W7 validator-injection task (Hibernate Validator's default
+        // policy (Hibernate Validator's default
         // interpolator resolves message templates through EL, and a generated invoker's carrier may
         // carry an application-authored constraint whose message is attacker-influenced or
         // EL-templated). Production code is not changed to accommodate this proof. Occurrence of the
