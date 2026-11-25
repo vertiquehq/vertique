@@ -30,13 +30,10 @@ import org.junit.jupiter.api.Test;
  *       on the Dagger-injected bean instance (not a separate instance, not via reflection).
  * </ol>
  *
- * <p><strong>RED (slice 3.2):</strong> the {@link EventsProcessor} only emits
- * {@code @Binds Event<OrderCreated>} — no {@code @Provides @IntoSet ObserverRegistration}. Dagger
- * therefore cannot satisfy {@code Set<ObserverRegistration>} for {@link
- * dev.vertique.events.ObserverRegistry}, so the entire module fails to compile ({@code
- * MissingBinding} error in Dagger's annotation processing pass). This compilation failure prevents
- * {@code DaggerOrderComponent} from being generated, which in turn causes a compile error in this
- * test class (because {@code DaggerOrderComponent} does not exist). The expected RED is therefore a
+ * <p>If the {@link EventsProcessor} did not emit {@code @Provides @IntoSet ObserverRegistration},
+ * Dagger could not satisfy {@code Set<ObserverRegistration>} for {@link
+ * dev.vertique.events.ObserverRegistry}, so the module would fail to compile and {@code
+ * DaggerOrderComponent} would not be generated; a regression therefore surfaces as a
  * <em>compile-time failure</em> of the {@code test-compile} phase, not a runtime assertion failure.
  */
 class EventAggregationTest {

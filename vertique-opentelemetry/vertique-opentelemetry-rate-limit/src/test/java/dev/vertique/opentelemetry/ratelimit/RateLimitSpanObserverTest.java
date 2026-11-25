@@ -182,8 +182,6 @@ class RateLimitSpanObserverTest {
         }
     }
 
-    // --- TP-002 ---
-
     @Test
     @DisplayName("a tracer failure never escapes the observer")
     void shouldIsolateTracerFailureFromAdmission() {

@@ -15,8 +15,7 @@ import org.slf4j.MDC;
 /**
  * Unit tests for {@link SchedulerMdcScope}. Verifies that the snapshot/restore semantics correctly
  * preserve prior MDC values (or absence) per key, rather than blindly removing the keys on cleanup
- * — which is the regression the holder-side {@code MDCContexts.bindAll} pattern was already
- * designed to avoid.
+ * — the same pitfall the holder-side {@code MDCContexts.bindAll} pattern is designed to avoid.
  */
 class SchedulerMdcScopeTest {
 

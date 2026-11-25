@@ -22,10 +22,8 @@ import org.junit.jupiter.api.Test;
  * Verifies the error-isolation guarantee of {@code @Timed}: an {@link Error} thrown by the
  * {@link MeterRegistry} during timer recording must not alter the intercepted call's outcome.
  *
- * <p>RED: with {@code catch (Exception)} in {@link TimedAspect#record}, a registry that throws an
- * {@link Error} during recording escapes the catch block and propagates to the caller — altering
- * the outcome of a call that should have succeeded. GREEN: once widened to {@code catch (Throwable)}
- * the {@code Error} is swallowed and the call's original success is returned unchanged.
+ * <p>{@link TimedAspect#record} catches {@code Throwable}, so an {@link Error} thrown by a registry
+ * during recording is swallowed and the call's original success is returned unchanged.
  */
 class TimedSideEffectErrorDoesNotAlterOutcomeTest {
 

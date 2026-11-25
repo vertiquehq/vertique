@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
  *       result, returning the bean's original {@link String} value (not a {@code Future}, not
  *       {@code null}).</li>
  *   <li><b>Built-in never trips the guard</b> — the built-in {@code @Timed} completes synchronously,
- *       so the FR-013-05 sync guard is not tripped; no {@link IllegalStateException} is thrown
+ *       so the sync guard is not tripped; no {@link IllegalStateException} is thrown
  *       ({@code BuiltInsNeverTripSyncGuard#timedAspectNeverDefers}).</li>
  *   <li><b>Timer recorded</b> — a {@code Timer} named {@code vertique.example.greet.sync} with
  *       {@code outcome=SUCCESS} is recorded, proving sync interception runs the real aspect.</li>
@@ -62,7 +62,7 @@ class SyncMethodUnwrapsValueTest {
     void timedAspectNeverDefers() {
         Greeter greeter = componentWith(new SimpleMeterRegistry()).greeter();
 
-        // The built-in @Timed completes synchronously, so the FR-013-05 guard must not fire.
+        // The built-in @Timed completes synchronously, so the sync guard must not fire.
         assertDoesNotThrow(
                 () -> greeter.greetSync("world"),
                 "the built-in @Timed completes synchronously and must not trip the sync-defer guard");

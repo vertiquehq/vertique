@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  */
 class TracingConfigTest {
 
-    // --- Test 1: Empty object gives all defaults ---
+    // --- Empty object gives all defaults ---
 
     @Nested
     @DisplayName("empty JSON gives all defaults")
@@ -36,7 +36,7 @@ class TracingConfigTest {
         }
     }
 
-    // --- Test 2: enabled=false ---
+    // --- enabled=false ---
 
     @Nested
     @DisplayName("enabled=false disables tracing")
@@ -52,7 +52,7 @@ class TracingConfigTest {
         }
     }
 
-    // --- Test 3: security.spanEvents=false ---
+    // --- security.spanEvents=false ---
 
     @Nested
     @DisplayName("security sub-config override")
@@ -70,7 +70,7 @@ class TracingConfigTest {
         }
     }
 
-    // --- Test 4: explicit null on security falls back to default (W2-tracing fix) ---
+    // --- explicit null on security falls back to default ---
 
     @Nested
     @DisplayName("explicit JSON null on nested object field falls back to default")
@@ -102,7 +102,7 @@ class TracingConfigTest {
         void explicitNullSecurityDoesNotNpeInObserver() {
             TracingConfig config = new JsonObject().putNull("security").mapTo(TracingConfig.class);
 
-            // This would throw NullPointerException before the fix
+            // A null security section would throw NullPointerException here
             SecuritySpanEventObserver observer = new SecuritySpanEventObserver(config);
             assertNotNull(
                     observer, "SecuritySpanEventObserver must be constructible with explicit-null security config");

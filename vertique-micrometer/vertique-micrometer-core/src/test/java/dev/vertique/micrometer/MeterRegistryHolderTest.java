@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link MeterRegistryHolder} — verifies the pre-bootstrap state guarantees
- * (NFR-TEL-003: empty composite no-op), bootstrap idempotency guard, stable-reference semantics,
+ * (an empty composite is a no-op), bootstrap idempotency guard, stable-reference semantics,
  * late-wiring of pre-bootstrap meters, detach-on-shutdown, and reset-for-tests behaviour.
  */
 class MeterRegistryHolderTest {
@@ -67,14 +67,14 @@ class MeterRegistryHolderTest {
         assertThrows(IllegalStateException.class, () -> MeterRegistryHolder.bootstrap(assembly));
     }
 
-    // --- Stable-reference semantics (Fix 1 — RED TESTS) ---
+    // --- Stable-reference semantics ---
 
     @Nested
     @DisplayName("stable-reference semantics — registry() returns the SAME instance across bootstrap")
     class StableReference {
 
         /**
-         * RED TEST: Captures a reference to registry() BEFORE bootstrap. After bootstrap,
+         * Captures a reference to registry() BEFORE bootstrap. After bootstrap,
          * the SAME reference must still be returned by registry(), and pre-bootstrap
          * meters must begin forwarding to the child backend (late-wiring).
          */
@@ -93,16 +93,16 @@ class MeterRegistryHolderTest {
             MetricsConfig config = new JsonObject().mapTo(MetricsConfig.class);
             MicrometerAssembly assembly = assembleWithSimple("stableref", simple, config);
 
-            // Bootstrap — under the OLD swap behavior registry() returns a DIFFERENT object
+            // Bootstrap
             MeterRegistryHolder.bootstrap(assembly);
 
-            // Fix 1 contract: registry() must return the SAME instance as captured before bootstrap
+            // registry() must return the SAME instance as captured before bootstrap
             assertSame(
                     early,
                     MeterRegistryHolder.registry(),
                     "registry() must return the same outer instance across bootstrap");
 
-            // Fix 1 contract: increment the same earlyCounter again — the inner simple backend
+            // Increment the same earlyCounter again — the inner simple backend
             // must show count >= 1 because Micrometer late-wires pre-existing meters to new children
             earlyCounter.increment();
             Counter childCounter = simple.find("pre.bootstrap.counter").counter();
@@ -113,11 +113,11 @@ class MeterRegistryHolderTest {
         }
 
         /**
-         * Fix 4 — tests the REAL detach path via {@link MeterRegistryHolder#detach(MicrometerAssembly)}.
+         * Tests the REAL detach path via {@link MeterRegistryHolder#detach(MicrometerAssembly)}.
          *
          * <p>After bootstrap + detach, increments on the outer must NOT reach the child backend,
-         * and must not throw. The previous version of this test called {@code assembly.close()}
-         * directly (which does NOT detach) — corrected to call the actual detach path.
+         * and must not throw. Closing the assembly alone does not detach, so the test calls the
+         * actual detach path.
          */
         @Test
         @DisplayName("after MeterRegistryHolder.detach(), increments do not reach the child backend; no exception")
@@ -160,7 +160,7 @@ class MeterRegistryHolderTest {
         }
 
         /**
-         * RED TEST: registry() must return the same outer instance AFTER resetForTests(),
+         * registry() must return the same outer instance AFTER resetForTests(),
          * not a brand-new object. (Stable-instance contract over the entire test lifecycle.)
          */
         @Test
@@ -174,8 +174,7 @@ class MeterRegistryHolderTest {
 
             MeterRegistryHolder.resetForTests();
 
-            // Under old swap semantics, resetForTests() does REGISTRY.set(new CompositeMeterRegistry())
-            // — the reference changes. Under the new contract it MUST NOT change.
+            // resetForTests() must not replace the outer registry reference.
             assertSame(
                     before,
                     MeterRegistryHolder.registry(),
@@ -183,32 +182,29 @@ class MeterRegistryHolderTest {
         }
     }
 
-    // --- Fix 1: Filter bypass through the stable outer composite (RED TESTS) ---
+    // --- Filter bypass through the stable outer composite ---
 
     /**
      * Verifies that filters applied via {@link MicrometerAssembly} are NOT bypassed when meters are
      * recorded through the stable outer composite ({@link MeterRegistryHolder#registry()}).
      *
-     * <p>Before Fix 1, Micrometer's {@link io.micrometer.core.instrument.composite.CompositeMeterRegistry}
+     * <p>Micrometer's {@link io.micrometer.core.instrument.composite.CompositeMeterRegistry}
      * flattens nested composites ({@code updateDescendants()} resolves a composite child to its
-     * non-composite descendants), so meters created through OUTER register directly into the backends
-     * — the inner composite's filters (cardinality guard, common tags) never run.
-     *
-     * <p>After Fix 1, a permanent delegating filter on OUTER enforces the same cardinality cap and
-     * common-tag injection that the inner composite applies.
+     * non-composite descendants), so meters created through OUTER would register directly into the
+     * backends and skip the inner composite's filters (cardinality guard, common tags). A permanent
+     * delegating filter on OUTER therefore enforces the same cardinality cap and common-tag
+     * injection that the inner composite applies.
      */
     @Nested
-    @DisplayName("Fix 1 — filter bypass through stable outer composite (cardinality + common tags)")
+    @DisplayName("filters are not bypassed through stable outer composite (cardinality + common tags)")
     class FilterBypass {
 
         /**
-         * RED TEST: cardinality cap is enforced through the OUTER registry.
+         * The cardinality cap is enforced through the OUTER registry.
          *
          * <p>Bootstrap an assembly with cap=2 and record 3 distinct {@code method} values on a
          * {@code vertique.x} counter through {@link MeterRegistryHolder#registry()} (the OUTER).
          * The backend must accumulate only 2 distinct meters; the third is denied.
-         *
-         * <p>CURRENTLY FAILS because the outer composite bypasses the inner's filters.
          */
         @Test
         @DisplayName("cardinality cap=2 enforced through OUTER: third method value is denied in backend")
@@ -243,12 +239,10 @@ class MeterRegistryHolderTest {
         }
 
         /**
-         * RED TEST: common {@code service} tag is injected through the OUTER registry.
+         * The common {@code service} tag is injected through the OUTER registry.
          *
          * <p>Record a counter through {@link MeterRegistryHolder#registry()} after bootstrap with
          * {@code tags.service=my-svc}. The backend must see the counter with {@code service=my-svc}.
-         *
-         * <p>CURRENTLY FAILS because outer-created meters bypass the inner composite's commonTags filter.
          */
         @Test
         @DisplayName("service common-tag injected through OUTER: backend counter carries service=my-svc")
@@ -267,8 +261,7 @@ class MeterRegistryHolderTest {
             // The backend must have a counter with service=my-svc
             Counter tagged =
                     backend.find("tagged.counter").tag("service", "my-svc").counter();
-            assertNotNull(
-                    tagged, "Counter recorded through OUTER must carry service=my-svc tag in backend after Fix 1");
+            assertNotNull(tagged, "Counter recorded through OUTER must carry service=my-svc tag in backend");
         }
 
         /**
@@ -298,16 +291,12 @@ class MeterRegistryHolderTest {
         }
 
         /**
-         * RED TEST: resetForTests + re-bootstrap with a DIFFERENT cap does NOT accumulate filters.
+         * resetForTests + re-bootstrap with a DIFFERENT cap does NOT accumulate filters.
          *
          * <p>Bootstraps with cap=2, resets, re-bootstraps with cap=5. The new cap must govern:
          * 5 distinct values must all be accepted; the 6th must be denied. If filters accumulate
          * across resets (append-only concern), the old cap=2 would fire first and deny the 3rd value.
-         *
-         * <p>CURRENTLY FAILS (when Fix 1 filter mechanism is active) if filters accumulate on OUTER.
-         * Also demonstrates a companion concern: if cap was effectively 0 before Fix 1, this test
-         * was vacuously "passing" because no filter ran — after Fix 1 the filter must run AND respect
-         * the new cap, not the stale old one.
+         * The filter must run AND respect the new cap, not the stale old one.
          */
         @Test
         @DisplayName("reset + re-bootstrap with cap=5: 5 values accepted, 6th denied (no filter accumulation)")

@@ -14,17 +14,16 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Structural proof (T013, TP-003) that the prototype {@code GreetingLimit*} rate-limit scaffolding
- * — retired in favor of the real {@code RateLimitExceededException}/T010's {@code
- * RestRateLimitModule} pipeline — is fully gone: no compiled class remains for any of the three
+ * Structural proof that the prototype {@code GreetingLimit*} rate-limit scaffolding — retired in
+ * favor of the real {@code RateLimitExceededException}/{@code RestRateLimitModule} pipeline — is
+ * fully gone: no compiled class remains for any of the three
  * retired simple names, and {@code HelloResource.java} carries no source-text reference to any of
  * them.
  */
 class HelloExampleStructureTest {
 
     /**
-     * The real retired set, verified against {@code sources/vertique} — exactly three files; there
-     * is no fourth {@code GreetingLimitException.java}.
+     * The retired set is exactly three files; there is no fourth {@code GreetingLimitException.java}.
      */
     private static final List<String> RETIRED_SIMPLE_NAMES =
             List.of("GreetingLimitExceededException", "GreetingLimitExceptionMapper", "GreetingLimitProblemDetail");

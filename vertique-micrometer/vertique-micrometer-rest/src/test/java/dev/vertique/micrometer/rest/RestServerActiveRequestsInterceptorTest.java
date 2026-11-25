@@ -35,9 +35,6 @@ import org.junit.jupiter.api.Test;
  * <p>Verifies gauge increment on {@code onRequest}, decrement on end-handler fire, idempotent
  * end-handler, guard-key deduplication for the same routing context, WebSocket upgrade exclusion,
  * throwing-registry isolation, and the {@code metricsEnabled} gate.
- *
- * <p>All tests are RED: the skeleton {@code onRequest} is a no-op. Tests will go green when the
- * real implementation is added in a later slice.
  */
 class RestServerActiveRequestsInterceptorTest {
 

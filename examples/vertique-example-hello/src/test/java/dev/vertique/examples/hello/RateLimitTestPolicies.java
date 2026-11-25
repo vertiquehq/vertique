@@ -6,7 +6,7 @@ package dev.vertique.examples.hello;
 import io.vertx.core.json.JsonObject;
 
 /**
- * Shared {@code rateLimit.policies.hello-limited} fixture (T013).
+ * Shared {@code rateLimit.policies.hello-limited} fixture.
  *
  * <p>{@code HelloResource#greetLimited} carries {@code @RateLimited}, and the aspect resolves its
  * policy handle at proxy-construction time, so every {@code VertiqueAppExtension}-booted test in this module must declare this

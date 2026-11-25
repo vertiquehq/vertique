@@ -44,7 +44,7 @@ import org.slf4j.LoggerFactory;
  * <ol>
  *   <li>A valid active span yields a populated {@link TraceReference} with the span's trace/span ids
  *       and source {@code "opentelemetry"}.</li>
- *   <li>An unsampled-but-valid span (SP-10) still yields a populated reference — ids are
+ *   <li>An unsampled-but-valid span still yields a populated reference — ids are
  *       correlatable even when the trace is not exported to the trace store.</li>
  *   <li>No current span yields an empty {@link Optional}.</li>
  *   <li>{@link Span#getInvalid()} made current yields an empty {@link Optional}.</li>
@@ -103,11 +103,11 @@ class OpenTelemetryTraceReferenceResolverTest {
     }
 
     // =========================================================================
-    // Test 2 — unsampled-but-valid span (SP-10) still yields a populated reference
+    // Test 2 — unsampled-but-valid span still yields a populated reference
     // =========================================================================
 
     @Nested
-    @DisplayName("unsampled-but-valid span (SP-10) returns populated TraceReference")
+    @DisplayName("unsampled-but-valid span returns populated TraceReference")
     class UnsampledButValidSpan {
 
         @Test
@@ -134,15 +134,14 @@ class OpenTelemetryTraceReferenceResolverTest {
                 assertTrue(
                         span.getSpanContext().isValid(),
                         "span context must be valid for this unsampled-but-valid test scenario");
-                assertFalse(
-                        span.getSpanContext().isSampled(), "span must NOT be sampled to exercise the SP-10 scenario");
+                assertFalse(span.getSpanContext().isSampled(), "span must NOT be sampled for this scenario");
 
                 try (var ignored = span.makeCurrent()) {
                     Optional<TraceReference> result = resolver.currentTrace();
 
                     assertTrue(
                             result.isPresent(),
-                            "resolver must return a reference even for an unsampled-but-valid span (SP-10)");
+                            "resolver must return a reference even for an unsampled-but-valid span");
                     TraceReference ref = result.get();
                     assertEquals(
                             span.getSpanContext().getTraceId(),

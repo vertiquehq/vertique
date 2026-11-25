@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
- * CG-015 activation proof: verifies that {@code ServiceClientFactory.create()} selects the
+ * Activation proof: verifies that {@code ServiceClientFactory.create()} selects the
  * generated {@code _ServiceClientProxy} companion for each service contract, rather than falling
  * back to a JDK dynamic proxy, inside a real, Dagger-wired application.
  *

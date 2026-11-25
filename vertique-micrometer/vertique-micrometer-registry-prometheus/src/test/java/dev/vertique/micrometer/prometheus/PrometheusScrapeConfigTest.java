@@ -197,26 +197,24 @@ class PrometheusScrapeConfigTest {
         }
     }
 
-    // --- S1: INVALID_SHAPE message must report the correct full dotted path ---
+    // --- INVALID_SHAPE message must report the correct full dotted path ---
 
     @Nested
-    @DisplayName("S1: INVALID_SHAPE message reports the full dotted path (not just the failing segment)")
+    @DisplayName("INVALID_SHAPE message reports the full dotted path (not just the failing segment)")
     class InvalidShapeFullPathMessage {
 
         /**
-         * Verifies S1: when "metrics.prometheus.exemplars" is a scalar, the INVALID_SHAPE error
+         * Verifies that when "metrics.prometheus.exemplars" is a scalar, the INVALID_SHAPE error
          * message must name the full failing path "metrics.prometheus.exemplars" in the
          * intermediate-segment parenthetical — not the truncated "metrics.exemplars" that results
          * from using only {@code failingSegment()} without its parent path context.
          *
-         * <p>The current (buggy) message looks like:
-         * <pre>"metrics.prometheus.exemplars.enabled: an intermediate segment (metrics.exemplars) ..."</pre>
-         * The correct message must have:
+         * <p>The message must have:
          * <pre>"... (metrics.prometheus.exemplars) ..."</pre>
          */
         @Test
         @DisplayName(
-                "S1: {\"metrics\":{\"prometheus\":{\"exemplars\":\"bad\"}}} → message parenthetical names 'metrics.prometheus.exemplars', not 'metrics.exemplars'")
+                "{\"metrics\":{\"prometheus\":{\"exemplars\":\"bad\"}}} → message parenthetical names 'metrics.prometheus.exemplars', not 'metrics.exemplars'")
         void exemplarsAsScalarReportsFullPath() {
             // "metrics.prometheus.exemplars" is a scalar string, not a JsonObject.
             // resolve(metricsSection, "prometheus.exemplars.enabled") returns INVALID_SHAPE
@@ -245,7 +243,7 @@ class PrometheusScrapeConfigTest {
         }
 
         @Test
-        @DisplayName("S1: existing scrapeAsScalarThrows still names 'metrics.scrape.path' (path already correct)")
+        @DisplayName("existing scrapeAsScalarThrows still names 'metrics.scrape.path' (path already correct)")
         void scrapeAsScalarStillCorrect() {
             // Verify that the scrape path INVALID_SHAPE message is also correct (regression guard)
             JsonObject config = new JsonObject().put("metrics", new JsonObject().put("scrape", "bad"));

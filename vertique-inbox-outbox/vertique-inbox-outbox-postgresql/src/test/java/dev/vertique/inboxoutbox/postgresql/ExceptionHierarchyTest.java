@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the exception-hierarchy reparenting for Phase 5 of the inbox/outbox exception alignment.
+ * Verifies the exception hierarchy of the PostgreSQL inbox/outbox exceptions.
  *
  * <p>Specifically asserts:
  * <ul>

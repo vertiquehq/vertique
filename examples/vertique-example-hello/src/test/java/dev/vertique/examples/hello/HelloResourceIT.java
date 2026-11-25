@@ -30,7 +30,7 @@ public class HelloResourceIT {
                     .put("hello", "Hello, %s!")
                     .put("management", new JsonObject().put("enabled", false))
                     .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract"))
-                    // greetLimited() carries @RateLimited (T013); the aspect resolves its policy
+                    // greetLimited() carries @RateLimited; the aspect resolves its policy
                     // handle at proxy-construction time, so every app boot in this module must
                     // declare it, whether or not a test exercises the endpoint.
                     .put(
@@ -130,8 +130,7 @@ public class HelloResourceIT {
                 .body("title", equalTo("Not Found"));
     }
 
-    // NOTE: the /hello/limited/{name} endpoint's rate-limiting behavior (admit-then-429) is
-    // retired from a hand-rolled name-length check (T013) in favor of a real @RateLimited quota,
-    // proven end to end by the dedicated RateLimitedGreetingIT — including the 429/Retry-After/
-    // Cache-Control contract, which no longer depends on the requested name.
+    // NOTE: the /hello/limited/{name} endpoint's rate-limiting behavior (admit-then-429) is a real
+    // @RateLimited quota, proven end to end by the dedicated RateLimitedGreetingIT — including the
+    // 429/Retry-After/Cache-Control contract, which does not depend on the requested name.
 }

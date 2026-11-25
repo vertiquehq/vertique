@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  * Unit tests for {@link MicrometerAssembly} — verifies provider ordering, composite fan-out,
  * common-tag application, JVM binder lifecycle, close() semantics, rollback on failure,
  * backend config subtree routing, duplicate-name detection, and class-name-only logging of
- * close exceptions (security review: no config-value leakage in close paths).
+ * close exceptions (no config-value leakage in close paths).
  */
 class MicrometerAssemblyTest {
 
@@ -74,7 +74,7 @@ class MicrometerAssemblyTest {
         return json.mapTo(MetricsConfig.class);
     }
 
-    // --- Test 4: Ordering ---
+    // --- Ordering ---
 
     @Nested
     class Ordering {
@@ -95,7 +95,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 5: Composite fan-out ---
+    // --- Composite fan-out ---
 
     @Nested
     class CompositeFanOut {
@@ -220,7 +220,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 6: Common tags ---
+    // --- Common tags ---
 
     @Nested
     class CommonTags {
@@ -264,7 +264,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 7: Service-name fallback ---
+    // --- Service-name fallback ---
 
     @Nested
     class ServiceNameFallback {
@@ -301,7 +301,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 8: JVM binders ---
+    // --- JVM binders ---
 
     @Nested
     class JvmBinders {
@@ -338,7 +338,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 9: close() semantics ---
+    // --- close() semantics ---
 
     @Nested
     class CloseSemantic {
@@ -369,7 +369,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 10: Rollback on failure ---
+    // --- Rollback on failure ---
 
     @Nested
     class Rollback {
@@ -391,7 +391,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 11: Backend config subtree ---
+    // --- Backend config subtree ---
 
     @Nested
     class BackendConfigSubtree {
@@ -429,7 +429,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 12: Duplicate backendName ---
+    // --- Duplicate backendName ---
 
     @Nested
     class DuplicateBackendName {
@@ -451,14 +451,14 @@ class MicrometerAssemblyTest {
                     "ISE message must contain provider class name, got: " + msg);
             // Must NOT contain config values (names are backend keys, not config values)
             // The check here is that the message mentions the backend name "dup" only as identifier
-            // context, which is acceptable per the spec ("naming only the provider CLASS names")
+            // context, which is acceptable (naming only the provider CLASS names)
         }
     }
 
-    // --- Test 14: Blank backendName validation (W4) ---
+    // --- Blank backendName validation ---
 
     @Nested
-    @DisplayName("W4: blank backendName() is rejected before any backend is created")
+    @DisplayName("blank backendName() is rejected before any backend is created")
     class BlankBackendNameValidation {
 
         @Test
@@ -532,10 +532,10 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 15: Provider create() failure surfaces backend name (W4) ---
+    // --- Provider create() failure surfaces backend name ---
 
     @Nested
-    @DisplayName("W4: provider create() failure wraps with backend name in message")
+    @DisplayName("provider create() failure wraps with backend name in message")
     class ProviderCreateFailureNaming {
 
         @Test
@@ -582,7 +582,7 @@ class MicrometerAssemblyTest {
         }
     }
 
-    // --- Test 13: Close-path logging secrecy ---
+    // --- Close-path logging secrecy ---
 
     @Nested
     class CloseLoggingSecrecy {

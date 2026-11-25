@@ -27,7 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Tests for {@link DefaultInboxService} — deduplication routing, work invocation,
- * failure propagation, and exception-mapper boundary placement (FR-IO-004).
+ * failure propagation, and exception-mapper boundary placement.
  */
 @ExtendWith(MockitoExtension.class)
 class DefaultInboxServiceTest {
@@ -107,7 +107,7 @@ class DefaultInboxServiceTest {
         }
 
         @Test
-        @DisplayName("work failure propagates UNCHANGED — not wrapped by exception mapper (FR-IO-004)")
+        @DisplayName("work failure propagates UNCHANGED — not wrapped by exception mapper")
         void workFailurePropagatesUnchanged() {
             SqlClient tx = mock(SqlClient.class);
             when(repository.tryInsert("msg-2", "source-b", tx)).thenReturn(Future.succeededFuture(true));

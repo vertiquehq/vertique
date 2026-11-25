@@ -196,11 +196,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 1 — success event records timer with correct tags
+    // success event records timer with correct tags
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 1: success event records timer with correct tags and duration")
+    @DisplayName("success event records timer with correct tags and duration")
     class SuccessEvent {
 
         @Test
@@ -225,11 +225,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 2 — failure event: outcome=SERVER_ERROR, error.type=class name
+    // failure event: outcome=SERVER_ERROR, error.type=class name
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 2: 500 failure event records SERVER_ERROR outcome and error.type from failureCode")
+    @DisplayName("500 failure event records SERVER_ERROR outcome and error.type from failureCode")
     class FailureEvent {
 
         @Test
@@ -249,18 +249,17 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 3 — route and operation tags come from the event's operation (TP-013)
+    // route and operation tags come from the event's operation
     // =========================================================================
 
     /**
-     * TP-013: the timer's {@code route} and {@code operation} tags are read from the event's
-     * {@link RestRequestCompletedEvent#operation() operation}. It replaces the former pre-dispatch
-     * case, whose premise, a {@code null} route, no longer exists: every REST event carries the
+     * The timer's {@code route} and {@code operation} tags are read from the event's
+     * {@link RestRequestCompletedEvent#operation() operation}: every REST event carries the
      * operation its JAX-RS route claimed, and a request no transport claimed yields an HTTP event,
      * which this listener never receives.
      */
     @Nested
-    @DisplayName("Test 3: route and operation tags come from the event's operation")
+    @DisplayName("route and operation tags come from the event's operation")
     class OperationTags {
 
         @Test
@@ -285,11 +284,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 4 — outcome bucket mapping
+    // outcome bucket mapping
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 4: outcome bucket mapping from status code")
+    @DisplayName("outcome bucket mapping from status code")
     class OutcomeBuckets {
 
         @Test
@@ -346,11 +345,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 5 — negative duration: end before start → count increments, totalTime 0
+    // negative duration: end before start → count increments, totalTime 0
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 5: negative duration (end before start) → count=1, totalTime clamped to 0")
+    @DisplayName("negative duration (end before start) → count=1, totalTime clamped to 0")
     class NegativeDuration {
 
         @Test
@@ -377,11 +376,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 6 — repeated same-tag events → ONE meter, count=2
+    // repeated same-tag events → ONE meter, count=2
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 6: two identical-tag events → one timer deduped by registry, count=2")
+    @DisplayName("two identical-tag events → one timer deduped by registry, count=2")
     class RegistryDedupe {
 
         @Test
@@ -402,11 +401,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 7 — throwing registry → onCompleted does not throw
+    // throwing registry → onCompleted does not throw
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 7: throwing registry → onCompleted returns normally without propagating exception")
+    @DisplayName("throwing registry → onCompleted returns normally without propagating exception")
     class ThrowingRegistry {
 
         @Test
@@ -436,11 +435,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 8 — metricsEnabled gate
+    // metricsEnabled gate
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 8: metricsEnabled gate")
+    @DisplayName("metricsEnabled gate")
     class MetricsEnabledGate {
 
         @Test
@@ -472,11 +471,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 9 — metricsDisabled_whenConfigEnabledFalse (new MetricsConfig signature)
+    // metricsDisabled_whenConfigEnabledFalse (MetricsConfig signature)
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 9: Optional.of(MetricsConfig.enabled=false) → no meters")
+    @DisplayName("Optional.of(MetricsConfig.enabled=false) → no meters")
     class MetricsDisabledWhenConfigEnabledFalse {
 
         @Test
@@ -495,11 +494,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 10 — metricsOn_whenAbsent (Optional.empty() → default enabled)
+    // metricsOn_whenAbsent (Optional.empty() → default enabled)
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 10: Optional.empty() → timer recorded (absent → metrics on)")
+    @DisplayName("Optional.empty() → timer recorded (absent → metrics on)")
     class MetricsOnWhenAbsent {
 
         @Test
@@ -518,11 +517,11 @@ class RestServerRequestMetricsListenerTest {
     }
 
     // =========================================================================
-    // Test 11 — error.type falls back to wireFailureCode when failureCode is absent (D1=A)
+    // error.type falls back to wireFailureCode when failureCode is absent
     // =========================================================================
 
     @Nested
-    @DisplayName("Test 11: error.type falls back to wireFailureCode when failureCode is absent")
+    @DisplayName("error.type falls back to wireFailureCode when failureCode is absent")
     class ErrorTypeFallsBackToWireFailureCode {
 
         @Test

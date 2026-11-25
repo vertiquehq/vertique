@@ -34,7 +34,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load a body read can succeed with zero bytes while the status code is
- * correct (issue #167). These tests assert on the status code and on the resulting meters rather than
+ * correct. These tests assert on the status code and on the resulting meters rather than
  * on a body, so the raw idiom was latent rather than actively broken here — but a {@link WebClient}
  * aggregates the response before completing the send, which removes the trap for whoever next asserts
  * on a body. The exchange still exercises the same instrumented server path, which is what produces

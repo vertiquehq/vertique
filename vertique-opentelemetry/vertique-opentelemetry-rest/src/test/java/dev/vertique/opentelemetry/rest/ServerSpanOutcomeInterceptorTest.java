@@ -52,7 +52,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  *       {@link Span#current()}; with recording span attrs land; with none → no-op, no exception.</li>
  *   <li>NO {@code recordException} ever: after 500/onError paths, exported span has zero
  *       exception events.</li>
- *   <li>W5: {@link ServerSpanOutcomeInterceptor#onRequest} with a valid recording current span →
+ *   <li>{@link ServerSpanOutcomeInterceptor#onRequest} with a valid recording current span →
  *       {@link RestSpanKeys#SPAN_KEY} is set on the routing context. With no/invalid current span
  *       → SPAN_KEY absent, no throw. With SPAN_KEY already set → not overwritten. With {@code rc.put}
  *       throwing → exception swallowed.</li>
@@ -68,7 +68,7 @@ class ServerSpanOutcomeInterceptorTest {
 
     private final ServerSpanOutcomeInterceptor interceptor = new ServerSpanOutcomeInterceptor();
 
-    // --- Test 6: afterResponse 200 → UNSET, no error.type ---
+    // --- afterResponse 200 → UNSET, no error.type ---
 
     @Test
     @DisplayName("afterResponse with status 200 → span status UNSET, no error.type attribute")
@@ -94,7 +94,7 @@ class ServerSpanOutcomeInterceptorTest {
                 "error.type must not be set for 200");
     }
 
-    // --- Test 7: afterResponse 500 + original-error → ERROR, error.type set ---
+    // --- afterResponse 500 + original-error → ERROR, error.type set ---
 
     @Test
     @DisplayName("afterResponse with status 500 + original-error key → span status ERROR, error.type set")
@@ -123,7 +123,7 @@ class ServerSpanOutcomeInterceptorTest {
                 "error.type must be the simple class name of the original error");
     }
 
-    // --- Test 7 continued: no exception events ---
+    // --- afterResponse 500: no exception events ---
 
     @Test
     @DisplayName("afterResponse 500 path: exported span has zero exception events (no recordException)")
@@ -146,7 +146,7 @@ class ServerSpanOutcomeInterceptorTest {
         assertTrue(spans.get(0).getEvents().isEmpty(), "no exception events must be recorded (no recordException)");
     }
 
-    // --- Test 8: afterResponse 404 → UNSET, no error.type (no ORIGINAL_ERROR_KEY) ---
+    // --- afterResponse 404 → UNSET, no error.type (no ORIGINAL_ERROR_KEY) ---
 
     @Test
     @DisplayName("afterResponse with status 404 (no ORIGINAL_ERROR_KEY) → span status UNSET, no error.type")
@@ -171,7 +171,7 @@ class ServerSpanOutcomeInterceptorTest {
                 "error.type must not be set when ORIGINAL_ERROR_KEY is absent");
     }
 
-    // --- Test 9: onError — semconv-correct: status UNSET, error.type set ---
+    // --- onError — semconv-correct: status UNSET, error.type set ---
 
     @Nested
     @DisplayName("onError — semconv-correct: span status UNSET, error.type set from error class")
@@ -180,11 +180,9 @@ class ServerSpanOutcomeInterceptorTest {
         /**
          * OTel HTTP semconv: {@code onError} fires BEFORE the exception is mapped to an HTTP status.
          * Setting ERROR here is premature — the exception may map to 4xx (client fault, not server
-         * fault). The fix records only {@code error.type}; status is decided later in
-         * {@code afterResponse} from the final HTTP status code.
-         *
-         * <p><b>Changed assertion (fix #3):</b> previously asserted {@link StatusCode#ERROR};
-         * now asserts {@link StatusCode#UNSET}.
+         * fault). {@code onError} records only {@code error.type}; status is decided later in
+         * {@code afterResponse} from the final HTTP status code, so the span status stays
+         * {@link StatusCode#UNSET} here.
          */
         @Test
         @DisplayName("onError alone → span status UNSET (not ERROR), error.type set to error's simple class name")
@@ -270,7 +268,7 @@ class ServerSpanOutcomeInterceptorTest {
         }
     }
 
-    // --- Test 10: span already ENDED before afterResponse ---
+    // --- span already ENDED before afterResponse ---
 
     @Test
     @DisplayName("span already ended before afterResponse → no exception, exported span unchanged")
@@ -295,7 +293,7 @@ class ServerSpanOutcomeInterceptorTest {
         assertEquals(StatusCode.UNSET, spans.get(0).getStatus().getStatusCode(), "ended span must be unchanged");
     }
 
-    // --- Test 11: SPAN_KEY missing → fallback to Span.current() ---
+    // --- SPAN_KEY missing → fallback to Span.current() ---
 
     @Nested
     @DisplayName("SPAN_KEY missing from context — fallback to Span.current()")
@@ -349,10 +347,10 @@ class ServerSpanOutcomeInterceptorTest {
         }
     }
 
-    // --- W5: onRequest early span capture tests ---
+    // --- onRequest early span capture tests ---
 
     @Nested
-    @DisplayName("W5: onRequest captures server span early for pre-dispatch exemplar coverage")
+    @DisplayName("onRequest captures server span early for pre-dispatch exemplar coverage")
     class OnRequestTests {
 
         /**

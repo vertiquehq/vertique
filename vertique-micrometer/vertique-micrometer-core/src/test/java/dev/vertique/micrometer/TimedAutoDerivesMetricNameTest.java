@@ -21,12 +21,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FROZEN §3b metric-name rule for {@code @Timed}: an empty {@code value()} auto-derives
+ * Verifies the metric-name rule for {@code @Timed}: an empty {@code value()} auto-derives
  * {@code vertique.<simpleClassName>.<method>} (lower-dotted); an explicit {@code value()} is honored
  * verbatim.
- *
- * <p><strong>RED:</strong> {@link TimedAspect} is a failing stub, so no {@code Timer} is recorded
- * under any name.
  */
 class TimedAutoDerivesMetricNameTest {
 

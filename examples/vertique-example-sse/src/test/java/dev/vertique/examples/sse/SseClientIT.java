@@ -34,7 +34,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * Consumes the example's own server-sent event feed through a governed client obtained from the
  * application's {@link HttpClientFactory}, configured from {@code httpClient.{name}}.
  *
- * <p>Proves FR-012 (supporting): the stream arrives event by event through {@code stream(...)} and
+ * <p>Proves that the stream arrives event by event through {@code stream(...)} and
  * {@code events()}, and {@code completion()} succeeds once the server ends the feed. No raw Vert.x
  * client and no {@code BodyCodec.sseStream}: the governed client is the only consumer under test.
  * The application binds {@code 127.0.0.1} on a dynamic port, so the request carries an absolute

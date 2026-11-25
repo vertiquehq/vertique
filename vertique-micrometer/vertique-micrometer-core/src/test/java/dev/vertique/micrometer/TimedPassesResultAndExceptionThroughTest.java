@@ -19,13 +19,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FROZEN §3b pass-through guarantee for {@code @Timed}: the around-interceptor observes
+ * Verifies the pass-through guarantee for {@code @Timed}: the around-interceptor observes
  * but never alters the returned value, and never swallows or changes a thrown exception — the outcome
  * is identical with the aspect applied.
- *
- * <p><strong>RED:</strong> {@link TimedAspect} is a failing stub whose interceptor throws
- * {@link UnsupportedOperationException}, so neither the value nor the original exception reaches the
- * caller.
  */
 class TimedPassesResultAndExceptionThroughTest {
 

@@ -76,7 +76,7 @@ import org.slf4j.LoggerFactory;
  *   <li>Gate: {@code tracing.security.spanEvents=false} → no events even with a recording span.</li>
  *   <li>Gate: {@code tracing.enabled=false} → no events even with a recording span.</li>
  *   <li>Never throws: null primaryMethod → {@code "unknown"}; poisoned event → succeeded future.</li>
- *   <li>W3-tracing: catch blocks log only the exception class name — no throwable proxy, no
+ *   <li>Catch blocks log only the exception class name — no throwable proxy, no
  *       sentinel message text leaked to the log appender.</li>
  * </ol>
  */
@@ -102,7 +102,7 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 1 — recording span produces events with frozen names and attributes
+    // recording span produces events with frozen names and attributes
     // =========================================================================
 
     @Nested
@@ -297,7 +297,7 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 2 — reason normalization
+    // reason normalization
     // =========================================================================
 
     @Nested
@@ -378,8 +378,7 @@ class SecuritySpanEventObserverTest {
         }
 
         @Test
-        @DisplayName(
-                "Slice-16: new AuthzReasonCodes constants pass normalizeReason unchanged — all match [A-Z0-9_]{1,64}")
+        @DisplayName("new AuthzReasonCodes constants pass normalizeReason unchanged — all match [A-Z0-9_]{1,64}")
         void newAuthzReasonCodesPassNormalizationUnchanged() {
             // All AuthzReasonCodes constants are uppercase A-Z plus underscore; they must all
             // survive normalizeReason() unchanged (not coerced to "OTHER").
@@ -413,7 +412,7 @@ class SecuritySpanEventObserverTest {
         }
 
         @Test
-        @DisplayName("Slice-16: INSTANCE_ELIGIBILITY_FAILED and DENY_ALL appear verbatim in authz span attributes")
+        @DisplayName("INSTANCE_ELIGIBILITY_FAILED and DENY_ALL appear verbatim in authz span attributes")
         void newCodesAppearsVerbatimInSpanAttributes() {
             TracingConfig config = defaultConfig();
             SecuritySpanEventObserver observer = new SecuritySpanEventObserver(config);
@@ -441,7 +440,7 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 3 — no current span: all methods return succeeded futures, no events exported
+    // no current span: all methods return succeeded futures, no events exported
     // =========================================================================
 
     @Nested
@@ -473,7 +472,7 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 4 — non-recording span (noop tracer): no events, no throw
+    // non-recording span (noop tracer): no events, no throw
     // =========================================================================
 
     @Nested
@@ -515,7 +514,7 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 5 — gates: security.spanEvents=false and enabled=false
+    // gates: security.spanEvents=false and enabled=false
     // =========================================================================
 
     @Nested
@@ -570,7 +569,7 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 6 — never throws: null primaryMethod and poisoned event
+    // never throws: null primaryMethod and poisoned event
     // =========================================================================
 
     @Nested
@@ -673,11 +672,11 @@ class SecuritySpanEventObserverTest {
     }
 
     // =========================================================================
-    // Test 8 — W3-tracing: catch blocks log class name only, no throwable proxy
+    // catch blocks log class name only, no throwable proxy
     // =========================================================================
 
     @Nested
-    @DisplayName("W3-tracing: catch blocks log class name only — no throwable proxy, no sentinel leakage")
+    @DisplayName("catch blocks log class name only — no throwable proxy, no sentinel leakage")
     class CatchBlockLogging {
 
         /**

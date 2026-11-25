@@ -16,11 +16,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Test fixtures for the slice-1.3 {@code @Timed} runtime proof.
+ * Test fixtures for the {@code @Timed} runtime proof.
  *
  * <p><strong>Runtime-proof approach (direct-instantiation fallback).</strong> Wiring test-scope
  * Dagger plus the {@code vertique-codegen-aop} annotation processor into {@code vertique-micrometer-core}
- * (to make Dagger substitute a generated {@code Bean$AopProxy}) is disproportionate for this slice.
+ * (to make Dagger substitute a generated {@code Bean$AopProxy}) is disproportionate here.
  * Instead, the {@code *$AopProxy} classes below are <em>hand-written to mirror exactly what
  * {@code AopProxyEmitter} generates at compile time</em>: each
  * <ul>
@@ -76,7 +76,7 @@ final class TimedFixtures {
         }
     }
 
-    /** A bean whose {@code @Timed} carries an empty {@code value()} (name auto-derived per §3b). */
+    /** A bean whose {@code @Timed} carries an empty {@code value()} (name auto-derived). */
     static class AutoNamedService {
 
         @Timed
@@ -188,7 +188,7 @@ final class TimedFixtures {
     /**
      * Builds a {@code @Timed} literal carrying the given {@code value()} and {@code extraTags()},
      * mirroring the generated {@code Timed$AopLiteral} the real proxy would hold. Used to exercise the
-     * {@link TimedAspect#interceptor} even-length validation (Bug F6).
+     * {@link TimedAspect#interceptor} even-length validation.
      *
      * @param value the {@code @Timed} metric name
      * @param extraTags the {@code extraTags()} elements (may be odd-length to drive the validation)

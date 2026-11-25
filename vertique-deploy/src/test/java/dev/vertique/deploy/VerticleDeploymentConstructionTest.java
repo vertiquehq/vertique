@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * Construction-time validation tests for {@link VerticleDeployment} (FR-APP-012).
+ * Construction-time validation tests for {@link VerticleDeployment}.
  *
  * <p>Verifies that a {@link VerticleDeployment} can only be constructed with a
  * {@link LifecyclePhase#isVerticlePhase() verticle phase}: the four verticle-subset phases

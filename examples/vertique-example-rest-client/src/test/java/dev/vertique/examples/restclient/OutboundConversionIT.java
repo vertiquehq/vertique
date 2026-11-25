@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end outbound-conversion integration test for Slice 4.2.
+ * End-to-end outbound-conversion integration test.
  *
  * <p>Drives two client proxies — the generated static proxy ({@link GeneratedConvClient}, which the
  * {@code vertique-codegen-rest-client} processor emits a {@code _RestClientProxy} companion for) and
@@ -57,14 +57,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       are honored on the outbound path.</li>
  * </ul>
  *
- * <p><strong>RED status:</strong> compile-RED today — the {@code dev.vertique.rest.core.convert}
- * types are not on the example/rest-client classpath, and the fluent
- * {@code paramConverterBinding(...)} / {@code paramConverterProvider(...)} builder setters do not
- * exist. Once those compile, the assertions are still behavior-RED: the outbound path currently
- * serializes every value with {@code Object.toString()} and never consults a resolver, so the enum
- * header would echo {@code "not-the-name"}, the {@code List<UUID>} would echo a single bracketed
- * entry, and the custom-type params would echo their default {@code toString()} rather than the
- * supplied converter's output.
+ * <p>Serializing values with {@code Object.toString()} without consulting a resolver would make the
+ * enum header echo {@code "not-the-name"}, the {@code List<UUID>} echo a single bracketed entry, and
+ * the custom-type params echo their default {@code toString()} rather than the supplied converter's
+ * output.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

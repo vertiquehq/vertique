@@ -327,7 +327,7 @@ class TagPolicyValidatorTest {
                     () -> TagPolicyValidator.validate(tagsConfig(Map.of("db.passwd", "val"))));
         }
 
-        // --- Expanded denylist (fix #8) ---
+        // --- Expanded denylist ---
 
         @Test
         @DisplayName("key 'authorization' -> throws: whole segment 'authorization' is a credential indicator")
@@ -475,7 +475,7 @@ class TagPolicyValidatorTest {
             assertThrows(ConfigurationException.class, () -> TagPolicyValidator.validate(tags));
         }
 
-        // --- HTTP auth header value shapes (fix #8) ---
+        // --- HTTP auth header value shapes ---
 
         @Test
         @DisplayName("value starting with 'Bearer ' (case-sensitive) -> throws (HTTP Authorization header value)")

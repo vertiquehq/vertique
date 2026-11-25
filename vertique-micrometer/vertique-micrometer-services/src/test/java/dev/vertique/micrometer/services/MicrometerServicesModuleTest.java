@@ -64,7 +64,7 @@ class MicrometerServicesModuleTest {
     }
 
     // =========================================================================
-    // Test 1 — Set<ServiceInterceptor> contains the metrics interceptor
+    // Set<ServiceInterceptor> contains the metrics interceptor
     // =========================================================================
 
     @Nested
@@ -102,7 +102,7 @@ class MicrometerServicesModuleTest {
     }
 
     // =========================================================================
-    // Test 2 — @BindsOptionalOf MetricsConfig
+    // @BindsOptionalOf MetricsConfig
     // =========================================================================
 
     @Nested

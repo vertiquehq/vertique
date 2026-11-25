@@ -16,11 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FROZEN §3b "honors {@code MetricsConfig.enabled}" rule for {@code @Timed}: when metrics
+ * Verifies the "honors {@code MetricsConfig.enabled}" rule for {@code @Timed}: when metrics
  * are disabled the aspect is a no-op (records nothing) yet the underlying call still returns normally.
- *
- * <p><strong>RED:</strong> {@link TimedAspect} is a failing stub, so the call throws instead of
- * completing as the disabled-path contract requires.
  */
 class TimedNoOpWhenMetricsDisabledTest {
 

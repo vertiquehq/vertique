@@ -209,7 +209,7 @@ class CronConfigTest {
         }
     }
 
-    // --- toString redaction (W4: parameters is an open user payload) ---
+    // --- toString redaction (parameters is an open user payload) ---
 
     @Nested
     @DisplayName("toString redaction")
@@ -218,8 +218,8 @@ class CronConfigTest {
         @Test
         @DisplayName("secret values in the open parameters payload are redacted in toString but intact live")
         void parametersSecretRedactedInToString() {
-            // parameters is an open user payload (R9) that may carry secrets; the default record
-            // toString() rendered it verbatim (gap W4), including via CronConfig.toString().
+            // parameters is an open user payload that may carry secrets; the default record
+            // toString() would render it verbatim, including via CronConfig.toString().
             JsonObject root = new JsonObject()
                     .put(
                             "cron",

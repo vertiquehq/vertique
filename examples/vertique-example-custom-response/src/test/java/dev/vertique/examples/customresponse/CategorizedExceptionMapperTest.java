@@ -12,13 +12,12 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /**
- * T021 W1 ripple: {@link TooManyRequestsException} re-parented directly under {@code
- * VertiqueException} (no longer a {@code ValidationException}), so {@link
- * CategorizedExceptionMapper#categorize} would otherwise fall it out of {@link
- * ErrorCategory#VALIDATION} into the generic {@link ErrorCategory#TECHNICAL} (500) bucket — wrong
- * both semantically and on the wire, since a rate-limit denial is a 429, not a 500. This mapper gets
- * its own explicit {@link ErrorCategory#RATE_LIMITED} branch so the example's categorized-response
- * demonstration stays honest for a rate-limited request.
+ * {@link TooManyRequestsException} extends {@code VertiqueException} directly (it is not a {@code
+ * ValidationException}), so {@link CategorizedExceptionMapper#categorize} must not fall it into the
+ * generic {@link ErrorCategory#TECHNICAL} (500) bucket — wrong both semantically and on the wire,
+ * since a rate-limit denial is a 429, not a 500. This mapper has its own explicit {@link
+ * ErrorCategory#RATE_LIMITED} branch so the example's categorized-response demonstration stays
+ * honest for a rate-limited request.
  */
 class CategorizedExceptionMapperTest {
 
