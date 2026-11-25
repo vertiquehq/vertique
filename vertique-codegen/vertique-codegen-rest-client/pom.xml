@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Annotation processor that generates static proxy classes and BeanParamAccessor implementations for @RestClient interfaces, eliminating per-call reflection on the hot path</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

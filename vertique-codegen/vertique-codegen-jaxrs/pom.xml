@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-codegen-jaxrs</artifactId>
     <name>Vertique Codegen JAX-RS</name>
-    <description>Annotation processor (CG-009) that validates JAX-RS resource classes at compile
+    <description>Annotation processor that validates JAX-RS resource classes at compile
         time: security-annotation conflicts, path-placeholder/PathParam alignment, body/form
         exclusivity, and multiple-HTTP-verb guardrail. Pure validation — no source files are
         generated.</description>
@@ -28,7 +28,7 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-security-core</artifactId>
         </dependency>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

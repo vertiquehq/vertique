@@ -21,7 +21,7 @@ import io.vertx.core.Future;
  *
  * <p>An interceptor may permit or reject; it can never mutate the request, reorder the fixed
  * pipeline stages, recover a failure another stage produced, or observe raw headers or the request
- * body — {@link McpRequestContext} exposes no such accessor. Phase 1 provides no general recovery
+ * body — {@link McpRequestContext} exposes no such accessor. There is no general recovery
  * capability: once rejected, a request cannot be turned back into success by any interceptor.
  *
  * <p>Interceptors are ordered by the {@link OrderedExtension} {@code phase} → {@code priority} →

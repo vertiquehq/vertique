@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Annotation processor that validates @CronJob annotations at compile time: cron expression syntax, @ServiceContract participation, @ServiceOperation requirement on the matched contract method, and policy bounds. Pure validation — no code generation.</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

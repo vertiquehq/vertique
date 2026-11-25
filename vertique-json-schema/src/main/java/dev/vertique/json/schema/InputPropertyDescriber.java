@@ -111,7 +111,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * BuilderBorrowDetector} bound the borrow to the shape that assumption actually holds for (the exact
  * shape {@code @Builder @Jacksonized} generates, read through {@code java.lang.reflect} over Jackson's
  * own runtime-visible annotations), and every other builder's getter-less property is published by
- * type only — see the module's packaged {@code module.md} for the ruling and the documented
+ * type only — see the module's packaged {@code module.md} for the contract and the documented
  * consequence for a hand-written builder that goes unresolved.
  *
  * <p>Two mechanisms are detected and refused rather than described, because a document describing
@@ -657,7 +657,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // Renamed away from every member, with no constraint of its own: publishing it bare
                 // would invent a property main never had, and it must not be reserved either, since
                 // reserving it would reject the type's valid traffic that main's field walk accepted
-                // through no named property at all (design proof CR1c).
+                // through no named property at all.
                 excludedFromReservation.add(name);
                 continue;
             }
@@ -1495,7 +1495,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // before storing it. When that property has a getter the borrow is published
                 // unconditionally, for any builder; when it has no getter, the borrow is published only
                 // when BuilderBorrowDetector judges it sound (a Lombok builder, or the exact Lombok
-                // builder shape) — see module.md's "Builder borrow assumption" for the ruling and the
+                // builder shape) — see module.md's "Builder borrow assumption" for the contract and the
                 // documented consequence for a getter-less, hand-written builder that goes unresolved.
                 borrowBuilderFieldAttributes(
                         method, builtClass, property.getName(), builtProperty, schema, context, required);
@@ -3011,7 +3011,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * <p>Publishing such a parameter would either invent a property main's field walk never had, or
      * silently drop a constraint written on a member the join cannot reach — the type is a closed
      * boundary either way, and this gap is the one that let a constrained field's limit be bypassed
-     * through its renamed creator parameter (design proof CR1c). The caller excludes the property from
+     * through its renamed creator parameter. The caller excludes the property from
      * publication and, on an any-setter type, from the reserved-name set as well: main described no
      * property by this name and reserved none either, since it has nothing to key a refusal on.
      *

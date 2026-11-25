@@ -1194,7 +1194,7 @@ public final class AnnotationJsonSchemaGenerator {
          * <p>Carrying the plan out of band — an {@code IdentityHashMap} from the definition node to its
          * plan, applied after generation — was built and measured, and does not work: the {@code
          * ObjectNode} a type-attribute override is handed is not the node that reaches the finished
-         * document. Across 924 generations of the design proof's corpus, 132 recorded plans matched
+         * document. Across 924 generations of a measured corpus, 132 recorded plans matched
          * zero document nodes by identity, and 60 matched only by value equality, which cannot be used
          * because two structurally equal definitions are indistinguishable. The pinned Victools version
          * rebuilds definition nodes on the way into the document, so identity cannot carry a plan and

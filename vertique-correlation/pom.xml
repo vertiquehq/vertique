@@ -57,7 +57,7 @@ SPDX-License-Identifier: EUPL-1.2
 
         <!-- Test -->
         <dependency>
-            <!-- TP-002 (CorrelationEnvelopeTest): DefaultJsonMapperProfileRegistry + JacksonDefaults for
+            <!-- CorrelationEnvelopeTest: DefaultJsonMapperProfileRegistry + JacksonDefaults for
                  the cross-profile decode proof. Acyclic: vertique-json depends only on vertique-core. -->
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>
@@ -72,7 +72,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-junit5</artifactId>
         </dependency>
         <dependency>
-            <!-- TP-002 (CorrelationEnvelopeTest): mocks the final DurableMetadata class to deliver a
+            <!-- CorrelationEnvelopeTest: mocks the final DurableMetadata class to deliver a
                  single-quoted document past its copy-and-materialize accessors, straight into the
                  decoder's own readTree call (no real DurableMetadata body can otherwise carry
                  malformed JSON syntax — see the test's Javadoc). Needs the inline mock maker, hence
@@ -90,7 +90,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
-            <!-- TP-002 (CorrelationEnvelopeTest) installs a mapper through VertiqueJson.install and
+            <!-- CorrelationEnvelopeTest installs a mapper through VertiqueJson.install and
                  must restore the raw Vert.x delegate in @AfterEach, so this module's single fork
                  enables the reset seam. The flag is read once at VertiqueJson class initialization; it
                  is a test-only argLine and never reaches a shipped runtime. Reproduces the parent

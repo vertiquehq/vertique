@@ -111,7 +111,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <!-- Test-scope only: exercises the paired SERVICES-phase lifecycle steps through the
-                 host-neutral runner (VertiqueApplicationBootstrap) for AC-11 / AC-14. The edge is
+                 host-neutral runner (VertiqueApplicationBootstrap). The edge is
                  acyclic: vertique-application depends on core+deploy, NOT on vertique-services, so a
                  test-scope services -> application edge introduces no dependency cycle. -->
             <groupId>dev.vertique</groupId>

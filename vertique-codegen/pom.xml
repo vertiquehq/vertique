@@ -19,7 +19,7 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>vertique-codegen</artifactId>
     <packaging>pom</packaging>
     <name>Vertique Codegen</name>
-    <description>Annotation processor infrastructure: shared APT helpers and a compile-testing harness for downstream codegen modules (CG-002+)</description>
+    <description>Annotation processor infrastructure: shared APT helpers and a compile-testing harness for downstream codegen modules</description>
 
     <modules>
         <module>vertique-codegen-core</module>

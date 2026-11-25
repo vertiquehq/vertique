@@ -256,7 +256,7 @@ public final class OpenTelemetryBootstrapContributor implements VertxBuilderCont
      * {@link OpenTelemetrySdk#close()} is itself idempotent, and the {@code ownedSdk} reference is
      * read once.
      *
-     * <p><b>Latch ordering (Fix 2):</b> {@link #OWNED_GLOBAL_CLOSED} is set to {@code true}
+     * <p><b>Latch ordering:</b> {@link #OWNED_GLOBAL_CLOSED} is set to {@code true}
      * <em>before</em> {@code local.close()} is called. This prevents a concurrent
      * {@link #contribute} call from passing the latch check and wiring a mid-close SDK: the window
      * where the latch is false but the SDK is shutting down is eliminated. The latch is JVM-wide

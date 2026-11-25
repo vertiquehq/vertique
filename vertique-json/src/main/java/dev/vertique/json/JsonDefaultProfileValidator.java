@@ -56,7 +56,7 @@ public final class JsonDefaultProfileValidator implements ComposeValidator {
     public JsonDefaultProfileValidator(JsonConfig config, JsonMapperProfileRegistry registry) {
         registry.validateConfigured(config.jsonProfile());
         registry.validateConfigured(config.systemProfile());
-        // Security review: the install seam checks the mapper it is handed, but the installed
+        // The install seam checks the mapper it is handed, but the installed
         // mapper stays a live ObjectMapper. Re-check one phase later so default typing activated
         // on it during CONFIGURE fails the boot instead of serving.
         if (VertiqueJson.ownsCodec()

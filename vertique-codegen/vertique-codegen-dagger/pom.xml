@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Annotation processor that auto-generates Dagger @Module bindings from @Path, @RestClient, @KafkaListener, @KafkaSource, @ServiceContract implementations, and DelayedJobExecutor implementations</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

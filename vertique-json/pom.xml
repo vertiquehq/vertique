@@ -55,7 +55,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- TP-002 boots a real application through VertiqueApplicationBootstrap. Acyclic:
+        <!-- A test boots a real application through VertiqueApplicationBootstrap. Acyclic:
              vertique-application depends on core + deploy, never on vertique-json, so a test-scope
              json -> application edge introduces no cycle (vertique-application-test would, through
              rest-jaxrs). -->

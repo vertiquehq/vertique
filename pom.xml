@@ -1608,7 +1608,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <profiles>
         <!--
-          RELEASE-001 (FR-REL-034): release-shaped artifacts.
+          Release-shaped artifacts.
 
           Every published JAR, Maven plugin and Maven archetype GAV must carry a
           flattened POM, primary JAR, sources JAR and Javadoc JAR. Producing
@@ -1617,7 +1617,7 @@ SPDX-License-Identifier: EUPL-1.2
           activates explicitly.
 
           This profile does not decide publication — release/publication-policy.json
-          does (FR-REL-033). It only guarantees the payloads exist for the GAVs
+          does. It only guarantees the payloads exist for the GAVs
           the derived allowlist selects.
         -->
         <profile>

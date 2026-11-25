@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-codegen-services</artifactId>
     <name>Vertique Codegen Services</name>
-    <description>Annotation processor (CG-005) that generates ServiceContractContributor implementations and a Dagger
+    <description>Annotation processor that generates ServiceContractContributor implementations and a Dagger
         @Module for @ServiceContract-annotated interfaces, eliminating startup-time reflection and turning structural
         mistakes into compiler errors.</description>
 
@@ -32,7 +32,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-resilience</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>
