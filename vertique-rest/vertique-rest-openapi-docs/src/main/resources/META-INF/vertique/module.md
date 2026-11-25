@@ -2411,6 +2411,11 @@ and its message can quote that value.
 - **Expecting roles or actions in the document.** `@RolesAllowed` roles, `@RequiresAction` actions,
   `@PermitAll`, `@DenyAll`, and application checks are never published; only security requirements
   and their scopes are. A public document listing restricted operations logs a warning instead.
+- **Expecting the document to be checked against the router at runtime.** Nothing compares an operation's
+  published `security` with what the router enforces while the application runs. The framework's own
+  integration tests do, for the document, class and method levels, the empty marker and `@PermitAll`:
+  a published requirement means an anonymous request is refused, and its scopes are the ones the
+  router demands.
 - **Expecting an unreferenced scheme to be published.** `securitySchemes` holds only the schemes a
   published operation requires; a registered handler nothing references, or only hidden operations
   reference, is left out.
