@@ -55,6 +55,24 @@ final class McpInputPolicyResolver {
     }
 
     /**
+     * Reports a method-level or type-level policy/skip conflict of one tool method, so a tool with
+     * no schema parameters is rejected the same way as one with parameters.
+     *
+     * @param declaringType the type declaring the tool method
+     * @param method        the tool method
+     * @return {@code false} when a conflict was reported at the method
+     */
+    boolean resolveRouteWithoutConflict(TypeElement declaringType, ExecutableElement method) {
+        try {
+            policies.resolveRoute(method, declaringType);
+            return true;
+        } catch (InvocationPolicyConflictException e) {
+            ctx.diagnostics().error(method, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Resolves the final effective canonicalizer and sanitizer chains for one tool parameter.
      *
      * @param declaringType the type declaring the tool method

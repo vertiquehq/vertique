@@ -542,6 +542,9 @@ final class McpToolModelValidator {
 
     private Optional<List<McpToolParameterModel>> validateParameters(
             TypeElement declaringType, ExecutableElement method) {
+        if (!inputPolicies.resolveRouteWithoutConflict(declaringType, method)) {
+            return Optional.empty();
+        }
         List<McpToolParameterModel> parameters = new ArrayList<>();
         Set<String> protocolNames = new LinkedHashSet<>();
         int schemaMemberIndex = 0;
