@@ -356,7 +356,7 @@ class ClientInterfaceScannerTest {
         Future<Item> overrideBulkhead();
     }
 
-    // --- Phase 4.1 metadata-composition test interfaces ---
+    // --- metadata-composition test interfaces ---
 
     @Path("/comp")
     interface QueryUuidClient {
@@ -917,7 +917,7 @@ class ClientInterfaceScannerTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    // --- Phase 4.1 metadata-composition tests (RED) ---
+    // --- metadata-composition tests ---
 
     @Test
     @DisplayName("ClientParamMeta composes a ParameterMetadata view (rawType, name, source)")
@@ -1013,7 +1013,6 @@ class ClientInterfaceScannerTest {
     @DisplayName("ClientMethodMeta no longer exposes a live java.lang.reflect.Method")
     void clientMethodMetaDropsLiveMethod() {
         // Structural proof: the record/class must not expose a method() accessor returning Method.
-        // RED today — ClientMethodMeta.method() returns java.lang.reflect.Method.
         boolean exposesLiveMethod = java.util.Arrays.stream(ClientMethodMeta.class.getMethods())
                 .anyMatch(m -> m.getName().equals("method")
                         && m.getReturnType() == java.lang.reflect.Method.class

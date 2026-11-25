@@ -114,7 +114,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName("AC-001: attempt function receives a governed WebClient and its result is returned")
+    @DisplayName("attempt function receives a governed WebClient and its result is returned")
     void attemptFunctionReceivesAWebClientViewAndItsResultIsReturned() {
         // Given a client with a base URL path and a server answering GET /api/items with "hello"
         RecordingServer server = support.server((rq, body) -> {
@@ -143,7 +143,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName("AC-002: open exchanges of a finished attempt are reset")
+    @DisplayName("open exchanges of a finished attempt are reset")
     void openExchangesOfAFinishedAttemptAreReset() {
         // Given a server that accepts GET /never, never answers and counts closed connections
         Promise<Void> firstSeen = Promise.promise();
@@ -182,7 +182,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName("AC-003: a scoped WebClient used after its attempt fails with IllegalState and opens no connection")
+    @DisplayName("a scoped WebClient used after its attempt fails with IllegalState and opens no connection")
     void scopedWebClientUsedAfterItsAttemptFailsWithIllegalState() {
         // Given a client, a server counting requests and an attempt that stores its WebClient
         RecordingServer server = okServer();
@@ -222,7 +222,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName("AC-004: relative request uses the base URL and an absolute request is not prefixed")
+    @DisplayName("relative request uses the base URL and an absolute request is not prefixed")
     void relativeRequestUsesTheBaseUrlAndAbsoluteRequestIsNotPrefixed() {
         // Given a client with a base URL path, a recording server and a second client without a base URL
         RecordingServer server = okServer();
@@ -263,7 +263,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName("AC-005: invalid headers are rejected before sending")
+    @DisplayName("invalid headers are rejected before sending")
     void invalidHeadersAreRejectedBeforeSending() {
         // Given a client and a server counting requests
         RecordingServer server = okServer();
@@ -348,7 +348,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName("AC-075: closing a handed-out WebClient leaves the client usable")
+    @DisplayName("closing a handed-out WebClient leaves the client usable")
     void closingAHandedOutWebClientLeavesTheClientUsable() {
         // Given a client and a server answering GET /ping with "ok" and counting requests
         RecordingServer server = support.server((rq, body) -> rq.response().end("ok"));
@@ -381,8 +381,7 @@ class WebClientViewIT {
     }
 
     @Test
-    @DisplayName(
-            "AC-076: adding an interceptor to a handed-out WebClient is refused and the governance hook is unchanged")
+    @DisplayName("adding an interceptor to a handed-out WebClient is refused and the governance hook is unchanged")
     void addingAnInterceptorToAHandedOutWebClientIsRefused() {
         // Given a client, a server counting requests and a handler recording its invocations
         RecordingServer server = okServer();

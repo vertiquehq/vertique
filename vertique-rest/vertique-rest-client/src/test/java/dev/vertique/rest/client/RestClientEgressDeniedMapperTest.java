@@ -13,8 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * The default exception mapper translates a refused redirect hop into a {@link RestClientException}
- * (AC-070).
+ * The default exception mapper translates a refused redirect hop into a {@link RestClientException}.
  */
 class RestClientEgressDeniedMapperTest {
 

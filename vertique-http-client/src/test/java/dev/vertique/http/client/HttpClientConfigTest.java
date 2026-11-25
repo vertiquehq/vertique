@@ -119,8 +119,6 @@ class HttpClientConfigTest {
         return ((HttpClient) client).settings();
     }
 
-    // --- TP-002 / AC-050 ---
-
     /** One invalid configuration: where it sits, which key path the failure must name, and the value it must not show. */
     private record Invalid(String label, JsonObject entry, String keyPath, String value) {}
 
@@ -272,9 +270,8 @@ class HttpClientConfigTest {
         return new JsonObject().put("defaultHeaders", new JsonObject().put(name, value));
     }
 
-    /** AC-050. */
     @Test
-    @DisplayName("AC-050: invalid configuration fails startup naming the key path and never the value")
+    @DisplayName("invalid configuration fails startup naming the key path and never the value")
     void invalidConfigurationFailsStartupNamingTheKeyPathAndNeverTheValue() {
         for (Invalid invalid : invalidConfigurations()) {
             // Given one invalid configuration of httpClient.a
@@ -364,15 +361,12 @@ class HttpClientConfigTest {
                 .contains("a");
     }
 
-    // --- TP-003 / AC-051 ---
-
     private static JsonObject webClientEntry(JsonObject bag) {
         return new JsonObject().put("webClient", bag);
     }
 
-    /** AC-051. */
     @Test
-    @DisplayName("AC-051: insecure TLS settings in configuration fail startup")
+    @DisplayName("insecure TLS settings in configuration fail startup")
     void insecureTlsSettingsInConfigurationFailStartup() throws Exception {
         // Given each insecure webClient configuration in turn, whichever key or nesting sets it
         record Insecure(String label, JsonObject bag, String value) {}
@@ -482,8 +476,6 @@ class HttpClientConfigTest {
                         .toList();
     }
 
-    // --- TP-005 ---
-
     /** The seven explicit-unit keys and the Vert.x names they become. */
     private static final Map<String, String> DURATION_KEYS = durationKeys();
 
@@ -499,7 +491,6 @@ class HttpClientConfigTest {
         return keys;
     }
 
-    /** FR-020. */
     @Test
     @DisplayName("the normalizer maps the seven duration keys and rejects the raw Vert.x names")
     void normalizerMapsTheSevenDurationKeysAndRejectsRawVertxNames() {
@@ -556,9 +547,6 @@ class HttpClientConfigTest {
         assertThat(new WebClientOptions(converted).getConnectTimeout()).isEqualTo(1500);
     }
 
-    // --- TP-006 ---
-
-    /** FR-020. */
     @Test
     @DisplayName("external configuration wins over builder setters and the defaults match the contract")
     void externalConfigurationWinsOverBuilderSettersAndDefaultsMatchTheContract() {

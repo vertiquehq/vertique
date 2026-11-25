@@ -185,7 +185,7 @@ class DefaultRestClientDispatcherTest {
                 resolver);
     }
 
-    // --- FIX C: duplicate wire-name resolves the wrong ClientParamMeta ---
+    // --- a duplicate wire name resolves the ClientParamMeta of the matching parameter kind ---
 
     @Test
     @DisplayName("applyQueryParam resolves the QUERY meta, not the PATH meta, for a duplicate wire name")
@@ -218,7 +218,7 @@ class DefaultRestClientDispatcherTest {
         });
     }
 
-    // --- FIX D: array-valued params validate OK but break at runtime ---
+    // --- array-valued params expand element by element ---
 
     @Test
     @DisplayName("applyQueryParam expands a UUID[] array value element-by-element")

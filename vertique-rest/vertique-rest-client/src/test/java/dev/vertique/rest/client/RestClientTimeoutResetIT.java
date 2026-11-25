@@ -286,7 +286,6 @@ class RestClientTimeoutResetIT {
 
     // --- Proofs ---
 
-    /** Proves AC-048. */
     @Test
     @DisplayName("A hung server's attempt is notified at the deadline and the connection released")
     void hungServerAttemptIsNotifiedAtTheDeadlineAndTheConnectionReleased() {
@@ -318,7 +317,6 @@ class RestClientTimeoutResetIT {
         assertThat(origin.requests.get()).isEqualTo(1);
     }
 
-    /** Proves AC-048. */
     @Test
     @DisplayName("An attempt waiting for a pooled connection is notified with TimeoutException at the deadline")
     void attemptWaitingForAPooledConnectionIsNotifiedWithTimeoutAtTheDeadline() {
@@ -356,7 +354,6 @@ class RestClientTimeoutResetIT {
         assertThat(recorder.errors).hasSize(1);
     }
 
-    /** Supports FR-019. */
     @Test
     @DisplayName("A timed-out GET is retried with the same eligibility and fails with RestClientTimeoutException")
     void timedOutGetIsRetriedWithTheSameEligibilityAndFailsWithRestClientTimeoutException() {
@@ -384,7 +381,6 @@ class RestClientTimeoutResetIT {
                 .isNotInstanceOf(ResilienceTimeoutException.class));
     }
 
-    /** Proves AC-084. */
     @Test
     @DisplayName("A method whose timeout is disabled is never reset")
     void aMethodWhoseTimeoutIsDisabledIsNeverReset() {
@@ -410,7 +406,6 @@ class RestClientTimeoutResetIT {
         assertThat(recorder.statuses).containsExactly(200);
     }
 
-    /** Supports FR-019. */
     @Test
     @DisplayName("The dispatcher passes the resolved timeout as the read timeout and no read timeout when disabled")
     void dispatcherPassesTheResolvedTimeoutAsTheReadTimeoutAndNoReadTimeoutWhenDisabled() {

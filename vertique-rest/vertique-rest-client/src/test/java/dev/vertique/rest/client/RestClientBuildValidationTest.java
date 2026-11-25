@@ -25,22 +25,15 @@ import org.junit.jupiter.api.Test;
 /**
  * Build-time converter-validation tests for {@link RestClientBuilder}.
  *
- * <p>These verify Slice 4.2's contract that {@link RestClientBuilder#build(Class)} fails fast (at
+ * <p>These verify the contract that {@link RestClientBuilder#build(Class)} fails fast (at
  * client-build time, never at first dispatch) when a declared convertible parameter — a
  * {@code @QueryParam}/{@code @PathParam}/{@code @HeaderParam}/{@code @CookieParam} — has a target
  * type the build's effective {@link dev.vertique.rest.core.convert.ParamConversionResolver} cannot
  * resolve. A built-in type (UUID, enum, primitives) requires no extra wiring; a custom type must be
- * supplied an app converter via the new standalone-builder fluent surface
+ * supplied an app converter via the standalone-builder fluent surface
  * ({@code paramConverterBinding(...)} / {@code paramConverterProvider(...)} /
  * {@code paramConversionResolver(...)}) or build fails with {@link RestClientConfigurationException}
  * naming the offending parameter and type.
- *
- * <p><strong>RED status:</strong> compile-RED today — the {@code dev.vertique.rest.core.convert}
- * types are not yet on the rest-client classpath (the pom has no {@code vertique-rest-core}
- * dependency) and the {@code paramConverterBinding(...)} / {@code paramConverterProvider(...)}
- * fluent setters do not exist. Even once those compile, the assertions are behavior-RED:
- * {@code build()} performs no converter validation today, so the missing-converter cases would
- * build successfully instead of throwing.
  */
 @DisplayName("RestClientBuilder build-time converter validation")
 class RestClientBuildValidationTest {

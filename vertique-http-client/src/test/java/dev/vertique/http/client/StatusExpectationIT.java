@@ -129,7 +129,7 @@ class StatusExpectationIT {
     // --- tests ---
 
     @Test
-    @DisplayName("AC-009: a rejected 429 carries status, headers without Set-Cookie and Retry-After")
+    @DisplayName("a rejected 429 carries status, headers without Set-Cookie and Retry-After")
     void rejected429CarriesStatusHeadersWithoutSetCookieAndRetryAfter() {
         // Given a server answering GET /limited with 429, Retry-After 7, X-Req r1, Set-Cookie and a 5000-byte body
         Buffer payload = body(5000);
@@ -183,7 +183,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("AC-012: a rejected 503 message holds no URI path, query, header value or body text")
+    @DisplayName("a rejected 503 message holds no URI path, query, header value or body text")
     void aRejected503MessageHoldsNoUriPathQueryHeaderValueOrBodyText() {
         // Given a server answering GET /secret/path?token=s3cret with 503, X-Key s3cret and body s3cret-body
         RecordingServer server = support.server((rq, body) ->
@@ -213,7 +213,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("AC-011: connection refused, an unresolvable host and a cut body surface as native throwables")
+    @DisplayName("connection refused, an unresolvable host and a cut body surface as native throwables")
     void connectionDnsAndResetFailuresSurfaceAsNativeThrowables() throws Exception {
         // Given a closed local port, the host nohost.invalid and a server whose /cut promises 1000 bytes and sends 100
         int closedPort = unusedPort();
@@ -244,7 +244,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("FR-004: a status predicate accepts and refuses and success means 2xx")
+    @DisplayName("a status predicate accepts and refuses and success means 2xx")
     void statusPredicateAcceptsAndRefusesAndSuccessMeansTwoXx() {
         // Given a server answering the status carried in the path
         RecordingServer server = support.server((rq, body) -> rq.response()
@@ -286,7 +286,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("FR-005: resilience failures pass through unchanged")
+    @DisplayName("resilience failures pass through unchanged")
     void resilienceFailuresPassThroughUnchanged() {
         // Given an attempt function that fails with each resilience exception
         List<RuntimeException> failures = List.of(
@@ -308,7 +308,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("FR-005: a TLS handshake failure against a self-signed server surfaces as SSLHandshakeException")
+    @DisplayName("a TLS handshake failure against a self-signed server surfaces as SSLHandshakeException")
     void tlsHandshakeFailureAgainstASelfSignedServerSurfacesAsSslHandshakeException() {
         // Given an HTTPS server with a self-signed certificate and a client with default trust
         RecordingServer server = support.tlsServer((rq, body) -> rq.response().end("ok"));
@@ -325,7 +325,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("FR-005: an empty response after accept then close surfaces as the native closed failure")
+    @DisplayName("an empty response after accept then close surfaces as the native closed failure")
     void emptyResponseAfterAcceptThenCloseSurfacesAsTheNativeClosedFailure() {
         // Given a raw server that accepts each connection, reads the request and closes without writing
         // (closing with the request unread would race a TCP reset against the close)
@@ -342,7 +342,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("FR-005: a truncated chunked body surfaces as the native closed failure")
+    @DisplayName("a truncated chunked body surfaces as the native closed failure")
     void truncatedChunkedBodySurfacesAsTheNativeClosedFailure() {
         // Given a raw server that sends a chunked head and one chunk, then closes without the last chunk
         NetServer server = rawServer(socket -> socket.handler(
@@ -360,7 +360,7 @@ class StatusExpectationIT {
     }
 
     @Test
-    @DisplayName("FR-005: a per-request connect timeout bounds the pool wait with a native timeout")
+    @DisplayName("a per-request connect timeout bounds the pool wait with a native timeout")
     void perRequestConnectTimeoutBoundsThePoolWaitWithANativeTimeout() {
         // Given a pool of one connection held by a stalled request
         RecordingServer server = support.server((rq, body) -> {

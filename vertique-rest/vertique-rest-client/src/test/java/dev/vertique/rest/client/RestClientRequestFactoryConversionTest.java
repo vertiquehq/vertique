@@ -29,16 +29,9 @@ import org.junit.jupiter.api.Test;
  * Focused unit tests proving {@link RestClientRequestFactory} routes outbound parameter values
  * through a supplied {@link ParamConversionResolver} instead of a bare {@code Object.toString()}.
  *
- * <p>This is the lighter-weight alternative the slice plan allows when a full mock-server IT is too
- * heavy for the RED step: the factory is constructed with an explicit resolver and asked to populate
- * a {@link RestRequestBuilder}; the test then asserts the resolver was consulted for the typed
- * parameter and that its serialized form reached the builder.
- *
- * <p><strong>RED status:</strong> compile-RED today — {@link RestClientRequestFactory} has no
- * constructor that accepts a {@link ParamConversionResolver}, and the {@code dev.vertique.rest.core.convert}
- * types are not yet on the rest-client classpath (the pom has no {@code vertique-rest-core}
- * dependency). The existing factory serializes every path/query/header/cookie value with
- * {@code value.toString()} and never consults a resolver.
+ * <p>This is a lighter-weight alternative to a full mock-server IT: the factory is constructed with
+ * an explicit resolver and asked to populate a {@link RestRequestBuilder}; the test then asserts the
+ * resolver was consulted for the typed parameter and that its serialized form reached the builder.
  */
 @DisplayName("RestClientRequestFactory outbound conversion via resolver")
 class RestClientRequestFactoryConversionTest {
@@ -83,8 +76,8 @@ class RestClientRequestFactoryConversionTest {
         ParamConversionResolver delegate = ParamConversionResolver.of(registry, Set.of());
         // A thin wrapper is not possible (resolver is final); instead use the real resolver and a
         // separate spy counter incremented by the factory's call. The factory must call toString on
-        // the supplied resolver — see RED note; this test asserts on the serialized output, which is
-        // only correct when the resolver path is taken.
+        // the supplied resolver; this test asserts on the serialized output, which is only correct
+        // when the resolver path is taken.
         calls.set(-1); // sentinel: unused once the factory routes through the resolver
         return delegate;
     }

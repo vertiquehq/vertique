@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * </pre>
  *
  * <p>Each test pin the IS-A / IS-NOT-A relationship that the reparenting established, so any
- * future accidental change to an {@code extends} clause produces a clear red test here rather
+ * future accidental change to an {@code extends} clause produces a clear test failure here rather
  * than a silent contract regression.
  */
 @DisplayName("RestClient exception hierarchy")

@@ -116,10 +116,8 @@ class AttemptTimeoutAndCancellationIT {
         assertThat(failure.getMessage()).doesNotContain(String.valueOf(server.port()));
     }
 
-    // --- AC-013 ---
-
     /**
-     * AC-013: the client's own timer covers the body, which Vert.x's request timeout does not, and
+     * The client's own timer covers the body, which Vert.x's request timeout does not, and
      * resets the exchange.
      */
     @Test
@@ -146,9 +144,7 @@ class AttemptTimeoutAndCancellationIT {
                 .isTrue();
     }
 
-    // --- AC-014 ---
-
-    /** AC-014: a per-call timeout replaces the client's, and the last of the two options wins. */
+    /** A per-call timeout replaces the client's, and the last of the two options wins. */
     @Test
     @DisplayName("a per-call attempt timeout overrides the client default")
     void perCallAttemptTimeoutOverridesTheClientDefault() {
@@ -197,10 +193,8 @@ class AttemptTimeoutAndCancellationIT {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    // --- AC-015 ---
-
     /**
-     * AC-015: cancelling before the head resets the exchange and fails the call; a signal cancelled
+     * Cancelling before the head resets the exchange and fails the call; a signal cancelled
      * before the call fails it without sending.
      */
     @Test
@@ -254,10 +248,8 @@ class AttemptTimeoutAndCancellationIT {
         assertThat(untouched.openedConnections.get()).isZero();
     }
 
-    // --- AC-080 ---
-
     /**
-     * AC-080: an attempt that ends while the request waits for a pooled connection writes nothing
+     * An attempt that ends while the request waits for a pooled connection writes nothing
      * once the connection frees, and the slot stays usable.
      */
     @Test
@@ -340,7 +332,7 @@ class AttemptTimeoutAndCancellationIT {
     }
 
     /**
-     * AC-080: when an attempt's deadline passes while its exchange still waits for a pooled connection,
+     * When an attempt's deadline passes while its exchange still waits for a pooled connection,
      * the exchange's own future fails at once with the raw timeout, not later and not as an ended-scope
      * failure.
      */
@@ -632,9 +624,7 @@ class AttemptTimeoutAndCancellationIT {
         assertThat(server.requestsTo("/second")).isEmpty();
     }
 
-    // --- AC-091 ---
-
-    /** AC-091: a long-lived signal holds no registration for settled calls. */
+    /** A long-lived signal holds no registration for settled calls. */
     @Test
     @DisplayName("one signal shared by many calls holds no registration for settled calls")
     void oneSignalSharedByManyCallsHoldsNoRegistrationForSettledCalls() {

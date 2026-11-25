@@ -35,7 +35,6 @@ class EgressPolicyTest {
                         e -> assertThat(e.reason()).as("reason for %s", target).isEqualTo(reason));
     }
 
-    /** AC-058. */
     @Test
     @DisplayName("a wildcard never admits an IP literal or localhost, an exact entry does")
     void wildcardNeverAdmitsAnIpLiteralOrLocalhost() {
@@ -61,7 +60,7 @@ class EgressPolicyTest {
         assertAdmitted(exact, "https://203.0.113.7/");
     }
 
-    /** Supporting proof of the matching rules behind AC-056. */
+    /** Host matching lower-cases, strips one trailing dot, and limits plain HTTP to loopback or permitted hosts. */
     @Test
     @DisplayName(
             "exact and suffix matching lower-case, strip one trailing dot, and plain HTTP needs loopback or permission")

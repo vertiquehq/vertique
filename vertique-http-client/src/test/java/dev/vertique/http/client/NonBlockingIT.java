@@ -151,7 +151,7 @@ class NonBlockingIT {
     }
 
     /**
-     * AC-072: 10 MiB of server-sent events, written in chunks from 1 byte to 64 KiB, is parsed completely and
+     * 10 MiB of server-sent events, written in chunks from 1 byte to 64 KiB, is parsed completely and
      * in order while the blocked-thread checker watches every event loop; no warning is captured.
      */
     @Test

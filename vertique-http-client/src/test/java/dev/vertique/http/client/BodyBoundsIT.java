@@ -242,9 +242,7 @@ class BodyBoundsIT {
                 .isEqualTo(atClose);
     }
 
-    // --- AC-018 ---
-
-    /** AC-018: a body over {@code maxRequestBytes} is refused before sending; one at the bound is sent. */
+    /** A body over {@code maxRequestBytes} is refused before sending; one at the bound is sent. */
     @Test
     @DisplayName("an oversized request body is rejected before sending")
     void oversizedRequestBodyIsRejectedBeforeSending() {
@@ -270,9 +268,7 @@ class BodyBoundsIT {
         assertThat(server.requests.get(0).body().length()).isEqualTo((int) LIMIT);
     }
 
-    // --- AC-019 ---
-
-    /** AC-019: a response body over {@code maxResponseBytes} fails the call and resets the exchange. */
+    /** A response body over {@code maxResponseBytes} fails the call and resets the exchange. */
     @Test
     @DisplayName("a response over the bound is cut off and the exchange reset")
     void responseOverTheBoundIsCutOffAndTheExchangeReset() throws InterruptedException {
@@ -320,9 +316,7 @@ class BodyBoundsIT {
         assertThat(serverClosedConnection(oneChunkServer)).isTrue();
     }
 
-    // --- AC-020 ---
-
-    /** AC-020: a declared {@code Content-Length} over the bound fails before any body byte arrives. */
+    /** A declared {@code Content-Length} over the bound fails before any body byte arrives. */
     @Test
     @DisplayName("a declared Content-Length over the bound fails before reading")
     void declaredContentLengthOverTheBoundFailsBeforeReading() {
@@ -365,9 +359,7 @@ class BodyBoundsIT {
         assertThat(head.body()).isNull();
     }
 
-    // --- AC-083 ---
-
-    /** AC-083: the bound holds whatever body codec the caller chose. */
+    /** The bound holds whatever body codec the caller chose. */
     @Test
     @DisplayName("a caller-chosen body codec is bounded too")
     void aCallerChosenBodyCodecIsBoundedToo() throws InterruptedException {
@@ -471,9 +463,7 @@ class BodyBoundsIT {
         assertThat(query.body()).isEqualTo("/q?tags=a&tags=b");
     }
 
-    // --- FR-008 ---
-
-    /** FR-008: a body exactly at a bound passes, and a bound of zero means no bound. */
+    /** A body exactly at a bound passes, and a bound of zero means no bound. */
     @Test
     @DisplayName("bodies exactly at the limit pass and zero means no bound")
     void bodiesExactlyAtTheLimitPassAndZeroMeansNoBound() {
@@ -566,7 +556,7 @@ class BodyBoundsIT {
         assertThat(server.requests).hasSize(beforeForm + 1);
     }
 
-    /** FR-008: measurement is of the encoded bytes, and unmeasurable bodies are refused while a bound is set. */
+    /** Measurement is of the encoded bytes, and unmeasurable bodies are refused while a bound is set. */
     @Test
     @DisplayName(
             "JSON and form bodies are measured encoded and stream and multipart bodies are refused while the bound is set")

@@ -86,10 +86,8 @@ class SseParserTest {
         return chunks;
     }
 
-    // --- AC-026 ---
-
     /**
-     * AC-026: the stream parses to the same events however it is cut into chunks, at every byte
+     * The stream parses to the same events however it is cut into chunks, at every byte
      * boundary and one byte at a time.
      */
     @Test
@@ -115,8 +113,6 @@ class SseParserTest {
         // And the second event carries the id of the first, which persisted
         assertThat(runs.get(0).lastEventId()).contains("7");
     }
-
-    // --- AC-027 ---
 
     /** One grammar case: the chunks to feed (also fed whole and a byte at a time) and the expected events. */
     private record Case(String name, List<byte[]> chunks, List<Ev> expected) {
@@ -203,7 +199,7 @@ class SseParserTest {
     }
 
     /**
-     * AC-027: each WHATWG edge case yields the specified events when fed in its own stream chunked one
+     * Each WHATWG edge case yields the specified events when fed in its own stream chunked one
      * byte at a time and in one piece; the split-CRLF case also keeps its stated chunk boundary.
      */
     @Test
@@ -247,10 +243,8 @@ class SseParserTest {
         assertThat(new SseParser(DEFAULT_BOUND, e -> {}).lastEventId()).isEmpty();
     }
 
-    // --- AC-029 (parser level) ---
-
     /**
-     * AC-029: the bound counts the raw bytes of the event being assembled and the current partial line, whatever
+     * The bound counts the raw bytes of the event being assembled and the current partial line, whatever
      * the chunking, and a count equal to the bound is allowed; it restarts at each blank line, and a finished
      * comment line stops counting.
      */
@@ -331,7 +325,7 @@ class SseParserTest {
     }
 
     /**
-     * AC-029: finished comment lines do not count, so a stream that carries nothing but heartbeats, with LF, CRLF or
+     * Finished comment lines do not count, so a stream that carries nothing but heartbeats, with LF, CRLF or
      * CR endings and with or without blank lines, never reaches the bound, and an event after them still parses.
      */
     @Test
@@ -366,10 +360,8 @@ class SseParserTest {
                         .isEqualTo(bound));
     }
 
-    // --- NFR-002 ---
-
     /**
-     * NFR-002: parsing is linear in the input. Four mebibytes arrive one byte at a time as one line, and a
+     * Parsing is linear in the input. Four mebibytes arrive one byte at a time as one line, and a
      * 200 000-line event arrives in one chunk; a parser that rescans buffered bytes from the start on
      * each call needs hours for the first and minutes for the second, so a 30-second ceiling that is
      * far above the linear cost cannot be met by a quadratic parser.

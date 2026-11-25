@@ -26,9 +26,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Worked example of an OAuth 2.0 client-credentials flow on a {@link CredentialSource} (FR-009,
- * supporting): a separate client with no credential source of its own fetches the token, the source
- * caches it and shares one in-flight fetch, and the API client sends it as a bearer token.
+ * Worked example of an OAuth 2.0 client-credentials flow on a {@link CredentialSource}: a separate
+ * client with no credential source of its own fetches the token, the source caches it and shares one
+ * in-flight fetch, and the API client sends it as a bearer token.
  */
 @Timeout(value = 90, unit = TimeUnit.SECONDS)
 class OAuthClientCredentialsExampleTest {

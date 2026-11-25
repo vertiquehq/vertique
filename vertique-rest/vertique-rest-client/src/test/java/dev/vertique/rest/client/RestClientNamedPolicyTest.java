@@ -44,7 +44,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** TP-001 proof for REST-client named-policy resolution and retry eligibility. */
+/** Proof for REST-client named-policy resolution and retry eligibility. */
 class RestClientNamedPolicyTest {
 
     private static final String CLIENT_NAME = "payments";
@@ -176,7 +176,7 @@ class RestClientNamedPolicyTest {
             assertThat(ownedRuntime)
                     .as("failed build must have created an owned runtime")
                     .isNotNull();
-            assertThatThrownBy(() -> ownedRuntime.pipeline("T018-cleanup-probe"))
+            assertThatThrownBy(() -> ownedRuntime.pipeline("cleanup-probe"))
                     .as("failed build must close the owned runtime before returning the failure")
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("Resilience runtime is closed");

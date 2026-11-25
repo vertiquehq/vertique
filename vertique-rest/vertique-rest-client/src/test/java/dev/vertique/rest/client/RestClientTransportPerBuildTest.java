@@ -71,7 +71,7 @@ import org.mockito.ArgumentCaptor;
  * {@link HttpClientBuilder} per built proxy; the REST builder applies its settings to that
  * builder and calls {@code build()} once on it.
  *
- * <p>Proves AC-063, AC-064, AC-065, AC-066, AC-067 and the FR-017 settings: the REST client
+ * <p>Proves the REST client's per-build transport wiring: the REST client
  * carries no client timer, body bounds, request-header validation, egress policy or credentials.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -305,7 +305,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("Each build creates a fresh governed client from the effective options")
     void eachBuildCreatesAFreshGovernedClientFromTheEffectiveOptions() {
-        // AC-063. Given a transport seam that records every governed client it creates
+        // Given a transport seam that records every governed client it creates
         FakeTransport transport = new FakeTransport();
         RestClientBuilder builder = builderOver(transport)
                 .webClientOptions(new WebClientOptions().setConnectTimeout(1234))
@@ -339,7 +339,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("A failed build closes the governed client, its context and a runtime it created")
     void failedBuildClosesTheGovernedClientItsContextAndACreatedRuntime() {
-        // AC-064, first failure: an unknown named policy fails the eager pipeline construction
+        // First failure: an unknown named policy fails the eager pipeline construction
         FakeTransport unknownPolicy = new FakeTransport();
         ResiliencePolicyRegistry empty = name -> {
             throw new ConfigurationException("resilience.policies." + name + " is not defined");
@@ -361,7 +361,7 @@ class RestClientTransportPerBuildTest {
             join(owning.close());
         }
 
-        // AC-064, second failure: the generated proxy cannot be instantiated after the client's
+        // Second failure: the generated proxy cannot be instantiated after the client's
         // adapter context exists, on a supplied runtime that must stay open
         FakeTransport brokenProxy = new FakeTransport();
         List<String> contextEvents = Collections.synchronizedList(new ArrayList<>());
@@ -386,7 +386,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("Builder close closes the contexts and governed clients, then the owned runtime, once")
     void builderCloseClosesContextsAndGovernedClientsThenTheOwnedRuntimeOnce() {
-        // AC-065. Given a builder that owns its runtime and built two clients over real governed
+        // Given a builder that owns its runtime and built two clients over real governed
         // clients; every time a governed client closes, a call on each proxy and the owned runtime
         // are probed
         FakeTransport transport = FakeTransport.delegating();
@@ -438,7 +438,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("Close leaves a supplied runtime open")
     void closeLeavesASuppliedRuntimeOpen() {
-        // AC-066, first builder: created over a supplied runtime
+        // First builder: created over a supplied runtime
         FakeTransport transport = FakeTransport.delegating();
         Resilience supplied = Resilience.create(vertx);
         RestClientBuilder builder = builderOver(transport).suppliedResilience(supplied);
@@ -464,7 +464,7 @@ class RestClientTransportPerBuildTest {
             join(supplied.close());
         }
 
-        // AC-066, second builder: created by the factory the application injects
+        // Second builder: created by the factory the application injects
         Resilience suppliedToFactory = Resilience.create(vertx);
         RestClientFactory factory = new RestClientFactory(
                 vertx,
@@ -492,7 +492,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("Configured pool values reach the governed client")
     void configuredPoolValuesReachTheGovernedClient() {
-        // AC-067. Given restClient.pool-client.pool values in the configuration
+        // Given restClient.pool-client.pool values in the configuration
         JsonObject root = new JsonObject()
                 .put(
                         "restClient",
@@ -527,7 +527,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("REST-built clients carry no client timer, body bounds, header validation, egress or credentials")
     void restBuiltClientsCarryNoClientTimerBoundsHeaderValidationEgressOrCredentials() throws Exception {
-        // FR-017. Given a builder that records the settings the REST builder applies
+        // Given a builder that records the settings the REST builder applies
         FakeTransport transport = new FakeTransport();
         RestClientBuilder recording = builderOver(transport);
         try {
@@ -573,7 +573,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("The dispatcher passes its prebuilt pipeline to execute once per call")
     void dispatcherPassesItsPrebuiltPipelineToExecute() {
-        // FR-017. Given a real governed client observed through the transport seam and a server that
+        // Given a real governed client observed through the transport seam and a server that
         // fails twice with 503 before answering
         AtomicInteger requests = new AtomicInteger();
         HttpServer server = vertx.createHttpServer();
@@ -609,7 +609,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("A call in flight when the builder closes keeps the recorded failure identity")
     void inFlightCallAtBuilderCloseKeepsTheRecordedIdentity() throws Exception {
-        // AC-065. Repeated to cover the race between the context close and the client close
+        // Repeated to cover the race between the context close and the client close
         for (int iteration = 0; iteration < 20; iteration++) {
             // Given a server that holds the response open and notes when its connection closes
             CountDownLatch requestSeen = new CountDownLatch(1);
@@ -660,7 +660,7 @@ class RestClientTransportPerBuildTest {
     @Test
     @DisplayName("A closed failure from the governed client after builder close keeps the recorded identity")
     void aClosedFailureFromTheGovernedClientAfterBuilderCloseKeepsTheRecordedIdentity() {
-        // AC-065. Given a mocked governed client whose execute starts the builder's close and then
+        // Given a mocked governed client whose execute starts the builder's close and then
         // fails with the client's own closed failure, as when its cancel wins the race with the close
         FakeTransport transport = new FakeTransport();
         RestClientBuilder builder = builderOver(transport);

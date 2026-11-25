@@ -104,7 +104,6 @@ class EgressAndRedirectIT {
 
     // --- proofs ---
 
-    /** AC-056. */
     @Test
     @DisplayName("an allowlist admits exact and suffix hosts and denies others before connecting")
     void allowlistAdmitsExactAndSuffixHostsAndDeniesOthersBeforeConnecting() {
@@ -224,7 +223,6 @@ class EgressAndRedirectIT {
         assertThat(target.requests).isEmpty();
     }
 
-    /** AC-057. */
     @Test
     @DisplayName("a redirect to a denied host fails without connecting")
     void redirectToADeniedHostFailsWithoutConnecting() {
@@ -247,7 +245,7 @@ class EgressAndRedirectIT {
         assertThat(b.requests).isEmpty();
     }
 
-    /** AC-056: a redirect Location the client cannot read is refused with a constant failure. */
+    /** A redirect Location the client cannot read is refused with a constant failure. */
     @Test
     @DisplayName("a redirect with an unreadable Location is refused with HOST and no Location text")
     void redirectWithAnUnreadableLocationIsRefusedWithHostAndNoLocationText() {
@@ -265,7 +263,7 @@ class EgressAndRedirectIT {
         }
     }
 
-    /** AC-056: userinfo is refused even when its separator is percent-encoded. */
+    /** Userinfo is refused even when its separator is percent-encoded. */
     @Test
     @DisplayName("a redirect whose authority carries an encoded @ is refused with USER_INFO")
     void redirectWhoseAuthorityCarriesAnEncodedAtIsRefusedWithUserInfo() {
@@ -283,7 +281,7 @@ class EgressAndRedirectIT {
         assertThat(target.openedConnections.get()).isZero();
     }
 
-    /** AC-056: a Location whose host cannot be read is refused with HOST. */
+    /** A Location whose host cannot be read is refused with HOST. */
     @Test
     @DisplayName("a redirect whose host cannot be read is refused with HOST")
     void redirectWhoseHostCannotBeReadIsRefusedWithHost() {
@@ -301,7 +299,6 @@ class EgressAndRedirectIT {
         assertThat(target.openedConnections.get()).isZero();
     }
 
-    /** AC-059. */
     @Test
     @DisplayName("a default client returns the 3xx when redirects are off, and a followed chain stops at the limit")
     void defaultClientReturnsTheThreeXxWhenRedirectsAreOff() {
@@ -343,7 +340,6 @@ class EgressAndRedirectIT {
         assertThat(hops).containsExactly("/hop/1", "/hop/2", "/hop/3", "/hop/4");
     }
 
-    /** AC-060. */
     @Test
     @DisplayName("a cross-origin hop forwards only safelisted headers and Vert.x's method handling is kept")
     void crossOriginHopForwardsOnlySafelistedHeaders() {
@@ -423,7 +419,6 @@ class EgressAndRedirectIT {
         assertThat(b.requests).hasSize(1);
     }
 
-    /** AC-061. */
     @Test
     @DisplayName("a hop from https to http is refused and a hop from http to https is followed")
     void downgradeHopIsRefused() {
@@ -464,7 +459,6 @@ class EgressAndRedirectIT {
         assertThat(up.bodyAsString()).isEqualTo("secure");
     }
 
-    /** AC-077. */
     @Test
     @DisplayName("a server address, a virtual host and a proxy cannot bypass egress")
     void serverAddressVirtualHostAndProxyCannotBypassEgress() {

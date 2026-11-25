@@ -195,10 +195,8 @@ class SseStreamIT {
         }
     }
 
-    // --- AC-028 ---
-
     /**
-     * AC-028: comment lines are consumed silently but every one of them restarts the stream idle timer.
+     * Comment lines are consumed silently but every one of them restarts the stream idle timer.
      */
     @Test
     @DisplayName("comment lines reset the idle timer and are not surfaced")
@@ -236,14 +234,12 @@ class SseStreamIT {
         assertThat(reading.events.toString()).doesNotContain("ping");
     }
 
-    // --- AC-029 ---
-
     private static byte[] repeat(String unit, int times) {
         return utf8(unit.repeat(times));
     }
 
     /**
-     * AC-029: an oversized or endless event fails the stream with the EVENT bound and resets the exchange,
+     * An oversized or endless event fails the stream with the EVENT bound and resets the exchange,
      * counting the raw bytes of the event being assembled; a long stream of small events or of heartbeat comments is
      * not bounded in total.
      */
@@ -302,8 +298,6 @@ class SseStreamIT {
         await(beats.head().completion());
         assertThat(beats.events).hasSize(1);
     }
-
-    // --- AC-030 ---
 
     /** The flooding server: numbered events packed into 64 KiB chunks until the client goes away. */
     private static final class EventFlood {
@@ -364,7 +358,7 @@ class SseStreamIT {
     }
 
     /**
-     * AC-030: pausing events() pauses the response, so no further event arrives and the server's write queue
+     * Pausing events() pauses the response, so no further event arrives and the server's write queue
      * fills; after resume() events continue without a gap and the server's writes proceed.
      */
     @Test
@@ -438,10 +432,8 @@ class SseStreamIT {
         awaitFailure(stream.completion());
     }
 
-    // --- AC-081 ---
-
     /**
-     * AC-081: events() on a head that is not text/event-stream fails the stream with SseProtocolException
+     * Events() on a head that is not text/event-stream fails the stream with SseProtocolException
      * naming the media type only and resets the exchange; an event-stream head with parameters is read; the
      * client adds no Accept header.
      */
@@ -497,10 +489,8 @@ class SseStreamIT {
         }
     }
 
-    // --- AC-082 ---
-
     /**
-     * AC-082: an id persists to later events until changed, an id with NUL is ignored, and lastEventId()
+     * An id persists to later events until changed, an id with NUL is ignored, and lastEventId()
      * exposes the buffer: empty before the first event, the last id after the last.
      */
     @Test
@@ -554,7 +544,7 @@ class SseStreamIT {
     }
 
     /**
-     * AC-030 (supporting): cancelling from an event handler stops delivery at once, even though the rest of
+     * Cancelling from an event handler stops delivery at once, even though the rest of
      * the chunk's events were already parsed.
      */
     @Test
@@ -640,7 +630,7 @@ class SseStreamIT {
     }
 
     /**
-     * AC-082 (supporting): an id whose event has not been dispatched is not the last event ID.
+     * An id whose event has not been dispatched is not the last event ID.
      */
     @Test
     @DisplayName("an id of an undispatched event is not the last event ID")
@@ -675,7 +665,7 @@ class SseStreamIT {
     }
 
     /**
-     * AC-082 (supporting): while the stream is paused with events held, lastEventId() is the id of the last
+     * While the stream is paused with events held, lastEventId() is the id of the last
      * event delivered to the handler.
      */
     @Test
@@ -720,8 +710,6 @@ class SseStreamIT {
         assertThat(stream.lastEventId()).isEqualTo(Optional.of("3"));
     }
 
-    // --- FR-011 ---
-
     private static final byte[] BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
 
     private static byte[] wireStream(int bigEventLength) {
@@ -752,7 +740,7 @@ class SseStreamIT {
     }
 
     /**
-     * FR-011 (supporting): the grammar cases that matter on the wire, delivered by a real server a byte at
+     * The grammar cases that matter on the wire, delivered by a real server a byte at
      * a time and in one large chunk, parse to the same events, including a multi-byte character split
      * across chunks and an event above Vert.x's own codec's practical limit.
      */
@@ -782,10 +770,8 @@ class SseStreamIT {
         assertThat(oneByte.stream.get().lastEventId()).contains("5");
     }
 
-    // --- FR-012 ---
-
     /**
-     * FR-012 (supporting): the bound is per event, not per stream: thousands of small events whose total is
+     * The bound is per event, not per stream: thousands of small events whose total is
      * far above maxEventBytes complete, however the bytes are chunked.
      */
     @Test

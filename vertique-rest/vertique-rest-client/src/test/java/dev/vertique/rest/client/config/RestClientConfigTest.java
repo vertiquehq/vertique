@@ -25,8 +25,7 @@ import org.junit.jupiter.api.Test;
  * itself the keyed map (client names are the keys at the section root); each entry is parsed into a
  * {@link RestClientConfig} with {@code name} injected as the identity field.
  *
- * <p>These tests close a zero-coverage gap: before this slice, the rest-client config path had no
- * unit tests. They pin the 7 framework→Vert.x {@code webClient} duration-key renames, the pool and
+ * <p>These tests pin the 7 framework→Vert.x {@code webClient} duration-key renames, the pool and
  * circuit-breaker validation bounds, the {@code readTimeoutMs} positivity check, the retry
  * backoff-strategy loadability check, and the client-name key injection.
  */
@@ -330,14 +329,14 @@ class RestClientConfigTest {
         assertTrue(parse(new JsonObject()).isEmpty());
     }
 
-    // --- toString redaction (W3: webClient is an open WebClientOptions pass-through bag) ---
+    // --- toString redaction (webClient is an open WebClientOptions pass-through bag) ---
 
     @Test
     @DisplayName("webClient keystore/trust-store passwords are redacted in toString but intact in webClient()")
     void webClientKeystorePasswordRedactedInToString() {
-        // The webClient bag is an open Vert.x WebClientOptions pass-through (R9) that can carry
-        // ssl key-store / trust-store passwords; the default record toString() rendered it verbatim
-        // (gap W3). The redactor must mask credential-bearing keys at every depth.
+        // The webClient bag is an open Vert.x WebClientOptions pass-through that can carry
+        // ssl key-store / trust-store passwords; the default record toString() would render it
+        // verbatim. The redactor must mask credential-bearing keys at every depth.
         JsonObject webClient = new JsonObject()
                 .put("ssl", true)
                 .put(
@@ -354,8 +353,8 @@ class RestClientConfigTest {
         assertEquals("KSSEKRIT", cfg.webClient().getString("keyStorePassword"));
 
         String rendered = cfg.toString();
-        assertFalse(rendered.contains("TSSEKRIT"), "trust-store password must not appear in toString (W3)");
-        assertFalse(rendered.contains("KSSEKRIT"), "key-store password must not appear in toString (W3)");
+        assertFalse(rendered.contains("TSSEKRIT"), "trust-store password must not appear in toString");
+        assertFalse(rendered.contains("KSSEKRIT"), "key-store password must not appear in toString");
         // Non-secret webClient option stays visible for debuggability.
         assertTrue(rendered.contains("ssl"), "non-secret webClient option stays visible");
     }

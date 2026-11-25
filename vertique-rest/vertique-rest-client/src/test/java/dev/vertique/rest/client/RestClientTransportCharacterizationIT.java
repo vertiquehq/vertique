@@ -53,7 +53,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Characterization of the request and response behavior the REST client gets from its Vert.x
- * {@code WebClient} transport (AC-047), recorded as observed against real servers on dynamic ports
+ * {@code WebClient} transport, recorded as observed against real servers on dynamic ports
  * through the public REST client API.
  *
  * <p>These tests record today's behavior; they do not argue for it. Where a test records
@@ -519,7 +519,7 @@ class RestClientTransportCharacterizationIT {
     @DisplayName(
             "Cross-origin redirects drop custom headers for every REST verb, refuse https to http and refuse userinfo")
     void crossOriginRedirectFactsAreReplacedByTheSafelistAndTheDowngradeRefusal() throws Exception {
-        // AC-070, replacing the recorded forwarding, the followed downgrade and the followed userinfo
+        // Replaces the recorded forwarding, the followed downgrade and the followed userinfo
         // redirect. Given a redirect from one origin to another: 302 for GET and HEAD, 303 for the rest
         Origin first = startOrigin(LOOPBACK);
         Origin other = startOrigin(LOCALHOST);

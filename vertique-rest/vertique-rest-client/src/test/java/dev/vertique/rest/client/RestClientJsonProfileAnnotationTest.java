@@ -25,14 +25,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Tests that {@link RestClientBuilder} resolves the interface-level {@link JsonProfile} annotation as
- * the sole per-binding selection surface for a REST client (FR-JSON-060/061/066, Phase-3 contract).
+ * the sole per-binding selection surface for a REST client.
  *
- * <p>After S8 removed the legacy {@code @RestClient.jsonProfile} attribute, {@code @JsonProfile} on
+ * <p>With the legacy {@code @RestClient.jsonProfile} attribute removed, {@code @JsonProfile} on
  * the interface TYPE is the only annotation surface. These tests verify:
  *
  * <ul>
  *   <li>Level 4 of {@code resolveEffectiveProfileId} reads interface-level {@link JsonProfile};</li>
- *   <li>the FR-JSON-066 method-level reject — a {@code @JsonProfile} on a method of a
+ *   <li>the method-level reject — a {@code @JsonProfile} on a method of a
  *       {@code @RestClient} interface must fail the client build, including when the builder was
  *       supplied an explicit {@link RestClientBuilder#objectMapper(ObjectMapper)} (the guard must run
  *       before the explicit-mapper early-return at {@code resolveEffectiveMapper});</li>
@@ -106,7 +106,7 @@ class RestClientJsonProfileAnnotationTest {
         io.vertx.core.Future<String> get();
     }
 
-    /** Method-level {@code @JsonProfile} on a {@code @RestClient} interface (FR-066 reject). */
+    /** Method-level {@code @JsonProfile} on a {@code @RestClient} interface (rejected at build). */
     @RestClient(name = "method-level", value = "http://method-level")
     interface MethodLevelJsonProfileClient {
         /** Method carries a {@code @JsonProfile} — TYPE-level placement is required, so this fails. */
@@ -133,7 +133,7 @@ class RestClientJsonProfileAnnotationTest {
                 "interface-level @JsonProfile(\"payments-v2\") must resolve to the payments-v2 mapper");
     }
 
-    // --- 2. method-level @JsonProfile fails the build (FR-066) ---
+    // --- 2. method-level @JsonProfile fails the build ---
 
     @Test
     @DisplayName("methodLevelJsonProfileOnRestClientInterface_failsClientBuild — names method + TYPE-level rule")
@@ -156,7 +156,7 @@ class RestClientJsonProfileAnnotationTest {
     @DisplayName("methodLevelJsonProfileOnRestClientInterface_failsEvenWithExplicitMapper — guard not bypassed")
     void methodLevelJsonProfileOnRestClientInterface_failsEvenWithExplicitMapper() {
         // GIVEN a method-level @JsonProfile AND an explicit objectMapper on the builder. The explicit
-        // mapper short-circuits resolveEffectiveMapper at its early-return, so siting the FR-066 guard
+        // mapper short-circuits resolveEffectiveMapper at its early-return, so siting the method-level guard
         // only inside resolveEffectiveProfileId would let this build slip through. The guard must run
         // BEFORE the early-return.
         ObjectMapper explicit = newVertxAwareMapper();
@@ -166,15 +166,15 @@ class RestClientJsonProfileAnnotationTest {
         assertThrows(
                 RestClientConfigurationException.class,
                 () -> builder.build(MethodLevelJsonProfileClient.class),
-                "the FR-066 method-level guard must run before the explicit-mapper early-return");
+                "the method-level guard must run before the explicit-mapper early-return");
     }
 
-    // --- 4. removal-negative: the legacy attribute method is gone (FR-JSON-061 contract) ---
+    // --- 4. removal-negative: the legacy attribute method is gone ---
 
     @Test
     @DisplayName("restClientJsonProfileAttributeMethod_noLongerExists — @RestClient.jsonProfile() removed")
     void restClientJsonProfileAttributeMethod_noLongerExists() {
-        // GIVEN the @RestClient annotation type after S8 removed its jsonProfile() attribute.
+        // GIVEN the @RestClient annotation type with its jsonProfile() attribute removed.
         // WHEN reflecting for the attribute method, THEN NoSuchMethodException proves it is gone.
         assertThrows(
                 NoSuchMethodException.class,
