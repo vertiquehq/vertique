@@ -165,6 +165,7 @@ Any security shape the framework cannot enforce exactly as declared fails startu
 | Any multi-scheme AND-set (`combine()`) | `RestConfigurationException` at startup |
 | Several sets where any set carries scopes | `RestConfigurationException` at startup |
 | Scopes declared via both `@Authorized(scopes)` and `@SecurityRequirement` | `RestConfigurationException` at startup — ambiguous |
+| `@PermitAll` on an operation whose effective requirement carries scopes | `RestConfigurationException` at startup, naming the operation — `@PermitAll` skips authorization, so the scopes would never be checked. Remove `@PermitAll`, or declare `@SecurityRequirements({})` on the resource class or method to make the operation public |
 | Two `SecuritySchemeHandler`s with the same `schemeName()` | `RestConfigurationException` at startup |
 
 The gate is `EffectiveSecurityPolicy.enforceSupportedShape` in `vertique-rest-core`. Reading an
@@ -181,12 +182,26 @@ registration:
 |---|---|
 | `None` or `AuthenticatedOnly` | `Constrained([], scopes, requireAllScopes = true)` |
 | `Constrained(roles, [], …)` | `Constrained(roles, scopes, requireAllScopes = true)` |
-| `PermitAll` or `DenyAll` | unchanged |
+| `PermitAll` or `DenyAll` | unchanged (`PermitAll` never reaches the fold with scopes: the gate above rejects it) |
 
 Roles from `@RolesAllowed` / `@Authorized(roles)` survive the fold. Enforcement then flows through
 the same `AuthorizationDecisionPoint` → `SecurityPolicyEnforcer` → 403 path as `@Authorized(scopes)`
 — one mechanism, one status, one event. `fold` never replaces or loosens scopes a base policy
 already declares.
+
+### One operation on several mounts
+
+Security belongs to a mount, not to the operation alone. When one resource is listed by two
+applications, or by an application and a hand-built mount, each mount resolves the operation's
+requirement sets on its own: the operation's own annotations are the same on both, but an
+application's document-level `@OpenAPIDefinition(security = …)` applies only to the operations
+it mounts. The same operation can therefore require credentials on one mount and be anonymous on
+another, or require different schemes or scopes. That is a supported pattern, for example a
+public application and an internal one that share a resource. Each mount enforces, and each served
+document publishes, the security of that mount. Nothing warns or fails when the effective sets
+differ across mounts; to keep an operation the same everywhere, declare its requirement on the
+operation or its class, or the empty `@SecurityRequirements({})` marker, rather than relying on a
+document level.
 
 ### Security events
 
@@ -928,10 +943,10 @@ provider that exceeds the bound fails the import with the generic 503 described 
 
 | Failure | Cause |
 |---|---|
-| `RestConfigurationException` | Any shape in the [fail-closed matrix](#fail-closed-startup-matrix): a multi-scheme AND-set, scopes on an OR alternative, scopes from both `@Authorized` and `@SecurityRequirement`, or duplicate `schemeName()` |
+| `RestConfigurationException` | Any shape in the [fail-closed matrix](#fail-closed-startup-matrix): a multi-scheme AND-set, scopes on an OR alternative, scopes from both `@Authorized` and `@SecurityRequirement`, `@PermitAll` with a scoped requirement, or duplicate `schemeName()` |
 | `RestConfigurationException` | `@RolesAllowed` / `@Authorized` / `@DenyAll` on an operation with no declared security requirement — the handler would never run |
 | `RestConfigurationException` | A declared security requirement with no matching `SecuritySchemeHandler` registered |
-| `RestConfigurationException` | `@PermitAll` on an operation that also declares or inherits a security requirement — conflicting intent; under document-level security, the message names the fix: `@SecurityRequirements({})` on the resource class or method keeps the operation anonymous |
+| `RestConfigurationException` | `@PermitAll` on an operation that also declares or inherits a security requirement — conflicting intent; a scopeless requirement is reported by the policy validator, a scoped one by the shape gate; under document-level security, the message names the fix: `@SecurityRequirements({})` on the resource class or method keeps the operation anonymous |
 | `IllegalStateException` | Two `SecurityIdentityResolver`s share the same `(priority, id)` pair. Raised while the Dagger graph is constructed, not on first request |
 | `IllegalStateException` | An action-only `@RequiresAction` route that declares no security scheme, with no `RouteAuthHandler` registered or with more than one — JAX-RS has no per-route scheme selector, so the framework fails rather than guess. A route that declares a scheme is authenticated by that scheme's handler and needs no `RouteAuthHandler` |
 | `IllegalStateException` | A `SecurityPolicy.Constrained` with both empty roles and empty scopes. Raised at handler creation, not on first request |
