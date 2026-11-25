@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for {@link CorrelationContextSeeder} (FR-COR-125).
+ * Unit tests for {@link CorrelationContextSeeder}.
  *
  * <p>Verifies idempotency (already-bound context wins; seed is no-op), seeding semantics on a
  * fresh duplicated context (both ids minted, source tagged {@code "seeded:" + boundary}), and

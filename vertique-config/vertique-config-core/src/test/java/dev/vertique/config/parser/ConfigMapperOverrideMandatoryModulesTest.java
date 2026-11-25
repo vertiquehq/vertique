@@ -20,10 +20,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves the mandatory-modules contract of {@link DefaultConfigMapper#finalizeForConfig(ObjectMapper)}
- * (FR-CFGI-007 / AC-6): a custom {@code @ConfigMapper} override built <strong>without</strong> the
- * JavaTime module still parses {@code java.time} config correctly, because {@code finalizeForConfig}
- * re-layers JavaTime (plus Jdk8, Vertx, KeyedCollection) over the override in place. The mandatory
+ * Proves the mandatory-modules contract of {@link DefaultConfigMapper#finalizeForConfig(ObjectMapper)}:
+ * a custom {@code @ConfigMapper} override built <strong>without</strong> the JavaTime module still
+ * parses {@code java.time} config correctly, because {@code finalizeForConfig} re-layers JavaTime
+ * (plus Jdk8, Vertx, KeyedCollection) over the override in place. The mandatory
  * layering must <em>not</em> drop the override's own application-specific module.
  *
  * <p>The override registers an app-specific {@link SimpleModule} with a custom deserializer for

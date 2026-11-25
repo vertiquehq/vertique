@@ -48,7 +48,7 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end Dagger wiring test for the config-backed authorization path, exercising
  * {@link AuthzConfigModule} and {@link SecurityAuthzModule} <strong>together</strong> in one
- * component (the combination the green build never exercised).
+ * component.
  *
  * <p>Verifies the full path:
  * <ul>
@@ -59,7 +59,7 @@ import org.junit.jupiter.api.Test;
  *   <li>registry validation runs — a config policy over an unregistered action fails component
  *       creation (fail-fast);</li>
  *   <li>merged-catalogue role validation runs — a role mapping referencing a policy that is
- *       contributed <em>programmatically</em> (not in config) is accepted (FR — W2), while a role
+ *       contributed <em>programmatically</em> (not in config) is accepted, while a role
  *       mapping referencing an entirely unknown policy fails component creation.</li>
  * </ul>
  *
@@ -130,7 +130,7 @@ class AuthzCombinedModulesTest {
                 "a config policy referencing an unregistered action must fail fast at startup");
     }
 
-    // --- W2: role mapping validated against the MERGED catalogue ---
+    // --- role mapping validated against the MERGED catalogue ---
 
     @Test
     @DisplayName(
@@ -289,7 +289,7 @@ class AuthzCombinedModulesTest {
         Authorizer authorizer();
     }
 
-    /** Combined component that also contributes a programmatic policy source (for the W2 merged-catalogue test). */
+    /** Combined component that also contributes a programmatic policy source (for the merged-catalogue test). */
     @Singleton
     @Component(
             modules = {

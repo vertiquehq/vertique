@@ -55,7 +55,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Composition tests for the security-critical seam between verified deferred reconstruction and the
- * complete Mode-2 authorization chain. Component-level tests already cover snapshot forgery,
+ * complete live-resolved authorization chain. Component-level tests already cover snapshot forgery,
  * freshness, resolver behavior, delegation narrowing, and the default policy engine independently;
  * these tests pin the actor/subject contract across their real implementations.
  */

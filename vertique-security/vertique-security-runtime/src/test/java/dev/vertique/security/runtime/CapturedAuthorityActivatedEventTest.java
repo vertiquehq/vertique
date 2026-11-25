@@ -57,7 +57,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for the Mode-3 activation seam ({@link CapturedAuthorityActivation}) and the
+ * Unit tests for the {@code CAPTURED} activation seam ({@link CapturedAuthorityActivation}) and the
  * {@link CapturedAuthorityActivatedEvent} it emits.
  *
  * <p>Verifies the emit-and-await contract: {@link CapturedAuthorityActivation#activateResume}
@@ -118,7 +118,7 @@ class CapturedAuthorityActivatedEventTest {
      * A captured IdP assurance with a single {@code amr} value — this test is about event emission,
      * not about {@code amr} cardinality. Multi-value {@code amr} round-tripping through
      * {@code IdentitySnapshotCodec.verifyIntegrity} is pinned by {@code IdentitySnapshotCodecTest}
-     * (issue #181), which is what makes {@code AuthenticationAssurance.amr} an encounter-order
+     *, which is what makes {@code AuthenticationAssurance.amr} an encounter-order
      * preserving {@link java.util.SequencedSet}.
      */
     private static final AuthenticationAssurance ASSURANCE = new AuthenticationAssurance(

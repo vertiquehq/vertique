@@ -29,8 +29,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Verifies: an in-memory fixture implementation satisfies the interface; {@code register()}
  * stores the initial context; {@code current()} returns empty before registration and present after;
- * {@code refreshIdentity()} replaces the context; {@code closeChannel()} removes the entry. The
- * real behavioral correctness is verified in slice 22 ({@code DefaultChannelIdentityManager}).
+ * {@code refreshIdentity()} replaces the context; {@code closeChannel()} removes the entry. Behavioral
+ * correctness of real implementations is verified by their own tests.
  */
 class ChannelIdentityManagerTest {
 
@@ -84,7 +84,7 @@ class ChannelIdentityManagerTest {
 
     /**
      * Minimal in-memory {@link ChannelIdentityManager} fixture that satisfies the interface
-     * contract. This is a test-only implementation; behavioral correctness tests belong to slice 22.
+     * contract. This is a test-only implementation; behavioral correctness of real implementations is tested elsewhere.
      */
     private static final class InMemoryChannelIdentityManager implements ChannelIdentityManager {
 

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link JsonSchemaTypeOverride} factory validation and component exposure, and for
- * the {@link JsonMapperProfile#jsonSchemaTypeOverrides()} default (FR-JSON-088).
+ * the {@link JsonMapperProfile#jsonSchemaTypeOverrides()} default.
  */
 class JsonSchemaTypeOverrideTest {
 

@@ -13,7 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link VertiqueApplication#verticleSupplier()} (FR-APP-030) — the standalone-entry
+ * Unit tests for {@link VertiqueApplication#verticleSupplier()} — the standalone-entry
  * supplier and its {@code vertique.bootstrap.verticle=false} opt-out.
  *
  * <p>By default the supplier is non-null and yields a {@link VertiqueBootstrapVerticle} (which is a

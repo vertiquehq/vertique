@@ -25,14 +25,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Dagger seam test for {@link ConfigParsingModule} (AC-4 / AC-5). Proves that:
+ * Dagger seam test for {@link ConfigParsingModule}. Proves that:
  *
  * <ul>
- *   <li><strong>AC-4</strong> — a {@code @Component} listing only {@link ConfigParsingModule} (no
+ *   <li><strong>no override</strong> — a {@code @Component} listing only {@link ConfigParsingModule} (no
  *       {@code @ConfigMapper} provider) resolves a non-null {@link ConfigParser} — a
  *       {@link DefaultConfigParser} over the lenient default — and parses a fixture exactly as the
  *       direct lenient parser does;
- *   <li><strong>AC-5</strong> — a second {@code @Component} that also installs an
+ *   <li><strong>override</strong> — a second {@code @Component} that also installs an
  *       {@link OverrideModule} binding {@code @Provides @ConfigMapper ObjectMapper} resolves exactly
  *       one {@link ConfigParser} binding (no duplicate-binding error) and the app-specific override
  *       module is in effect.
@@ -61,7 +61,7 @@ class ConfigParsingModuleSeamTest {
     /** A record carrying the override-only {@link Marker} type. */
     record WithMarker(Marker marker) {}
 
-    // --- AC-4: no @ConfigMapper provider ---
+    // --- no @ConfigMapper provider ---
 
     @Singleton
     @Component(modules = ConfigParsingModule.class)
@@ -70,7 +70,7 @@ class ConfigParsingModuleSeamTest {
     }
 
     @Test
-    @DisplayName("AC-4: component with only ConfigParsingModule resolves the lenient default parser")
+    @DisplayName("component with only ConfigParsingModule resolves the lenient default parser")
     void noOverrideResolvesLenientDefaultParser() {
         DefaultComponent component = DaggerConfigParsingModuleSeamTest_DefaultComponent.create();
 
@@ -90,7 +90,7 @@ class ConfigParsingModuleSeamTest {
         assertEquals(8080, viaSeam.port(), "lenient coercion applies through the seam default");
     }
 
-    // --- AC-5: @ConfigMapper override present ---
+    // --- @ConfigMapper override present ---
 
     /**
      * Override module supplying an app-specific {@code @ConfigMapper} mapper. The mapper registers a
@@ -115,7 +115,7 @@ class ConfigParsingModuleSeamTest {
     }
 
     @Test
-    @DisplayName("AC-5: component with a @ConfigMapper override resolves one binding with the override in effect")
+    @DisplayName("component with a @ConfigMapper override resolves one binding with the override in effect")
     void overrideResolvesSingleBindingWithAppModule() {
         OverrideComponent component = DaggerConfigParsingModuleSeamTest_OverrideComponent.create();
 

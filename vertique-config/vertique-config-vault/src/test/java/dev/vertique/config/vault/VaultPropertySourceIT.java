@@ -39,7 +39,7 @@ import org.testcontainers.vault.VaultContainer;
  *
  * <p>Covers:
  * <ul>
- *   <li>AC-5: tree-style factory lookup — {@code VaultPropertySourceFactory.create()} + lookup</li>
+ *   <li>Tree-style factory lookup — {@code VaultPropertySourceFactory.create()} + lookup</li>
  *   <li>End-to-end through {@link BootstrapConfigLoader} with placeholder resolution</li>
  *   <li>Missing path → {@code create()} fails with path named; sentinel not in exception message</li>
  *   <li>Unreachable Vault → {@code create()} fails (TCP refused) even when placeholder has a default</li>
@@ -164,7 +164,7 @@ public class VaultPropertySourceIT {
     // --- Tests ---
 
     /**
-     * AC-5: factory-level lookup with prefix routing.
+     * Factory-level lookup with prefix routing.
      *
      * <p>Creates a source directly via the factory (no BootstrapConfigLoader), seeds from
      * {@code secret/app} with prefix {@code "app."}, and verifies:
@@ -176,7 +176,7 @@ public class VaultPropertySourceIT {
      * </ul>
      */
     @Test
-    @DisplayName("AC-5: factory create + lookup returns seeded secrets with prefix applied")
+    @DisplayName("Factory create + lookup returns seeded secrets with prefix applied")
     void shouldLookupSeededSecretsWithPrefix() {
         String address = vault.getHttpHostAddress();
         JsonObject config = buildSourceConfig(address, ROOT_TOKEN, pathEntry("secret/app", "app."));

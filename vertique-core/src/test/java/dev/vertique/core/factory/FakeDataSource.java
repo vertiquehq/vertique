@@ -4,7 +4,7 @@
 package dev.vertique.core.factory;
 
 /**
- * A plain Java host-native bean type used by the AC-12 positive test fixtures.
+ * A plain Java host-native bean type used by the positive test fixtures.
  *
  * <p>It models a "normal Java type" a host (Spring/Quarkus) might own — not a service locator. The
  * test wires an implementation through a typed Dagger adapter module to prove that host beans reach

@@ -22,7 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Unit tests for {@link MDCContexts#snapshotKeys(Set)}.
  *
- * <p>Verifies the FR-COR mirrored-key restoration contract:
+ * <p>Verifies the mirrored-key restoration contract:
  * <ul>
  *   <li>The snapshot captures both present values and absences at snapshot time.</li>
  *   <li>On close, every snapshotted key is restored to its snapshot-time state —

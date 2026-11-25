@@ -24,12 +24,11 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for {@link DefaultIdentitySnapshotFactory}'s {@code originSummary()} derivation —
- * identity-002 P2.S5b-i. Proves the transport-neutral fix: {@code originSummary()} is sourced from
- * the ambient {@link InvocationOrigin} bound on the injected {@link ContextHolder} at capture time,
- * not the hardcoded {@code "rest:authenticated"} literal the pre-fix implementation always produced
- * for any context with a present {@code SecurityContext#origin()} — regardless of the real ingress
- * kind (the "camel context mislabeled rest:authenticated" defect closed by this slice).
+ * Unit tests for {@link DefaultIdentitySnapshotFactory}'s {@code originSummary()} derivation.
+ * Proves the transport-neutral behavior: {@code originSummary()} is sourced from the ambient
+ * {@link InvocationOrigin} bound on the injected {@link ContextHolder} at capture time, not a hardcoded
+ * {@code "rest:authenticated"} literal for any context with a present {@code SecurityContext#origin()},
+ * so the summary reflects the real ingress kind.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

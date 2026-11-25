@@ -110,7 +110,7 @@ class ActionPatternTest {
         assertFalse(new ActionPattern("a.b.c").isWildcard());
     }
 
-    // --- compact constructor rejection: never-matching segment counts (C1 residual) ---
+    // --- compact constructor rejection: never-matching segment counts ---
 
     @Test
     @DisplayName("a two-segment exact pattern is rejected — it could never match a 3-segment ActionRef")

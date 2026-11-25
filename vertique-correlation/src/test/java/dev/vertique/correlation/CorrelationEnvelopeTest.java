@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * <p>The shape is asserted against {@code io.vertx.core.json.jackson.DatabindCodec.mapper()},
  * which is the mapper the durable encoder/decoder use at runtime.
  *
- * <p>TP-002 (T024) additionally proves {@link CorrelationContextDurableDecoder#decode} resolves
+ * <p>It additionally proves {@link CorrelationContextDurableDecoder#decode} resolves
  * {@link VertiqueJson#mapper()} at use time rather than the raw, install-blind
  * {@code DatabindCodec#mapper()}, and that the decode is tolerant of which registered profile
  * encoded the bytes. {@code @AfterEach} restores the raw Vert.x delegate so the process-wide
@@ -143,10 +143,10 @@ class CorrelationEnvelopeTest {
         assertNull(parsed.trace());
     }
 
-    // --- TP-002 (T024): decoder follows the process mapper and tolerates profiles ---
+    // --- decoder follows the process mapper and tolerates profiles ---
 
     /**
-     * TP-002: proves {@link CorrelationContextDurableDecoder#decode} resolves
+     * Proves {@link CorrelationContextDurableDecoder#decode} resolves
      * {@link VertiqueJson#mapper()} at use time (not the raw, install-blind
      * {@code DatabindCodec#mapper()}), and that once the decoder follows the process mapper it stays
      * tolerant of which registered profile produced the bytes.
@@ -183,9 +183,9 @@ class CorrelationEnvelopeTest {
      * re-encoding the envelope under the raw delegate afterward still yields the exact pinned bytes —
      * proof that installing never mutates {@code DatabindCodec#mapper()} itself.
      *
-     * <p><strong>Expected initial (RED) result:</strong> today's decoder always reads
-     * {@code DatabindCodec.mapper()}, which never gains {@code ALLOW_SINGLE_QUOTES} regardless of any
-     * install, so the post-install single-quote decode fails exactly like the pre-install one.
+     * <p><strong>Why the process mapper:</strong> {@code DatabindCodec.mapper()} never gains
+     * {@code ALLOW_SINGLE_QUOTES} regardless of any install, so a decoder that read it would fail the
+     * post-install single-quote decode exactly like the pre-install one.
      *
      * <p><strong>Sensitivity proof:</strong> keeping {@code DatabindCodec.mapper()} in the decoder
      * leaves the post-install single-quote decode failing with the same "malformed CorrelationEnvelope

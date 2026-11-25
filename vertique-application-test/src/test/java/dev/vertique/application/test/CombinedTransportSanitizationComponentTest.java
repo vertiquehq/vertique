@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  * Combined REST + WebSocket Dagger wiring tests proving that both transports' independent {@code
  * @BindsOptionalOf} declarations for the neutral {@link InputObjectProcessor} coexist in one
  * component (duplicate optional declarations of the same key are legal) and are satisfied by a
- * single shared {@code SanitizationModule} singleton (AC-INP-010 combined; AC-INP-042/043/044):
+ * single shared {@code SanitizationModule} singleton:
  * with the module installed the optional resolves present and both transports see the same
  * instance; without it, empty.
  */

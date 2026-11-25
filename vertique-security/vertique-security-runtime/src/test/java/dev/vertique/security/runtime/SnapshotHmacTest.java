@@ -14,12 +14,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Red (failing-by-design) tests for {@link SnapshotHmac}.
- *
- * <p>{@code SnapshotHmac} does not exist yet — this class only compiles once the runtime HMAC
- * signer/verifier over a keyset (active signing key + previous verification keys) is implemented. Until then the
- * module fails to compile with {@code cannot find symbol},
- * which is the expected red state for slice P1.S1.
+ * Unit tests for {@link SnapshotHmac}, the runtime HMAC signer/verifier over a keyset (active signing
+ * key plus previous verification keys).
  */
 class SnapshotHmacTest {
 

@@ -203,7 +203,7 @@ class SecurityEventEmitterCharacterizationTest {
         @Test
         @DisplayName("sneak-thrown checked exception is isolated, logged, and emit still succeeds")
         void emit_observerSneakThrowsCheckedException_isolatedLoggedAndEmitSucceeds() {
-            // Regression guard (CORE-001 round-2): safe() now catches Exception, not only
+            // Regression guard: safe() catches Exception, not only
             // RuntimeException. A sneak-thrown CHECKED exception is therefore routed through safe()'s
             // log-and-isolate path instead of escaping into the kernel's no-op onFailure (where it
             // would be silently swallowed with no log). We assert isolation via the existing harness:

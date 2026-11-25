@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>Name is configurable for diagnostic clarity.</li>
  * </ul>
  *
- * <h2>NFR-CONF-002</h2>
+ * <h2>Value-free messages</h2>
  * <p>The {@link ConfigPropertySourceException} messages thrown by this stub contain only the
  * source name and the key — never a resolved value.
  */

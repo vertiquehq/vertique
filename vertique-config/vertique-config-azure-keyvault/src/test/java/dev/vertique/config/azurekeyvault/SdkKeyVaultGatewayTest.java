@@ -26,7 +26,7 @@ import reactor.core.publisher.Mono;
 /**
  * Unit tests for {@link SdkKeyVaultGateway#mapHttpError(String, String, String, HttpResponseException)}.
  *
- * <p>Exercises the null-response guard (NFR-CONF-002): Azure SDK credential exceptions extend
+ * <p>Exercises the null-response guard: Azure SDK credential exceptions extend
  * {@link HttpResponseException} but are constructed with a {@code null}
  * {@link com.azure.core.http.HttpResponse}. Without the null guard, calling
  * {@code e.getResponse().getStatusCode()} would itself throw a {@link NullPointerException}.

@@ -191,17 +191,17 @@ class DelegationEnforcementNarrowerTest {
                     base,
                     result,
                     "framework-scheduled deferred work must pass through unchanged — its authority is the "
-                            + "actor's own (resolved live by Mode 2), not a grant to validate");
+                            + "actor's own (resolved live by LIVE_RESOLVED), not a grant to validate");
         }
 
         @Test
         @DisplayName("a forged/misconfigured deferred-execution kind on a NON-reconstructed (live) context is "
                 + "not passed through — it is validated as an ordinary grant-backed delegation and denies, "
-                + "never a silent keep-permit (C2 residual fail-open fix)")
+                + "never a silent keep-permit")
         void forgedDeferredKindOnLiveContextNotPassedThrough() {
             // Validator returns a deny (GRANT_NOT_FOUND) for the requested authorityId — proving the
             // narrower actually validated this context as a grant rather than passing it through. If
-            // the C2 residual bug were still present, narrow() would return `base` (permitted)
+            // the context were passed through, narrow() would return `base` (permitted)
             // unchanged without ever consulting this validator.
             DelegationEnforcementNarrower narrower =
                     new DelegationEnforcementNarrower(fixed(new DelegationGrantDecision(
@@ -428,7 +428,7 @@ class DelegationEnforcementNarrowerTest {
      * A <strong>real, framework-verified reconstruction</strong> carrying a framework-scheduled
      * deferred-execution delegation — the only shape {@link DelegationEnforcementNarrower#narrow}
      * passes through unchanged. Built via {@link SecurityContexts#assembleReconstructed}, so
-     * {@link SecurityContext#reconstruction()} is present (C2 residual fix: the pass-through requires
+     * {@link SecurityContext#reconstruction()} is present (the pass-through requires
      * this typed signal, never {@code kind} alone).
      */
     private static SecurityContext deferredCtx() {
@@ -448,8 +448,8 @@ class DelegationEnforcementNarrowerTest {
      * {@code kind} is {@link DelegationContext#DEFERRED_EXECUTION_KIND} — either misconfigured or
      * forged. {@link SecurityContext#reconstruction()} is empty (built via
      * {@link SecurityContexts#assemble}), so this must NOT be passed through by
-     * {@link DelegationEnforcementNarrower#narrow} despite carrying the deferred-execution kind (the
-     * C2 residual fail-open this test guards against).
+     * {@link DelegationEnforcementNarrower#narrow} despite carrying the deferred-execution kind (a
+     * fail-open this test guards against).
      */
     private static SecurityContext forgedDeferredKindLiveCtx() {
         DelegationContext forgedDeferredDelegation = new DelegationContext(

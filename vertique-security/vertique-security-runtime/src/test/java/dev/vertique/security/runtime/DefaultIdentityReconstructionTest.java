@@ -47,11 +47,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link DefaultIdentityReconstruction} against schema v2. Reconstruction is the trust boundary
- * (FR-ID-CA-008): it re-verifies the snapshot's HMAC and its
- * F5 carrier binding before minting a {@link SecurityContext}. Every test that needs a genuinely valid
- * signed snapshot builds one via {@link #signedSnapshot} — an unsigned envelope round-tripped through
- * {@code codec.encode}/{@code codec.decode} so the returned snapshot carries a real, verifiable tag.
+ * Unit tests for {@link DefaultIdentityReconstruction} against schema v2. Reconstruction is the
+ * trust boundary: it re-verifies the snapshot's HMAC and its carrier binding before minting a
+ * {@link SecurityContext}. Every test that needs a genuinely valid signed snapshot builds one via
+ * {@link #signedSnapshot} — an unsigned envelope round-tripped through {@code codec.encode}/{@code codec.decode}
+ * so the returned snapshot carries a real, verifiable tag.
  */
 class DefaultIdentityReconstructionTest {
 
@@ -132,7 +132,7 @@ class DefaultIdentityReconstructionTest {
         assertEquals(
                 "no-captured-authority-id",
                 delegation.authorityId(),
-                "a Mode-1 resume whose captured summary carried no grant id must state the absence, never "
+                "an ATTRIBUTION_ONLY resume whose captured summary carried no grant id must state the absence, never "
                         + "reuse the deferred-execution literal a consumer could mistake for a real grant id");
     }
 
@@ -520,7 +520,7 @@ class DefaultIdentityReconstructionTest {
     }
 
     @Test
-    @DisplayName("resumeAsPrincipal's typed reconstruction marker carries no principal — Mode 2 resolves the "
+    @DisplayName("resumeAsPrincipal's typed reconstruction marker carries no principal — LIVE_RESOLVED resolves the "
             + "actor directly from the returned context's identity()")
     void resumeProducesTypedReconstructionMarker() {
         IdentitySnapshotCodec codec = new IdentitySnapshotCodec(new SnapshotHmac(KEYSET, ACTIVE_KEY_ID));
@@ -539,7 +539,7 @@ class DefaultIdentityReconstructionTest {
         assertEquals(
                 ACTOR,
                 resumed.identity().actor(),
-                "the resumed context's actor is the principal a Mode-2 authorizer resolves live");
+                "the resumed context's actor is the principal a LIVE_RESOLVED authorizer resolves live");
     }
 
     @Test
@@ -565,9 +565,8 @@ class DefaultIdentityReconstructionTest {
         assertEquals(
                 executingService.actor(),
                 deferredWithSubject.identity().actor(),
-                "Mode 2 resolves the executing service's own authority — never the subject-of-record's "
-                        + "(subject-authority evaluation, i.e. impersonation, is out of v1 scope per "
-                        + "FR-ID-DG-006)");
+                "LIVE_RESOLVED resolves the executing service's own authority — never the subject-of-record's "
+                        + "(subject-authority evaluation, i.e. impersonation, is out of scope)");
         assertTrue(deferredWithSubject.identity().subject().isPresent());
         assertEquals(
                 SUBJECT,

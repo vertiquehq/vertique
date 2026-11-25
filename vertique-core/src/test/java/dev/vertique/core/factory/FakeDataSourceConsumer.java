@@ -11,7 +11,7 @@ import jakarta.inject.Singleton;
  * injection.
  *
  * <p>Receiving the bean as a typed constructor parameter — not by querying a locator — is the crux
- * of the AC-12 positive proof: a host bean reaches framework code through ordinary Dagger typed
+ * of the positive case: a host bean reaches framework code through ordinary Dagger typed
  * injection.
  */
 @Singleton

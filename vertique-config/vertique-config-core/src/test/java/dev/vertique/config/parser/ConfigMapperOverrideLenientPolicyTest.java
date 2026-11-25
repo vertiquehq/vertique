@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves the <strong>mandatory-leniency-wins</strong> half of FR-CFGI-007: a custom
+ * Proves the <strong>mandatory-leniency-wins</strong> half of the contract: a custom
  * {@code @ConfigMapper} override that is deliberately <em>hostile</em> to config parsing — built with
  * scalar coercion DISABLED ({@code MapperFeature.ALLOW_COERCION_OF_SCALARS} off) and
  * {@code FAIL_ON_UNKNOWN_PROPERTIES} ENABLED — still parses config leniently once the seam finalizes

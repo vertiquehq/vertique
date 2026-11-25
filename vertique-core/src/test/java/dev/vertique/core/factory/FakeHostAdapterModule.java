@@ -11,10 +11,9 @@ import jakarta.inject.Singleton;
  * Test-only Dagger module that adapts a host-native bean ({@link FakeDataSource}) into the
  * framework graph as an ordinary typed binding.
  *
- * <p>This stands in for the typed adapter module an embedding host bridge supplies (FR-APP-004):
+ * <p>This stands in for the typed adapter module an embedding host bridge supplies:
  * the host bean is wired by type, not fetched from a locator. Its presence is what makes the
- * AC-12 positive component buildable; its absence is what makes the AC-12 negative case fail to
- * compile.
+ * positive component buildable; its absence is what makes the negative case fail to compile.
  */
 @Module
 public final class FakeHostAdapterModule {

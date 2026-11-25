@@ -18,7 +18,7 @@ import java.util.function.Supplier;
  * graceful shutdown.
  *
  * <p>It also opts out of the framework-owned standalone bootstrap verticle by overriding
- * {@link #verticleSupplier()} to return {@code null} (the FR-APP-030 escape hatch). The launch tests
+ * {@link #verticleSupplier()} to return {@code null} (the escape hatch). The launch tests
  * pass an explicit verticle FQN as a CLI positional argument (e.g. {@code NoOpVerticle}) and exercise
  * the launcher's contributor-chain, config-resolution, overlay, and exit-code behaviour through that
  * CLI/{@code Main-Verticle} path; the framework supplier (a {@link VertiqueBootstrapVerticle}) would
@@ -59,7 +59,7 @@ final class TestVertiqueApplication extends VertiqueApplication {
     }
 
     /**
-     * Opts out of the framework-owned bootstrap verticle (FR-APP-030 escape hatch) so the launch
+     * Opts out of the framework-owned bootstrap verticle (the escape hatch) so the launch
      * tests' explicit CLI verticle argument is resolved the standard way. Returns {@code null}
      * unconditionally rather than consulting the {@code vertique.bootstrap.verticle} system property,
      * so these tests never depend on ambient process state.

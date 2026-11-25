@@ -68,13 +68,13 @@ import software.amazon.awssdk.services.ssm.model.PutParameterRequest;
  *
  * <p>Covers:
  * <ul>
- *   <li>AC: store-level get() — parameter tree for /it/app/ built correctly, /other/x absent</li>
- *   <li>AC: prefix re-root — entire result nested under a dot-separated prefix</li>
- *   <li>AC: end-to-end through {@link BootstrapConfigLoader} with store + precedence proof</li>
- *   <li>AC: recursive=false — only direct children fetched, nested deeper param absent</li>
- *   <li>AC: empty path semantics — nonexistent path succeeds with empty tree</li>
- *   <li>AC: failing store (unroutable endpoint) → {@link BootstrapConfigException}</li>
- *   <li>AC: NFR-CONF-002 log redaction — sentinel absent from logs on successful load</li>
+ *   <li>store-level get() — parameter tree for /it/app/ built correctly, /other/x absent</li>
+ *   <li>prefix re-root — entire result nested under a dot-separated prefix</li>
+ *   <li>end-to-end through {@link BootstrapConfigLoader} with store + precedence proof</li>
+ *   <li>recursive=false — only direct children fetched, nested deeper param absent</li>
+ *   <li>empty path semantics — nonexistent path succeeds with empty tree</li>
+ *   <li>failing store (unroutable endpoint) → {@link BootstrapConfigException}</li>
+ *   <li>Log redaction — sentinel absent from logs on successful load</li>
  * </ul>
  *
  * <p>Image: {@code localstack/localstack:4.4}, single shared container for all tests.
@@ -423,13 +423,13 @@ public class SsmConfigStoreIT {
     }
 
     /**
-     * NFR-CONF-002 log redaction: captures log output from {@link SsmConfigStore} during a
+     * Log redaction: captures log output from {@link SsmConfigStore} during a
      * successful load and asserts that the SSM sentinel value is absent from all log messages.
      * Restores the logger's original level in a {@code finally} block so other tests are not
      * affected.
      */
     @Test
-    @DisplayName("NFR-CONF-002: SSM sentinel value absent from logs on successful store get()")
+    @DisplayName("SSM sentinel value absent from logs on successful store get()")
     void shouldNotLogParameterValues() throws Exception {
         Logger logger = (Logger) LoggerFactory.getLogger(SsmConfigStore.class);
         Level originalLevel = logger.getLevel();

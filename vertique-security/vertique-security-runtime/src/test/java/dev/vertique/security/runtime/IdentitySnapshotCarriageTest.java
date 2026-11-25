@@ -87,7 +87,7 @@ class IdentitySnapshotCarriageTest {
 
         // A real per-row DurableCarrierDescriptor, matching how a wired boundary (e.g. delayed-job)
         // threads a carrier: the sentinel-signed shape is a separate, fail-closed case covered by
-        // sentinelSignedSnapshotBindsUnverifiable (F3a) — this test proves the verified content-fidelity
+        // sentinelSignedSnapshotBindsUnverifiable — this test proves the verified content-fidelity
         // round trip for a boundary that IS bound to a real carrier.
         DurableCarrierDescriptor carrier =
                 new DurableCarrierDescriptor("carrier-1", new DurableTarget("outbox", "orders", Optional.empty()));
@@ -145,7 +145,7 @@ class IdentitySnapshotCarriageTest {
     }
 
     @Test
-    @DisplayName("F3a: a snapshot signed with the pre-boundary-wiring 'unbound' sentinel carrier binds an unverifiable"
+    @DisplayName("a snapshot signed with the 'unbound' sentinel carrier binds an unverifiable"
             + " context, never a reconstructable verified one")
     void sentinelSignedSnapshotBindsUnverifiable() {
         SnapshotHmac hmac = new SnapshotHmac(Map.of("key-1", "super-secret-signing-key-material"), "key-1");
@@ -155,10 +155,10 @@ class IdentitySnapshotCarriageTest {
 
         IdentitySnapshotContext context = IdentitySnapshotContext.of(capturedContent());
         // Carrier-less encode overload: no DurableCarrierDescriptor is supplied, so the encoder signs
-        // the fixed "unbound" sentinel — exactly the shape an unwired boundary (outbox today,
-        // kafka/workflow-branch until wired) produces. Decoding with the matching carrier-less
-        // context means the decoder's expected carrier is ALSO the sentinel — the precise scenario
-        // where the F5 carrierMatches check alone is a no-op (both sides equal "unbound").
+        // the fixed "unbound" sentinel — exactly the shape an unwired boundary
+        // produces. Decoding with the matching carrier-less context means the decoder's expected
+        // carrier is ALSO the sentinel — the precise scenario where the carrierMatches check alone is a
+        // no-op (both sides equal "unbound").
         DurableMetadata metadata = encoder.encode(context, new DurableEncodeContext("outbox"));
 
         ContextDecodeResult<IdentitySnapshotContext> result =
@@ -197,7 +197,7 @@ class IdentitySnapshotCarriageTest {
         assertTrue(
                 result.value().orElseThrow().verified(),
                 "a real per-row carrier that matches the expected carrier must still bind a verified context —"
-                        + " the F3a sentinel check must not over-broaden to real carriers");
+                        + " the sentinel check must not over-broaden to real carriers");
         assertTrue(result.warnings().isEmpty(), "a successful decode carries no warnings");
     }
 
@@ -228,10 +228,10 @@ class IdentitySnapshotCarriageTest {
         assertFalse(result.warnings().isEmpty(), "an unverifiable decode still carries a diagnostic warning");
     }
 
-    // --- F1: re-encode of a receive-side context (P2.S0 security review) ---
+    // --- re-encode of a receive-side context ---
 
     @Test
-    @DisplayName("F1: re-encoding a verified receive-side context for a new carrier re-signs the same content, "
+    @DisplayName("re-encoding a verified receive-side context for a new carrier re-signs the same content, "
             + "preserving capturedAt, rather than throwing")
     void reEncodeOfVerifiedContextSucceedsForNewCarrier() {
         SnapshotHmac hmac = new SnapshotHmac(Map.of("key-1", "super-secret-signing-key-material"), "key-1");
@@ -280,12 +280,12 @@ class IdentitySnapshotCarriageTest {
     }
 
     @Test
-    @DisplayName("F6: the encoder anchors the signed expiresAt on capturedAt, not on the later issuedAt — "
+    @DisplayName("the encoder anchors the signed expiresAt on capturedAt, not on the later issuedAt — "
             + "content captured well before encode time gets a capturedAt-anchored expiry")
     void encodeAnchorsExpiryOnCapturedAtNotIssuedAt() {
         // issuedAt (the encoder's clock at encode time) is deliberately hours AFTER capturedAt, so an
-        // issuedAt-anchored expiry (the pre-F6 bug) and a capturedAt-anchored expiry (F6) are
-        // observably DIFFERENT values — a test where the two are close together (as in
+        // issuedAt-anchored expiry and a capturedAt-anchored expiry are observably
+        // DIFFERENT values — a test where the two are close together (as in
         // #reEncodeOfVerifiedContextSucceedsForNewCarrier's fixture) cannot distinguish them.
         Instant capturedAt = Instant.parse("2026-07-01T10:15:31Z");
         Instant encodeTime = capturedAt.plus(Duration.ofHours(3));
@@ -325,12 +325,12 @@ class IdentitySnapshotCarriageTest {
         assertEquals(
                 capturedAt.plus(Duration.ofHours(24)),
                 signed.expiresAt(),
-                "expiresAt must be anchored on capturedAt (F6) — an issuedAt-anchored expiry would be "
+                "expiresAt must be anchored on capturedAt — an issuedAt-anchored expiry would be "
                         + "capturedAt + 3h + 24h instead");
     }
 
     @Test
-    @DisplayName("F1: re-encoding a present-but-unverifiable receive-side context emits no identity-snapshot "
+    @DisplayName("re-encoding a present-but-unverifiable receive-side context emits no identity-snapshot "
             + "namespace and never throws")
     void reEncodeOfUnverifiableContextEncodesToEmptyMetadata() {
         SnapshotHmac hmac = new SnapshotHmac(Map.of("key-1", "super-secret-signing-key-material"), "key-1");
@@ -351,7 +351,7 @@ class IdentitySnapshotCarriageTest {
     }
 
     @Test
-    @DisplayName("F1: mergeCaptured over a bound unverifiable IdentitySnapshotContext skips the identity-snapshot "
+    @DisplayName("mergeCaptured over a bound unverifiable IdentitySnapshotContext skips the identity-snapshot "
             + "namespace rather than throwing (DurableContextPropagator/captureOne 'nothing to encode' contract)")
     void reEncodeOfUnverifiableContextEmitsNoSnapshotViaMergeCaptured(Vertx vertx, VertxTestContext ctx) {
         SnapshotHmac hmac = new SnapshotHmac(Map.of("key-1", "super-secret-signing-key-material"), "key-1");
@@ -399,7 +399,7 @@ class IdentitySnapshotCarriageTest {
     /**
      * A fixed instant shortly after {@link #capturedContent()}'s {@code capturedAt}, used as every
      * test codec's clock so encode/decode in this class is deterministic regardless of the real
-     * wall-clock date. Since F6 anchors the codec's default envelope TTL (24h) on the immutable
+     * wall-clock date. The codec anchors its default envelope TTL (24h) on the immutable
      * {@code capturedAt} rather than {@code issuedAt}, a codec built with {@link Clock#systemUTC()}
      * would make a snapshot captured at the fixed {@code 2026-07-01} constant look stale — and
      * freshness checks would fail closed with {@code MALFORMED_TEMPORAL} — on any test run more than

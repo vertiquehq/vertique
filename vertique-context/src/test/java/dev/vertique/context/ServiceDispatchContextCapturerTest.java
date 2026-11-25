@@ -28,8 +28,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Unit tests for {@link ServiceDispatchContextCapturer}.
  *
- * <p>Verifies capture keying, skipping of unbound types, collision detection (FR-CTX-063), and
- * null-encode rejection (FR-CTX-050).
+ * <p>Verifies capture keying, skipping of unbound types, collision detection, and
+ * null-encode rejection.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -118,7 +118,7 @@ class ServiceDispatchContextCapturerTest {
     // --- null encode result ---
 
     @Test
-    @DisplayName("null encode result from encoder throws IllegalStateException (FR-CTX-050)")
+    @DisplayName("null encode result from encoder throws IllegalStateException")
     void nullEncodeResultThrowsIllegalState(Vertx vertx, VertxTestContext ctx) {
         ServiceDispatchContextEncoder<StringCtx> badEncoder = new ServiceDispatchContextEncoder<>() {
             @Override
@@ -149,7 +149,7 @@ class ServiceDispatchContextCapturerTest {
     // --- mergeCaptured collision ---
 
     @Test
-    @DisplayName("mergeCaptured rejects collision between caller and captured keys (FR-CTX-063)")
+    @DisplayName("mergeCaptured rejects collision between caller and captured keys")
     void mergeCapturedRejectsCollision(Vertx vertx, VertxTestContext ctx) {
         ServiceDispatchContextEncoder<StringCtx> encoder = new ServiceDispatchContextEncoder<>() {
             @Override

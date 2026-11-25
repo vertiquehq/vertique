@@ -38,7 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       AND the matching {@link CorrelationMdcKeys} MDC entry; passing {@code null} clears
  *       both the field and the MDC key.</li>
  *   <li>Non-mirroring setters ({@code setSession}, {@code addProtocolCorrelation},
- *       {@code putAttribute}) write the live context only — MDC is untouched (FR-COR-163/165).</li>
+ *       {@code putAttribute}) write the live context only — MDC is untouched.</li>
  *   <li>Every setter throws {@link IllegalStateException} when no {@link CorrelationContext}
  *       is bound, so missing-binding bugs surface at the call site.</li>
  * </ul>

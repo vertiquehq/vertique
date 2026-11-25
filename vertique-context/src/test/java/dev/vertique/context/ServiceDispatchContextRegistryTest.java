@@ -30,7 +30,7 @@ class ServiceDispatchContextRegistryTest {
     // --- Empty sets ---
 
     @Test
-    @DisplayName("empty encoder and decoder sets construct successfully (FR-CTX-044)")
+    @DisplayName("empty encoder and decoder sets construct successfully")
     void emptySetsConstructOk() {
         assertDoesNotThrow(() -> new ServiceDispatchContextRegistry(Set.of(), Set.of()));
     }
@@ -38,7 +38,7 @@ class ServiceDispatchContextRegistryTest {
     // --- Encoder validation ---
 
     @Test
-    @DisplayName("duplicate encoder key fails construction (FR-CTX-045)")
+    @DisplayName("duplicate encoder key fails construction")
     void duplicateEncoderKeyFails() {
         // Two encoders over DISTINCT types that both override key() to the same string — this
         // tests key-collision detection independent of type-duplicate detection.
@@ -80,7 +80,7 @@ class ServiceDispatchContextRegistryTest {
     }
 
     @Test
-    @DisplayName("duplicate encoder type fails construction (FR-CTX-046)")
+    @DisplayName("duplicate encoder type fails construction")
     void duplicateEncoderTypeFails() {
         // Two encoders over the SAME type with distinct keys — tests duplicate-type detection.
         ServiceDispatchContextEncoder<StringCtx> enc1 = new ServiceDispatchContextEncoder<>() {
@@ -123,7 +123,7 @@ class ServiceDispatchContextRegistryTest {
     // --- Decoder validation ---
 
     @Test
-    @DisplayName("duplicate decoder key fails construction (FR-CTX-045)")
+    @DisplayName("duplicate decoder key fails construction")
     void duplicateDecoderKeyFails() {
         // Two decoders over DISTINCT types that both override key() to the same string — tests
         // key-collision detection independent of type-duplicate detection.
@@ -165,7 +165,7 @@ class ServiceDispatchContextRegistryTest {
     }
 
     @Test
-    @DisplayName("duplicate decoder type fails construction (FR-CTX-046)")
+    @DisplayName("duplicate decoder type fails construction")
     void duplicateDecoderTypeFails() {
         // Two decoders over the SAME type with distinct keys — tests duplicate-type detection.
         ServiceDispatchContextDecoder<StringCtx> dec1 = new ServiceDispatchContextDecoder<>() {
@@ -208,7 +208,7 @@ class ServiceDispatchContextRegistryTest {
     // --- Encoder-only and decoder-only ---
 
     @Test
-    @DisplayName("encoder-only configuration is valid (FR-CTX-047)")
+    @DisplayName("encoder-only configuration is valid")
     void encoderOnlyIsValid() {
         ServiceDispatchContextEncoder<StringCtx> encoder = new ServiceDispatchContextEncoder<>() {
             @Override
@@ -228,7 +228,7 @@ class ServiceDispatchContextRegistryTest {
     }
 
     @Test
-    @DisplayName("decoder-only configuration is valid (FR-CTX-047)")
+    @DisplayName("decoder-only configuration is valid")
     void decoderOnlyIsValid() {
         ServiceDispatchContextDecoder<StringCtx> decoder = new ServiceDispatchContextDecoder<>() {
             @Override

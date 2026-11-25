@@ -131,7 +131,7 @@ class JOpenLibsVaultGatewaySanitizationTest {
     // --- cause severing ---
 
     @Nested
-    @DisplayName("sanitizeDriverFailure — cause severing (NFR-CONF-002)")
+    @DisplayName("sanitizeDriverFailure — cause severing")
     class CauseSevering {
 
         @Test

@@ -54,8 +54,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link IdentitySnapshotReconstructionInitializer} — across the outbox constants,
  * {@link DispatchBoundary#OUTBOX} (producer / {@code mergeCaptured} side) &rarr;
  * {@link DispatchBoundary#OUTBOX_SERVICE} (relay / {@code decodeToDispatchContext} side)
- * (F3a fail-closed
- * sentinel backstop; F3b real per-row outbox carrier binding).
+ * (fail-closed sentinel backstop; real per-row outbox carrier binding).
  *
  * <ul>
  *   <li>{@link #captureEncodeDecodeReconstruct} — the happy path: production outbox wiring
@@ -64,8 +63,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       target = ({@code outbox-relay}, carrierId)) on both the produce and consume side, so the
  *       captured snapshot is NOT sentinel-signed and reconstructs the captured subject.
  *   <li>{@link #carrierLessCallDegradesViaSentinelBackstop} — defense-in-depth: a caller that
- *       bypasses the carrier-aware overloads (as production did before F3b) still signs the fixed
- *       {@code "unbound"} sentinel carrier, and {@link IdentitySnapshotDurableDecoder}'s F3a
+ *       bypasses the carrier-aware overloads (as a boundary without a real carrier would) still signs the fixed
+ *       {@code "unbound"} sentinel carrier, and {@link IdentitySnapshotDurableDecoder}'s
  *       fail-closed sentinel backstop makes it unconditionally unverifiable — proving the substrate
  *       fails closed independent of whether a boundary remembers to thread its real carrier.
  * </ul>
@@ -86,13 +85,13 @@ class IdentitySnapshotOutboxRoundTripTest {
     private static final PrincipalRef USER =
             new PrincipalRef(PrincipalType.USER, "user-77", Map.of("realm", "acme-realm"));
 
-    // Capture projects free-form attributes out (W2 credential-free enforcement); only type/id (+
+    // Capture projects free-form attributes out (credential-free enforcement); only type/id (+
     // allowlisted system.reason) survive the durable round trip.
     private static final PrincipalRef PROJECTED_USER = new PrincipalRef(PrincipalType.USER, "user-77", Map.of());
 
     @Test
     @DisplayName("capture -> real propagator merge(OUTBOX, carrier) -> decode(OUTBOX_SERVICE, carrier) ->"
-            + " InboundExecutionContextScope reconstructs the subject (F3b real per-row outbox carrier)")
+            + " InboundExecutionContextScope reconstructs the subject (real per-row outbox carrier)")
     void captureEncodeDecodeReconstruct(io.vertx.core.Vertx vertx, VertxTestContext testContext) {
         RoundTripComponent component = DaggerIdentitySnapshotOutboxRoundTripTest_RoundTripComponent.builder()
                 .testConfigModule(new TestConfigModule(validConfig()))
@@ -102,7 +101,7 @@ class IdentitySnapshotOutboxRoundTripTest {
         DurableContextPropagator propagator = component.durableContextPropagator();
         InboundExecutionContextScope executionScope = component.inboundExecutionContextScope();
 
-        // F3b row binding: mirrors DefaultOutboxService.publish / ServiceOutboxDestinationHandler.publish,
+        // Row binding: mirrors DefaultOutboxService.publish / ServiceOutboxDestinationHandler.publish,
         // which thread a real per-row DurableCarrierDescriptor (carrierId = the outbox row's carrier_id;
         // target = (outbox-relay, carrierId)) rather than the carrier-less overloads.
         UUID carrierId = UUID.randomUUID();
@@ -156,7 +155,7 @@ class IdentitySnapshotOutboxRoundTripTest {
 
     @Test
     @DisplayName("capture -> real propagator merge(OUTBOX) -> decode(OUTBOX_SERVICE) [carrier-less overloads] ->"
-            + " InboundExecutionContextScope fails closed (F3a): a caller that bypasses the carrier-aware"
+            + " InboundExecutionContextScope fails closed: a caller that bypasses the carrier-aware"
             + " overloads still signs the fixed sentinel carrier, so decode is unconditionally unverifiable")
     void carrierLessCallDegradesViaSentinelBackstop(io.vertx.core.Vertx vertx, VertxTestContext testContext) {
         RoundTripComponent component = DaggerIdentitySnapshotOutboxRoundTripTest_RoundTripComponent.builder()
@@ -192,11 +191,10 @@ class IdentitySnapshotOutboxRoundTripTest {
                 try (ContextHolder.Scope installed =
                         executionScope.installDispatch(dispatchContext, DispatchBoundary.OUTBOX_SERVICE)) {
                     testContext.verify(() -> {
-                        // F3a fail-closed sentinel backstop: mergeCaptured/decodeToDispatchContext above
-                        // use the carrier-less overloads (the outbox boundary is not yet wired with a real
-                        // per-row DurableCarrierDescriptor — that is F3b, tracked separately), so the
-                        // captured snapshot is signed with the fixed "unbound" sentinel carrier. The decoder
-                        // now treats a sentinel-signed snapshot as unconditionally unverifiable, so this
+                        // Fail-closed sentinel backstop: mergeCaptured/decodeToDispatchContext above
+                        // use the carrier-less overloads (no real per-row DurableCarrierDescriptor is threaded),
+                        // so the captured snapshot is signed with the fixed "unbound" sentinel carrier. The decoder
+                        // treats a sentinel-signed snapshot as unconditionally unverifiable, so this
                         // dispatch must degrade rather than reconstruct the captured subject — origin-absent
                         // case 3a of IdentitySnapshotReconstructionInitializer binds only the degradation
                         // marker, no SecurityContext.
@@ -209,7 +207,7 @@ class IdentitySnapshotOutboxRoundTripTest {
                         assertEquals(
                                 SnapshotDegradationReason.DECODE_FAILED.name(),
                                 marker.reasonCode(),
-                                "a sentinel-signed snapshot must degrade with the DECODE_FAILED reason (F3a)");
+                                "a sentinel-signed snapshot must degrade with the DECODE_FAILED reason");
                     });
                 }
                 testContext.completeNow();

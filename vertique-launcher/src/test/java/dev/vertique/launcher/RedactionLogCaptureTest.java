@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Timeout;
 import org.slf4j.LoggerFactory;
 
 /**
- * Verifies the redaction contract (NFR-CONF-002): resolved secret values must never appear in
+ * Verifies the redaction contract: resolved secret values must never appear in
  * log output, whether the launch succeeds or fails.
  *
  * <p>Attaches a {@link ListAppender} to the ROOT Logback logger before each test and detaches it

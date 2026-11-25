@@ -31,12 +31,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * AC-1 integration test: a standalone application boots through {@link VertiqueBootstrapVerticle}
+ * Integration test: a standalone application boots through {@link VertiqueBootstrapVerticle}
  * with <strong>no {@code Main-Verticle}</strong> manifest entry and no {@code MainVerticle}.
  *
- * <p><b>IT vs full-launch choice.</b> The plan permits deploying {@link VertiqueBootstrapVerticle}
- * directly on a real {@link Vertx} as acceptable AC-1 proof, rather than driving a full
- * {@code VertiqueApplication.launch()} end-to-end (heavier and process-exit-coupled). This IT takes
+ * <p><b>IT vs full-launch choice.</b> This IT deploys {@link VertiqueBootstrapVerticle}
+ * directly on a real {@link Vertx}, rather than driving a full
+ * {@code VertiqueApplication.launch()} end-to-end (heavier and process-exit-coupled). It takes
  * the direct-deploy path: it proves the verticle discovers the application's
  * {@code VertiqueComponentFactory} via the test {@code META-INF/services} entry, runs the
  * host-neutral lifecycle (a startup step's side-effect fires), and that {@code stop()} (verticle
@@ -57,11 +57,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class VertiqueBootstrapVerticleIT {
 
-    // --- AC-1: ServiceLoader path (existing test) ---
+    // --- ServiceLoader path ---
 
     @Test
     @DisplayName(
-            "AC-1: deploying VertiqueBootstrapVerticle discovers the factory, runs the lifecycle, and serves no Main-Verticle")
+            "deploying VertiqueBootstrapVerticle discovers the factory, runs the lifecycle, and serves no Main-Verticle")
     void deploy_runsLifecycle_thenStopShutsDownWithoutClosingVertx(Vertx vertx, VertxTestContext ctx) {
         // Reset the shared markers so this test observes only its own lifecycle.
         TestStartupStep.STARTED.set(false);
@@ -90,10 +90,10 @@ public class VertiqueBootstrapVerticleIT {
                 }));
     }
 
-    // --- AC-1: launcher → runner → HTTP 200 (end-to-end HTTP verticle path) ---
+    // --- launcher → runner → HTTP 200 (end-to-end HTTP verticle path) ---
 
     /**
-     * Strengthens AC-1 by proving the full launcher path: the bootstrap verticle's factory produces
+     * Proves the full launcher path: the bootstrap verticle's factory produces
      * a component whose runner deploys a <em>real</em> HTTP verticle (bound on an ephemeral port),
      * and an HTTP GET to that port returns 200. This uses the package-private constructor seam to
      * inject the factory directly (bypassing ServiceLoader) so the test is self-contained and does
@@ -106,13 +106,13 @@ public class VertiqueBootstrapVerticleIT {
      * <p>The GET goes through a {@link WebClient} rather than a raw {@code HttpClient}: a raw
      * {@code HttpClientResponse} discards body buffers that arrive before a body handler is
      * attached, so under load {@code body()} can succeed with zero bytes while the status code is
-     * correct (issue #167). Only the status is asserted here, but the racy idiom would become a live
+     * correct. Only the status is asserted here, but the racy idiom would become a live
      * race the moment someone added a body assertion. The server answers 200 to every request, so
      * {@link WebClient}'s follow-redirects default (a raw {@code HttpClient} follows none) never
      * engages.
      */
     @Test
-    @DisplayName("AC-1 HTTP: verticleSupplier → VertiqueBootstrapVerticle → runner → live HTTP verticle serves 200")
+    @DisplayName("HTTP: verticleSupplier → VertiqueBootstrapVerticle → runner → live HTTP verticle serves 200")
     void deploy_withHttpVerticle_servesHttp200(Vertx vertx, VertxTestContext ctx) {
         // The bound HTTP port; set by the HTTP verticle after listen(0) succeeds.
         AtomicInteger boundPort = new AtomicInteger(-1);
@@ -156,9 +156,8 @@ public class VertiqueBootstrapVerticleIT {
                                 assertEquals(200, response.statusCode(), "HTTP server must return 200");
                                 return deploymentId;
                             })
-                            // eventually(...) runs on the failure path too. The close used to sit
-                            // inside the success compose, so a failed request leaked the client and
-                            // left Vert.x tearing down its pools with the request still in flight.
+                            // eventually(...) runs on the failure path too, so a failed request does not leak the
+                            // client or leave Vert.x tearing down its pools with the request still in flight.
                             .eventually(() -> {
                                 client.close();
                                 return Future.succeededFuture();

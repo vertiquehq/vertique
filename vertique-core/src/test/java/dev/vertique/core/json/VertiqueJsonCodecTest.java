@@ -30,8 +30,8 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * Proves the Vertique process JSON codec (TP-001) and the absence of the retired customizer
- * mechanism (TP-003, structural half).
+ * Proves the Vertique process JSON codec and the absence of the retired customizer
+ * mechanism (structural check).
  *
  * <p>Verified here:
  *
@@ -77,10 +77,8 @@ class VertiqueJsonCodecTest {
         VertiqueJson.resetForTests();
     }
 
-    // --- TP-001 ---
-
     @Test
-    @DisplayName("TP-001: the codec delegates to the installed mapper and install is keyed by profile id")
+    @DisplayName("the codec delegates to the installed mapper and install is keyed by profile id")
     void delegatesToInstalledMapperAndKeysInstallByProfileId() throws Exception {
         Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -210,8 +208,7 @@ class VertiqueJsonCodecTest {
 
     @Test
     @DisplayName(
-            "security review (T023 L07): a same-id swap to a lenient mapper logs a WARN naming the deltas; an equally"
-                    + " strict swap logs none")
+            "a same-id swap to a lenient mapper logs a WARN naming the deltas; an equally" + " strict swap logs none")
     void sameIdSwapToALenientMapperLogsTheDeltas() {
         Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -259,10 +256,10 @@ class VertiqueJsonCodecTest {
         }
     }
 
-    // --- TP-003 (structural half) ---
+    // --- retired customizer mechanism (structural check) ---
 
     @Test
-    @DisplayName("TP-003: the retired customizer types are absent from the classpath")
+    @DisplayName("the retired customizer types are absent from the classpath")
     void customizerTypesAreAbsent() {
         List<String> retired = List.of(
                 "dev.vertique.core.json.ObjectMapperCustomizer",

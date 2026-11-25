@@ -52,19 +52,19 @@ import org.slf4j.LoggerFactory;
  * shutdown steps record their invocation order into a shared list and whose {@link
  * VerticleDeploymentManager} is a Mockito mock that records {@code deployPhase} / {@code undeployAll}
  * calls. The test module has <em>no</em> {@code vertique-launcher} on its classpath, so a green run
- * structurally proves AC-6 host-neutrality.
+ * structurally proves host-neutrality.
  *
  * <p>Coverage:
  * <ul>
- *   <li><b>AC-4 / ComposeValidator auto-materialization</b> — a contributed {@link
+ *   <li><b>ComposeValidator auto-materialization</b> — a contributed {@link
  *       dev.vertique.core.lifecycle.ComposeValidator} runs in {@code VALIDATE} with no explicit app call
  *       (the {@link dev.vertique.core.lifecycle.ComposeValidationStep} materializes the set), and a
  *       throwing validator fails {@code start()} with the construction exception attributed to {@code
  *       VALIDATE} (no verticle deployed);</li>
- *   <li><b>AC-6 / host-neutral start</b> — phases in enum order, steps sequential by
+ *   <li><b>host-neutral start</b> — phases in enum order, steps sequential by
  *       (priority, orderKey) within a phase, steps before verticles, {@code deployPhase} only for
  *       the four verticle phases;</li>
- *   <li><b>AC-7 / failure teardown</b> — a failing {@code MIGRATE} step (no verticles deployed) and a
+ *   <li><b>failure teardown</b> — a failing {@code MIGRATE} step (no verticles deployed) and a
  *       failing {@code EDGE} step (after INFRA/SERVICES verticles deployed) each abort with the
  *       original cause, run completed steps' shutdown steps in reverse, and undeploy any deployed
  *       verticles;</li>
@@ -73,7 +73,7 @@ import org.slf4j.LoggerFactory;
  *       verticle-deploy failure (whose startup steps did run) still runs that phase's shutdown step;</li>
  *   <li><b>memoized shutdown</b> — all (and concurrent) {@code shutdown()} callers observe the same
  *       {@code Future} and teardown work runs exactly once;</li>
- *   <li><b>diagnostics (NFR-APP-006)</b> — the failure log names the failing step's orderKey;</li>
+ *   <li><b>diagnostics</b> — the failure log names the failing step's orderKey;</li>
  *   <li><b>handle.shutdown()</b> — idempotent, reverse shutdown + undeploy, and never closes Vertx.</li>
  * </ul>
  */
@@ -81,10 +81,10 @@ import org.slf4j.LoggerFactory;
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
 class VertiqueApplicationBootstrapTest {
 
-    // --- AC-6: host-neutral start ---
+    // --- host-neutral start ---
 
     @Test
-    @DisplayName("AC-6: start runs phases in enum order, steps before verticles, deploys only verticle phases")
+    @DisplayName("start runs phases in enum order, steps before verticles, deploys only verticle phases")
     void start_runsPhasesInOrder_stepsBeforeVerticles_returnsHandle(Vertx vertx, VertxTestContext ctx) {
         List<String> order = new CopyOnWriteArrayList<>();
 
@@ -136,7 +136,7 @@ class VertiqueApplicationBootstrapTest {
     }
 
     @Test
-    @DisplayName("AC-6: a host with no startup steps still deploys the four verticle phases and succeeds")
+    @DisplayName("a host with no startup steps still deploys the four verticle phases and succeeds")
     void start_noSteps_deploysVerticlePhasesOnly(Vertx vertx, VertxTestContext ctx) {
         List<String> order = new CopyOnWriteArrayList<>();
         VerticleDeploymentManager manager = mock(VerticleDeploymentManager.class);
@@ -183,10 +183,10 @@ class VertiqueApplicationBootstrapTest {
         }));
     }
 
-    // --- AC-4: ComposeValidator automatic materialization ---
+    // --- ComposeValidator automatic materialization ---
 
     /**
-     * AC-4 positive: a {@link ComposeValidator} contributed via the {@link ComposeValidationStep}
+     * Positive case: a {@link ComposeValidator} contributed via the {@link ComposeValidationStep}
      * provider runs during VALIDATE <em>without</em> any explicit {@code component.someValidator()}
      * call. The test wires a {@code ComposeValidationStep} into the component's startup-step set and
      * asserts that:
@@ -204,7 +204,7 @@ class VertiqueApplicationBootstrapTest {
      */
     @Test
     @DisplayName(
-            "AC-4: a contributed ComposeValidator runs in VALIDATE with no explicit app call (runner materializes the set)")
+            "A contributed ComposeValidator runs in VALIDATE with no explicit app call (runner materializes the set)")
     void start_composeValidatorRunsAutomatically_noExplicitCall(Vertx vertx, VertxTestContext ctx) {
         AtomicBoolean validatorConstructed = new AtomicBoolean(false);
 
@@ -238,14 +238,13 @@ class VertiqueApplicationBootstrapTest {
     }
 
     /**
-     * AC-4 negative: a {@link ComposeValidator} whose construction throws causes {@code start(...)}
+     * Negative case: a {@link ComposeValidator} whose construction throws causes {@code start(...)}
      * to fail, and the failure is attributed to the {@link LifecyclePhase#VALIDATE VALIDATE} phase
      * (not CONFIGURE or any earlier phase). The test asserts that the failed future's cause is the
      * validator's construction exception.
      */
     @Test
-    @DisplayName(
-            "AC-4: a ComposeValidator whose construction throws causes start() to fail with the validator's exception")
+    @DisplayName("A ComposeValidator whose construction throws causes start() to fail with the validator's exception")
     void start_throwingComposeValidator_failsStartWithValidatorException(Vertx vertx, VertxTestContext ctx) {
         IllegalStateException validationException = new IllegalStateException("compose validation failed: missing dep");
 
@@ -275,10 +274,10 @@ class VertiqueApplicationBootstrapTest {
         }));
     }
 
-    // --- AC-7: failure teardown ---
+    // --- failure teardown ---
 
     @Test
-    @DisplayName("AC-7: a failing MIGRATE step aborts before any verticle, runs completed shutdown steps in reverse")
+    @DisplayName("a failing MIGRATE step aborts before any verticle, runs completed shutdown steps in reverse")
     void start_failingMigrateStep_tearsDownWithoutDeployingVerticles(Vertx vertx, VertxTestContext ctx) {
         List<String> order = new CopyOnWriteArrayList<>();
         RuntimeException boom = new RuntimeException("migrate boom");
@@ -324,7 +323,7 @@ class VertiqueApplicationBootstrapTest {
     }
 
     @Test
-    @DisplayName("AC-7: a failing EDGE step after INFRA/SERVICES deploy tears down verticles and propagates the cause")
+    @DisplayName("a failing EDGE step after INFRA/SERVICES deploy tears down verticles and propagates the cause")
     void start_failingEdgeStep_undeploysDeployedVerticles(Vertx vertx, VertxTestContext ctx) {
         List<String> order = new CopyOnWriteArrayList<>();
         RuntimeException boom = new RuntimeException("edge boom");
@@ -368,7 +367,7 @@ class VertiqueApplicationBootstrapTest {
     }
 
     @Test
-    @DisplayName("AC-7: a factory that throws fails the start future with the original exception")
+    @DisplayName("a factory that throws fails the start future with the original exception")
     void start_factoryThrows_failsWithCause(Vertx vertx, VertxTestContext ctx) {
         IllegalStateException boom = new IllegalStateException("factory boom");
         VertiqueComponentFactory<FakeComponent> factory = rt -> {
@@ -383,7 +382,7 @@ class VertiqueApplicationBootstrapTest {
     }
 
     @Test
-    @DisplayName("AC-7: component.startupSteps() throwing returns a failed future (no synchronous throw escapes)")
+    @DisplayName("component.startupSteps() throwing returns a failed future (no synchronous throw escapes)")
     void start_startupStepsThrows_failsWithCause(Vertx vertx, VertxTestContext ctx) {
         // A Dagger Provider backing a multibinding that throws during set materialization must not
         // escape as a synchronous throw from start() — it must produce a failed future. This test
@@ -406,7 +405,7 @@ class VertiqueApplicationBootstrapTest {
     }
 
     @Test
-    @DisplayName("AC-7: component.shutdownSteps() throwing returns a failed future (no synchronous throw escapes)")
+    @DisplayName("component.shutdownSteps() throwing returns a failed future (no synchronous throw escapes)")
     void start_shutdownStepsThrows_failsWithCause(Vertx vertx, VertxTestContext ctx) {
         // Same guard but for shutdownSteps() — both snapshot calls are inside the try.
         IllegalStateException boom = new IllegalStateException("shutdownSteps materialization failure");
@@ -556,7 +555,7 @@ class VertiqueApplicationBootstrapTest {
         }));
     }
 
-    // --- Diagnostics (NFR-APP-006) ---
+    // --- Diagnostics ---
 
     @Test
     @DisplayName("diagnostics: the startup-failure log names the failing step's orderKey")

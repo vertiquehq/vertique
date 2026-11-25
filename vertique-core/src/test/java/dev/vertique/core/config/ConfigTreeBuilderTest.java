@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  *       collisions, with error messages naming keys/paths only — never values (secret hygiene);</li>
  *   <li>build-order independence (collision detected regardless of input map iteration order);</li>
  *   <li>empty input → empty object;</li>
- *   <li>bridge parity (AC-13): Spring-flat and SmallRye-flat key shapes for the same logical config
+ *   <li>bridge parity: Spring-flat and SmallRye-flat key shapes for the same logical config
  *       produce the identical nested tree.</li>
  * </ul>
  */
@@ -340,10 +340,10 @@ class ConfigTreeBuilderTest {
         }
     }
 
-    // --- Bridge parity (AC-13) ---
+    // --- Bridge parity ---
 
     @Nested
-    @DisplayName("bridge parity (AC-13)")
+    @DisplayName("bridge parity")
     class BridgeParity {
 
         /**

@@ -142,7 +142,7 @@ class IdentitySnapshotCodecTest {
     }
 
     @Test
-    @DisplayName("F6: envelopeExpiry anchors the default TTL on capturedAt, not issuedAt, so a later issuedAt "
+    @DisplayName("envelopeExpiry anchors the default TTL on capturedAt, not issuedAt, so a later issuedAt "
             + "at the same capturedAt does not change the expiry")
     void envelopeExpiryAnchoredOnCapturedAtByDefault() {
         IdentitySnapshotCodec codec = newCodec();
@@ -156,7 +156,7 @@ class IdentitySnapshotCodecTest {
                 "the documented default envelope TTL is capturedAt + 24h, not issuedAt + 24h");
 
         // A chained re-encode mints a fresh issuedAt but must reuse the SAME immutable capturedAt —
-        // envelopeExpiry no longer even accepts issuedAt as a parameter, so calling it again with the
+        // envelopeExpiry does not accept issuedAt as a parameter, so calling it again with the
         // same capturedAt must yield the identical expiresAt regardless of how much wall-clock time
         // has passed between the original capture and the re-encode.
         Instant reEncodedExpiresAt = codec.envelopeExpiry(capturedAt);
@@ -404,7 +404,7 @@ class IdentitySnapshotCodecTest {
         assertEquals("key-1", decoded.integrity().keyId());
     }
 
-    // --- issue #181: a multi-element amr must survive a cross-process decode + verifyForUse ---
+    // --- a multi-element amr must survive a cross-process decode + verifyForUse ---
 
     /**
      * FROZEN pre-signed snapshot whose stored {@code content.assurance.amr} array is
@@ -420,8 +420,8 @@ class IdentitySnapshotCodecTest {
      * FROZEN pre-signed twin of {@link #AMR_PWD_OTP_SNAPSHOT_JSON} whose stored
      * {@code content.assurance.amr} array is the reversed {@code ["otp","pwd"]}, independently signed
      * under {@code key-1}. Together the pair covers both encounter orders, so exactly one of them
-     * would happen to match any given JVM's hash-set iteration order — the asymmetry issue #181 is
-     * about.
+     * would happen to match any given JVM's hash-set iteration order — the asymmetry a hash-ordered
+     * copy of {@code amr} would introduce.
      */
     private static final String AMR_OTP_PWD_SNAPSHOT_JSON = """
             {"carrier":{"carrierId":"carrier-1","target":{"address":"orders","kind":"outbox","messageType":null}},"content":{"actor":{"attributes":{"tenant":"acme"},"id":"svc-scheduler","type":"SERVICE"},"assurance":{"acr":"urn:acr","amr":["otp","pwd"],"authTime":"2026-07-01T10:15:30Z","providerLevel":2},"authenticatedAt":"2026-07-01T10:15:30Z","authenticationMethodKind":"jwt","authorizationClaims":[{"attributes":{},"audience":"aud","issuer":"idp","kind":"ROLE","source":"jwt-roles","value":"admin"}],"capturedAt":"2026-07-01T10:15:31Z","client":{"attributes":{"app":"mobile"},"clientId":"client-abc","source":"jwt-azp"},"delegation":{"authorityId":"grant-7","kind":"on-behalf-of"},"originSummary":"rest:authenticated","subject":{"attributes":{"realm":"acme-realm"},"id":"user-42","type":"USER"}},"expiresAt":"2026-07-01T11:15:31Z","integrity":{"algorithm":"HmacSHA256","keyId":"key-1","tag":"mcqnEr0op2mReGIHhRNYxG0VDCnihYZefmicVqkwv3c"},"issuedAt":"2026-07-01T10:15:31Z","schemaVersion":2}\
@@ -458,7 +458,7 @@ class IdentitySnapshotCodecTest {
     @DisplayName("no snapshot record component is declared as an unordered java.util.Set")
     void snapshotModelDeclaresNoUnorderedSetComponents() {
         // The HMAC is computed over a serialization of the typed model on the verifyIntegrity path,
-        // so ANY unordered Set anywhere in the snapshot tree reintroduces the issue-#181 cross-process
+        // so ANY unordered Set anywhere in the snapshot tree reintroduces the cross-process
         // verification failure. Pin the structural invariant, not just the one known offender.
         assertNoUnorderedSetReachableFrom(IdentitySnapshot.class);
     }
@@ -568,7 +568,8 @@ class IdentitySnapshotCodecTest {
     /**
      * Asserts that a frozen, externally-signed snapshot fixture decodes, exposes {@code amr} in the
      * exact order the fixture stores it, and passes {@link IdentitySnapshotCodec#verifyForUse} — the
-     * three seams issue #181 breaks, asserted separately so a failure names which one gave way.
+     * three seams an unordered {@code amr} would break, asserted separately so a failure names which one
+     * gave way.
      *
      * @param fixtureJson      the frozen pre-signed snapshot JSON
      * @param expectedAmrOrder the amr order stored in {@code fixtureJson}
@@ -588,7 +589,7 @@ class IdentitySnapshotCodecTest {
         assertDoesNotThrow(
                 () -> codec.verifyForUse(decoded),
                 "verifyForUse re-serializes the typed model, so a snapshot whose stored amr order differs "
-                        + "from the model's iteration order fails its own valid HMAC (issue #181)");
+                        + "from the model's iteration order fails its own valid HMAC");
     }
 
     /**
@@ -641,7 +642,7 @@ class IdentitySnapshotCodecTest {
     private static void walkRecordComponents(Class<?> record, Set<Type> visited) {
         // Deliberately no dev.vertique package filter: the guard's subject is the serialization graph
         // that feeds the HMAC, not code ownership — an embedded third-party record's unordered Set has
-        // exactly the issue-#181 failure mode. A false positive should fail loud and earn an explicit
+        // exactly the cross-process verification failure mode. A false positive should fail loud and earn an explicit
         // per-type allowlist, never a blanket package gate.
         for (RecordComponent component : record.getRecordComponents()) {
             walkType(component.getGenericType(), record, component, visited);

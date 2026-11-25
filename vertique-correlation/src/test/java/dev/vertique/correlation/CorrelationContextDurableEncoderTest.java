@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link CorrelationContextDurableEncoder}.
  *
- * <p>Verifies the wire-shape contract (FR-COR-143/144/148): the encoder returns a
+ * <p>Verifies the wire-shape contract: the encoder returns a
  * {@link DurableMetadata} document under the {@code "correlation"} namespace containing a
  * JSON body with {@code schemaVersion} stamped, absent optional fields omitted, durable-unsafe
  * session blocks dropped entirely, protocol refs filtered to safe entries only, and live mutation
@@ -75,7 +75,7 @@ class CorrelationContextDurableEncoderTest {
     // --- Filtering: durableSafe ---
 
     @Test
-    @DisplayName("session with durableSafe=false: entire session key is omitted (FR-COR-144)")
+    @DisplayName("session with durableSafe=false: entire session key is omitted")
     void durableUnsafeSessionOmitted() {
         MutableCorrelationContext live = new MutableCorrelationContext(REQ_ID, CORR_ID);
         live.setSession(new CorrelationSessionRef("sess-1", "jwt-jti", "jwt-claim", "jti", false, Map.of()));
@@ -96,8 +96,7 @@ class CorrelationContextDurableEncoderTest {
     }
 
     @Test
-    @DisplayName(
-            "protocolCorrelations filtered: durableSafe=false items dropped, durableSafe=true retained (FR-COR-148)")
+    @DisplayName("protocolCorrelations filtered: durableSafe=false items dropped, durableSafe=true retained")
     void protocolCorrelationsFiltered() {
         MutableCorrelationContext live = new MutableCorrelationContext(REQ_ID, CORR_ID);
         live.addProtocolCorrelation(safeRef("X-FAPI-Interaction-ID", "abc"));

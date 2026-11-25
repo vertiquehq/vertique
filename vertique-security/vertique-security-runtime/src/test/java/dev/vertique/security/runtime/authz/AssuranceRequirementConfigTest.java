@@ -20,8 +20,8 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link AssuranceRequirementConfig} — the action-PATTERN authoring
  * contract.
  *
- * <p>Pins: a wildcard pattern key gates every action it matches (the C1 spec-conformance fix — a
- * previous exact-string-keyed implementation silently matched nothing for a wildcard key), an exact
+ * <p>Pins: a wildcard pattern key gates every action it matches (an exact-string-keyed
+ * lookup would silently match nothing for a wildcard key), an exact
  * pattern still gates only its exact action, a non-matching action reports no requirement, two
  * overlapping patterns combine into the strictest requirement, and a malformed pattern key fails
  * fast at config-construction time rather than silently ungating.
@@ -127,7 +127,7 @@ class AssuranceRequirementConfigTest {
         @Test
         @DisplayName("a segment-count-mismatched pattern key (e.g. a two-segment exact pattern) that could never "
                 + "match any 3-segment ActionRef throws ConfigurationException at config construction, never "
-                + "silently ungating the action (C1 residual fix, ActionPattern's own construction-time rejection)")
+                + "silently ungating the action (ActionPattern's own construction-time rejection)")
         void neverMatchingPatternKeyFailsStartup() {
             AssuranceRequirement requirement = new AssuranceRequirement(1, Duration.ofMinutes(5));
             Map<String, AssuranceRequirement> actions = Map.of("payments.refund", requirement);

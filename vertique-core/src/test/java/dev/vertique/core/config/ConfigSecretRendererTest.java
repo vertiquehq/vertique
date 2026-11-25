@@ -18,10 +18,9 @@ import org.junit.jupiter.api.Test;
  * config {@code toString()} that renders an open property bag or a credential-bearing URI.
  *
  * <p>Covers: the union secret-path predicate over every token; flat- and nested-object recursion;
- * recursion into {@link JsonArray} element objects (the W2 gap — a value nested under an array index
- * leaked verbatim before this redactor); URI authority-userinfo masking (the W1 gap —
- * {@code user:pass@host} leaked {@code pass}); URI credential query-param masking; and the
- * non-mutation / null-safety guarantees.
+ * recursion into {@link JsonArray} element objects (a value nested under an array index must be
+ * masked); URI authority-userinfo masking ({@code user:pass@host} must not leak {@code pass});
+ * URI credential query-param masking; and the non-mutation / null-safety guarantees.
  */
 @DisplayName("ConfigSecretRenderer")
 class ConfigSecretRendererTest {
@@ -254,7 +253,7 @@ class ConfigSecretRendererTest {
         }
     }
 
-    // --- redactBag: array recursion (the W2 gap) ---
+    // --- redactBag: array recursion ---
 
     @Nested
     @DisplayName("redactBag — array recursion")
@@ -273,7 +272,7 @@ class ConfigSecretRendererTest {
 
             String rendered = ConfigSecretRenderer.redactBag(bag);
 
-            assertFalse(rendered.contains("SEKRIT"), "array-nested password must be masked (W2)");
+            assertFalse(rendered.contains("SEKRIT"), "array-nested password must be masked");
             assertTrue(rendered.contains("n1"), "non-secret array-nested value stays visible");
         }
 
@@ -302,11 +301,11 @@ class ConfigSecretRendererTest {
     class UriRedaction {
 
         @Test
-        @DisplayName("masks the authority userinfo (user:pass@host), keeping scheme/host/path (W1)")
+        @DisplayName("masks the authority userinfo (user:pass@host), keeping scheme/host/path")
         void userinfoMasked() {
             String redacted = ConfigSecretRenderer.redactUri("sftp://user:SEKRIT@host:22/path");
 
-            assertFalse(redacted.contains("SEKRIT"), "userinfo password must be masked (W1)");
+            assertFalse(redacted.contains("SEKRIT"), "userinfo password must be masked");
             assertTrue(redacted.contains("sftp"), "scheme stays visible");
             assertTrue(redacted.contains("host"), "host stays visible");
             assertTrue(redacted.contains("/path"), "path stays visible");

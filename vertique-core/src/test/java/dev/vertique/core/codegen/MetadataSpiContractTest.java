@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
  * {@code hasAnnotation}; and on {@link ParameterMetadata} {@code index}, {@code name}, {@code type})
  * and the generic/reflective accessors ({@code genericReturnType} / {@code asMethod} on
  * {@link MethodMetadata}; {@code genericType} on {@link ParameterMetadata}). These accessors must
- * be present on the interface — their presence is part of the frozen surface (OQ-4 resolved).
+ * be present on the interface — their presence is part of the frozen surface.
  */
 class MetadataSpiContractTest {
 

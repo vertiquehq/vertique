@@ -51,7 +51,7 @@ import software.amazon.awssdk.services.ssm.model.ParameterType;
  * <p>All tests use a stub {@link SsmGateway} — no real AWS endpoint is required.
  * Covers: parameter-to-nested-key mapping, pagination, flag forwarding, StringList
  * handling, prefix re-rooting, empty-result semantics, schema validation, ServiceLoader
- * discovery, store close, and NFR-CONF-002 log redaction.
+ * discovery, store close, and log redaction.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -548,10 +548,10 @@ class SsmConfigStoreFactoryTest {
         interface AutoCloseableGateway extends SsmGateway, AutoCloseable {}
     }
 
-    // --- Log Redaction (NFR-CONF-002) ---
+    // --- Log Redaction ---
 
     @Nested
-    @DisplayName("NFR-CONF-002: no parameter values in logs")
+    @DisplayName("no parameter values in logs")
     class LogRedaction {
 
         private ListAppender<ILoggingEvent> logCapture;

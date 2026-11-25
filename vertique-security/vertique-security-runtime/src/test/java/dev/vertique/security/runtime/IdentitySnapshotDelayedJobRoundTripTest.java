@@ -66,7 +66,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link DurableContextPropagator#mergeCaptured(DurableMetadata, String)}; the consumer side decodes
  * that metadata via {@link DurableContextPropagator#decodeToDispatchContext(DurableMetadata, String)}
  * and installs it through {@link InboundExecutionContextScope#installDispatch(Map, String)}, which
- * runs the real reconstruction initializer. The postgres persist/poll hop is deferred (§13) — the
+ * runs the real reconstruction initializer. The postgres persist/poll hop is not exercised — the
  * event-bus/native carrier is stood in for by feeding the propagator's decoded dispatch-context map
  * straight into the receive-side install, exactly the two operations
  * {@code DelayedJobService.toExecution} and {@code DelayedJobPoller} perform around it.
@@ -96,7 +96,7 @@ class IdentitySnapshotDelayedJobRoundTripTest {
     private static final PrincipalRef USER =
             new PrincipalRef(PrincipalType.USER, "user-77", Map.of("realm", "acme-realm"));
 
-    // Capture projects free-form attributes out (W2 credential-free enforcement); only type/id (+
+    // Capture projects free-form attributes out (credential-free enforcement); only type/id (+
     // allowlisted system.reason) survive the durable round trip.
     private static final PrincipalRef PROJECTED_USER = new PrincipalRef(PrincipalType.USER, "user-77", Map.of());
 
@@ -111,11 +111,11 @@ class IdentitySnapshotDelayedJobRoundTripTest {
         DurableContextPropagator propagator = component.durableContextPropagator();
         InboundExecutionContextScope executionScope = component.inboundExecutionContextScope();
 
-        // F5/F3a row binding: mirrors DelayedJobService.toExecution / DelayedJobPoller.dispatch,
+        // Row binding: mirrors DelayedJobService.toExecution / DelayedJobPoller.dispatch,
         // which thread a real per-row DurableCarrierDescriptor (carrierId = the execution id; target =
         // (delayed-job, the handler address)) rather than the carrier-less overloads. The delayed-job
         // boundary is wired with a real carrier, so its snapshot is NOT sentinel-signed and must still
-        // reconstruct under the F3a fail-closed sentinel backstop.
+        // reconstruct under the fail-closed sentinel backstop.
         DurableCarrierDescriptor rowCarrier = new DurableCarrierDescriptor(
                 "execution-1",
                 new DurableTarget(DispatchBoundary.DELAYED_JOB, "job.delayed.test-handler", Optional.empty()));
@@ -221,7 +221,7 @@ class IdentitySnapshotDelayedJobRoundTripTest {
             // DelayedJobPoller dispatch always carries a DeferredExecutionOrigin alongside the
             // decoded snapshot (see DelayedJobPoller.pollOnce, which puts both keys into the same
             // ctx map) — that origin is the deferred-execution provenance the origin-or-verified
-            // mint evidence rule (A9) requires before an unverifiable snapshot may still mint a
+            // mint evidence rule requires before an unverifiable snapshot may still mint a
             // fallback service context, so it is included here to mirror the real production shape.
             Map<String, Object> dispatchContext = Map.of(
                     IdentitySnapshotContext.class.getName(),
@@ -367,10 +367,10 @@ class IdentitySnapshotDelayedJobRoundTripTest {
         /** Exposes the config-driven {@link IdentitySnapshotCapture} ingress seam. */
         IdentitySnapshotCapture identitySnapshotCapture();
 
-        /** Exposes the {@link IdentitySnapshotFactory} used to construct a disabled capture in T3. */
+        /** Exposes the {@link IdentitySnapshotFactory} used to construct a disabled capture. */
         IdentitySnapshotFactory identitySnapshotFactory();
 
-        /** Exposes the config-backed {@link IdentitySnapshotCodec} used to sign the T4 base snapshot. */
+        /** Exposes the config-backed {@link IdentitySnapshotCodec} used to sign the base snapshot. */
         IdentitySnapshotCodec identitySnapshotCodec();
     }
 

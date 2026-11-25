@@ -28,9 +28,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link CorrelationContextDurableDecoder}.
  *
- * <p>The decoder now accepts a {@link DurableMetadata} document and reads its
- * {@code "correlation"} namespace body as a {@link JsonObject}. The old "malformed JSON string"
- * path is no longer reachable at this layer: {@link DurableMetadata} only stores valid JSON
+ * <p>The decoder accepts a {@link DurableMetadata} document and reads its
+ * {@code "correlation"} namespace body as a {@link JsonObject}. A "malformed JSON string"
+ * path is not reachable at this layer: {@link DurableMetadata} only stores valid JSON
  * objects. The malformed-header case is filtered upstream by
  * {@link dev.vertique.core.context.DurableMetadataHeaderCodec#fromHeaders(Map)}.
  *
@@ -227,7 +227,7 @@ class CorrelationContextDurableDecoderTest {
         assertSingleFailure(body, "value");
     }
 
-    // --- Value-record constructor IAE → ContextDecodeResult.failure (FR-COR-145) ---
+    // --- Value-record constructor IAE → ContextDecodeResult.failure ---
 
     @Test
     @DisplayName("blank trace.traceId surfaces as a single failure warning (IAE from constructor)")
@@ -259,16 +259,15 @@ class CorrelationContextDurableDecoderTest {
         assertSingleFailure(body, "blank");
     }
 
-    // Note: the "malformed JSON string" test that existed in the old Map<String,String>-based API
-    // has been removed. DurableMetadata only stores valid JsonObject bodies — a malformed raw
-    // header string is filtered out upstream by DurableMetadataHeaderCodec.fromHeaders() (which
-    // silently skips reserved headers whose value does not parse as a JSON object). The decoder
-    // therefore never receives unparseable content.
+    // Note: there is no "malformed JSON string" test. DurableMetadata only stores valid JsonObject
+    // bodies — a malformed raw header string is filtered out upstream by
+    // DurableMetadataHeaderCodec.fromHeaders() (which silently skips reserved headers whose value
+    // does not parse as a JSON object). The decoder therefore never receives unparseable content.
 
     // --- Forward compatibility ---
 
     @Test
-    @DisplayName("unknown OPTIONAL fields are ignored (FR-COR-152)")
+    @DisplayName("unknown OPTIONAL fields are ignored")
     void unknownOptionalFieldsIgnored() {
         JsonObject body = new JsonObject()
                 .put("schemaVersion", 1)

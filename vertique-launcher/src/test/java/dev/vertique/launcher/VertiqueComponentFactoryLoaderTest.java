@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link VertiqueComponentFactoryLoader#selectFactory} — the pure exactly-one
- * selection rule (FR-APP-032 / AC-5) behind ServiceLoader discovery, plus the produced-type
+ * selection rule behind ServiceLoader discovery, plus the produced-type
  * validation performed by the wrapper {@code selectFactory} returns.
  *
  * <p>The discovery boundaries are exercised here with synthetic lists rather than real

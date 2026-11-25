@@ -71,7 +71,7 @@ import org.junit.jupiter.api.Test;
  * </ul>
  *
  * <p>These tests use a minimal Dagger {@link TestComponent} that includes only
- * {@link SecurityAuthzModule} so that the bindings introduced in this slice are exercised in
+ * {@link SecurityAuthzModule} so that its bindings are exercised in
  * isolation, without any framework REST or auth dependencies.
  */
 class SecurityAuthzModuleTest {
@@ -162,7 +162,7 @@ class SecurityAuthzModuleTest {
         assertNotNull(component.authorizationIntrospector(), "AuthorizationIntrospector must be non-null");
     }
 
-    // --- duplicate policy name across sources (FR-018) ---
+    // --- duplicate policy name across sources ---
 
     @Test
     @DisplayName("duplicate policy name across two sources fails component creation, naming both sources")
@@ -354,10 +354,10 @@ class SecurityAuthzModuleTest {
      * {@link #DELEGATION_ACTION}, plus the application-supplied {@link DelegationGrantValidator}
      * binding {@link DelegationEnforcementModule} requires but deliberately does not default.
      *
-     * <p>Seeds {@link InMemoryDelegationGrantValidator} with no grants (the S1 fixture) — a lookup for
-     * any grant id therefore denies with {@link DelegationReasonCodes#GRANT_NOT_FOUND}. This reuses the
-     * existing S1/S2b fixtures rather than re-deriving the four-quadrant intersection matrix, which is
-     * already pinned by {@link DelegationEnforcementNarrowerTest}.
+     * <p>Seeds {@link InMemoryDelegationGrantValidator} with no grants — a lookup for
+     * any grant id therefore denies with {@link DelegationReasonCodes#GRANT_NOT_FOUND}. This avoids
+     * re-deriving the four-quadrant intersection matrix, which is already pinned by
+     * {@link DelegationEnforcementNarrowerTest}.
      */
     @Module
     interface DelegationWiringSupportModule {

@@ -22,9 +22,8 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link AuthenticationAssurance}.
  *
  * <p>Verifies: typical OAuth assurance construction; null rejections for required Optional fields;
- * defensive copy of {@code amr} set; null {@code amr} treated as empty set; and — the contract this
- * class pins for issue #181 — that {@code amr} preserves its source encounter order, stays
- * immutable, and rejects null elements.
+ * defensive copy of {@code amr} set; null {@code amr} treated as empty set; and that {@code amr}
+ * preserves its source encounter order, stays immutable, and rejects null elements.
  */
 class AuthenticationAssuranceTest {
 
@@ -114,13 +113,13 @@ class AuthenticationAssuranceTest {
         assertTrue(assurance.amr().isEmpty());
     }
 
-    // --- encounter order (issue #181) ---
+    // --- encounter order ---
 
     @Test
     @DisplayName("amr preserves encounter order for both insertion orders")
     void preservesEncounterOrderForBothInsertionOrders() {
         // The stored JSON array order of amr must round-trip through the typed model, otherwise a
-        // snapshot signed on one node fails its own HMAC when re-serialized on another (issue #181).
+        // snapshot signed on one node fails its own HMAC when re-serialized on another.
         // A hash-ordered copy collapses BOTH sources below to one identical iteration order, so at
         // most one of these two assertions can hold unless the copy is encounter-order preserving.
         SequencedSet<String> forward = new LinkedHashSet<>(List.of("pwd", "otp"));

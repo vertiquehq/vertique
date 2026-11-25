@@ -40,7 +40,7 @@ class SnapshotHmacConfigTest {
     private static final String ACTIVE_SECRET = "super-secret-signing-key-material";
 
     @Nested
-    @DisplayName("SnapshotHmacConfig previous-key uniqueness (F4)")
+    @DisplayName("SnapshotHmacConfig previous-key uniqueness")
     class PreviousKeyUniqueness {
 
         @Test
@@ -74,7 +74,7 @@ class SnapshotHmacConfigTest {
     }
 
     @Nested
-    @DisplayName("SnapshotHmacKeyConfig minimum key strength (F6)")
+    @DisplayName("SnapshotHmacKeyConfig minimum key strength")
     class MinimumKeyStrength {
 
         @Test

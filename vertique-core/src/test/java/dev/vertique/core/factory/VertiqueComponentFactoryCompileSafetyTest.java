@@ -14,14 +14,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * AC-12 negative proof (NFR-APP-002): a missing host-bean adapter module is a <strong>build-time</strong>
+ * Negative case: a missing host-bean adapter module is a <strong>build-time</strong>
  * Dagger missing-binding error, not a runtime failure.
  *
  * <p>The test compiles, in-memory via {@code compile-testing} running the real Dagger
  * {@link dagger.internal.codegen.ComponentProcessor}, a {@code @Component} that depends on a
  * host-native bean ({@code FakeDataSource}) <em>without</em> the typed adapter module that would
  * provide it. It asserts the compilation fails with a missing-binding diagnostic — proving that the
- * typed-adapter pattern (FR-APP-004) fails closed at build time when an adapter is forgotten.
+ * typed-adapter pattern fails closed at build time when an adapter is forgotten.
  *
  * <p>The two assertions are paired deliberately: {@code assertFailed} alone would also be satisfied
  * by an unrelated compile error (e.g. a typo in the fixture), so the diagnostic-substring check
