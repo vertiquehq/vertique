@@ -2587,8 +2587,8 @@ class CronSchedulerTest {
             doAnswer(invocation -> {
                         ctx.verify(() -> {
                             assertEquals(JobState.ABANDONED, invocation.getArgument(1));
-                            assertNotNull(invocation.getArgument(2), "the abandon records an error type");
-                            assertNotNull(invocation.getArgument(3), "the abandon records an error message");
+                            assertNotNull(invocation.getArgument(2), "the abandon records an error message");
+                            assertNotNull(invocation.getArgument(3), "the abandon records an error type");
                         });
                         ctx.completeNow();
                         return Future.succeededFuture(Optional.empty());

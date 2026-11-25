@@ -455,9 +455,8 @@ public class UpgradeConversionIT {
 
     @Test
     void severalScheduledTimersOfOneInstanceKeepTheirFireOrderAndKinds() throws Exception {
-        // Given a database at the previous release's schema holding one instance with four scheduled timers, one of
-        // each
-        // purpose, a cancelled timer and a failed timer, written in an order unlike their fire times
+        // Given a database at the previous release's schema holding one instance with four scheduled timers (one of
+        // each purpose), a cancelled timer and a failed timer, written in an order unlike their fire times
         flyway(timerOrderDb).target("1").load().migrate();
         UUID instance = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
