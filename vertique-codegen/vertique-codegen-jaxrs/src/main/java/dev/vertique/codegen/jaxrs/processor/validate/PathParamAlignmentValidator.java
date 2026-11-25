@@ -100,7 +100,7 @@ public final class PathParamAlignmentValidator {
 
         // Step 3: Extract placeholder names (strips :regex suffix automatically)
         Set<String> placeholders = PathPlaceholders.extract(combinedPath);
-        reportInvalidRegexVariableNames(method, combinedPath);
+        reportTemplateProblems(method, combinedPath);
 
         // Step 4: Collect @PathParam names from direct parameters and composites
         String methodName = method.getSimpleName().toString();
@@ -147,7 +147,7 @@ public final class PathParamAlignmentValidator {
 
         // Step 3: Extract placeholder names
         Set<String> placeholders = PathPlaceholders.extract(combinedPath);
-        reportInvalidRegexVariableNames(methodContract.concreteMethod(), combinedPath);
+        reportTemplateProblems(methodContract.concreteMethod(), combinedPath);
 
         // Step 4: Collect @PathParam names from effective param contracts and composites
         String methodName = methodContract.concreteMethod().getSimpleName().toString();
@@ -175,17 +175,19 @@ public final class PathParamAlignmentValidator {
     }
 
     /**
-     * Emits an {@code ERROR} for each variable that a regex-constrained template cannot register: in a
-     * template with a {@code :regex} constraint every variable becomes a named regex group, so its name
-     * must be a letter followed by letters and digits. The runtime rejects the same templates at startup
-     * through the same rule.
+     * Emits an {@code ERROR} for each problem that stops the template from being registered as a route:
+     * a variable declared twice, a {@code :regex} constraint that is not a valid regular expression,
+     * and, in a template with a {@code :regex} constraint, a variable name that a regex group cannot
+     * carry (it must be a letter followed by letters and digits). The runtime rejects the same
+     * templates at startup through the same rules, and every message names the resource method.
      *
      * @param method       the method the diagnostic is reported on
      * @param combinedPath the normalized class-plus-method path template
      */
-    private void reportInvalidRegexVariableNames(ExecutableElement method, String combinedPath) {
-        for (String name : PathTemplateVariables.invalidRegexVariableNames(combinedPath)) {
-            ctx.diagnostics().error(method, PathTemplateVariables.invalidRegexVariableNameMessage(combinedPath, name));
+    private void reportTemplateProblems(ExecutableElement method, String combinedPath) {
+        String owner = method.getEnclosingElement().getSimpleName() + "." + method.getSimpleName() + "()";
+        for (PathTemplateVariables.Problem problem : PathTemplateVariables.problems(combinedPath)) {
+            ctx.diagnostics().error(method, PathTemplateVariables.message(owner, combinedPath, problem));
         }
     }
 

@@ -159,6 +159,68 @@ class ResourceStartupChecksTest {
         registerAccepted(new PlainUnderscoreResource());
     }
 
+    // --- Duplicate variables and malformed constraints ---
+
+    @Path("/o/{id:\\d+}")
+    @PermitAll
+    static class ClassAndMethodShareNameResource {
+        @GET
+        @Path("/{id}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Path("/p/{id}")
+    @PermitAll
+    static class PlainDuplicateResource {
+        @GET
+        @Path("/x/{id}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Path("/m")
+    @PermitAll
+    static class MalformedConstraintResource {
+        @GET
+        @Path("/{id:[0-9}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a class and a method path that declare one variable name fail startup naming the method and the variable")
+    void duplicateAcrossClassAndMethod_rejected() {
+        RouteRegistrationViolation violation = only(register(new ClassAndMethodShareNameResource()));
+        assertEquals(RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE, violation.type());
+        assertTrue(violation.message().contains("ClassAndMethodShareNameResource.get()"), violation.message());
+        assertTrue(violation.message().contains("'id'"), violation.message());
+        assertTrue(violation.message().contains("more than once"), violation.message());
+        assertTrue(!violation.message().contains("PatternSyntaxException"), violation.message());
+    }
+
+    @Test
+    @DisplayName("a duplicate variable in a template with no regex constraint fails startup too")
+    void duplicateInPlainTemplate_rejected() {
+        RouteRegistrationViolation violation = only(register(new PlainDuplicateResource()));
+        assertTrue(violation.message().contains("PlainDuplicateResource.get()"), violation.message());
+        assertTrue(violation.message().contains("'id'"), violation.message());
+    }
+
+    @Test
+    @DisplayName("a malformed regex constraint fails startup naming the method and the variable")
+    void malformedConstraint_rejected() {
+        RouteRegistrationViolation violation = only(register(new MalformedConstraintResource()));
+        assertEquals(RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE, violation.type());
+        assertTrue(violation.message().contains("MalformedConstraintResource.get()"), violation.message());
+        assertTrue(violation.message().contains("'id'"), violation.message());
+        assertTrue(violation.message().contains("not a valid regular expression"), violation.message());
+    }
+
     // --- @Context on a resource member ---
 
     @Path("/ctx")

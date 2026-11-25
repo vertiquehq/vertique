@@ -80,22 +80,46 @@ class RouteValidator {
     }
 
     /**
-     * Rejects a path template that carries a {@code :regex} constraint and declares a variable whose
-     * name a regex group cannot carry. Such a template is registered as one anchored regex in which every
-     * variable becomes a named group, and route creation would otherwise fail with a raw pattern error.
+     * Rejects a path template that cannot be registered as a route: a variable name declared twice, a
+     * {@code :regex} constraint that is not a valid regular expression, or, in a template that carries a
+     * {@code :regex} constraint, a variable whose name a regex group cannot carry. Route creation would
+     * otherwise fail with a raw pattern error that names neither the resource method nor the variable.
+     * Every message names the resource method.
      *
      * @param meta the resource method metadata to inspect
-     * @return one violation per offending variable name; empty when the template is registrable
+     * @return one violation per offending variable; empty when the template is registrable
      */
     static List<RouteRegistrationViolation> validatePathTemplate(ResourceMethodMeta meta) {
         List<RouteRegistrationViolation> violations = new ArrayList<>();
-        for (String name : PathTemplateVariables.invalidRegexVariableNames(meta.path())) {
+        String owner = meta.method().getDeclaringClass().getSimpleName() + "."
+                + meta.method().getName() + "()";
+        for (PathTemplateVariables.Problem problem : PathTemplateVariables.problems(meta.path())) {
             violations.add(new RouteRegistrationViolation(
                     meta.operationId(),
                     RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE,
-                    PathTemplateVariables.invalidRegexVariableNameMessage(meta.path(), name)));
+                    PathTemplateVariables.message(owner, meta.path(), problem)));
+        }
+        if (violations.isEmpty() && !compilesAsRoute(meta.path())) {
+            violations.add(new RouteRegistrationViolation(
+                    meta.operationId(),
+                    RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE,
+                    PathTemplateVariables.unregistrableMessage(owner, meta.path())));
         }
         return violations;
+    }
+
+    /** Whether the template's route pattern compiles, the last check after the per-variable ones. */
+    private static boolean compilesAsRoute(String template) {
+        JaxRsPathTemplate translated = JaxRsPathTemplate.translate(template);
+        if (!translated.isRegex()) {
+            return true;
+        }
+        try {
+            java.util.regex.Pattern.compile(translated.vertxValue());
+            return true;
+        } catch (java.util.regex.PatternSyntaxException e) {
+            return false;
+        }
     }
 
     /**

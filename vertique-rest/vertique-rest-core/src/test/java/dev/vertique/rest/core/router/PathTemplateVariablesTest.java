@@ -49,7 +49,11 @@ class PathTemplateVariablesTest {
     @Test
     @DisplayName("the message names the template, the variable and the rule")
     void messageNamesTemplateVariableAndRule() {
-        String message = PathTemplateVariables.invalidRegexVariableNameMessage("/u/{user_id:[0-9]+}", "user_id");
+        String message = PathTemplateVariables.message(
+                "Users.get()",
+                "/u/{user_id:[0-9]+}",
+                new PathTemplateVariables.Problem(PathTemplateVariables.Kind.INVALID_NAME, "user_id"));
+        assertTrue(message.contains("Users.get()"), message);
         assertTrue(message.contains("/u/{user_id:[0-9]+}"), message);
         assertTrue(message.contains("'user_id'"), message);
         assertTrue(message.contains("letter followed by letters and digits"), message);
@@ -73,5 +77,40 @@ class PathTemplateVariablesTest {
         assertEquals(List.of(), PathTemplateVariables.invalidRegexVariableNames(template));
         String braces = "/{id:" + "{a}".repeat(100_000) + "}";
         assertEquals(List.of(), PathTemplateVariables.invalidRegexVariableNames(braces));
+    }
+
+    @Test
+    @DisplayName("a repeated name is reported once, in a plain template and in a regex template")
+    void duplicateNames() {
+        assertEquals(List.of("id"), PathTemplateVariables.duplicateVariableNames("/o/{id:\\d+}/{id}"));
+        assertEquals(List.of("id"), PathTemplateVariables.duplicateVariableNames("/a/{id}/b/{id}/{id}"));
+        assertEquals(List.of(), PathTemplateVariables.duplicateVariableNames("/a/{id}/b/{other:\\d+}"));
+    }
+
+    @Test
+    @DisplayName("a constraint that does not compile is reported against its variable")
+    void malformedConstraints() {
+        assertEquals(List.of("id"), PathTemplateVariables.malformedConstraintNames("/o/{id:[0-9}"));
+        assertEquals(
+                List.of("a", "b"), PathTemplateVariables.malformedConstraintNames("/{a:(x}/{ok:\\d+}/{b:*}/{a:(y}"));
+        assertEquals(List.of(), PathTemplateVariables.malformedConstraintNames("/o/{id:\\d{3}}/{plain}"));
+    }
+
+    @Test
+    @DisplayName(
+            "problems lists names, repeats and constraints in that order, and the message names method and variable")
+    void problemsInOrder() {
+        List<PathTemplateVariables.Problem> problems = PathTemplateVariables.problems("/{a_b:[0-9}/{x}/{x}");
+        assertEquals(
+                List.of(
+                        new PathTemplateVariables.Problem(PathTemplateVariables.Kind.INVALID_NAME, "a_b"),
+                        new PathTemplateVariables.Problem(PathTemplateVariables.Kind.DUPLICATE_NAME, "x"),
+                        new PathTemplateVariables.Problem(PathTemplateVariables.Kind.MALFORMED_CONSTRAINT, "a_b")),
+                problems);
+        String duplicate = PathTemplateVariables.message("Orders.get()", "/{x}/{x}", problems.get(1));
+        assertTrue(duplicate.contains("Orders.get()") && duplicate.contains("'x'"), duplicate);
+        String malformed = PathTemplateVariables.message("Orders.get()", "/{a_b:[0-9}", problems.get(2));
+        assertTrue(malformed.contains("Orders.get()") && malformed.contains("'a_b'"), malformed);
+        assertEquals(List.of(), PathTemplateVariables.problems("/o/{id:\\d+}/{subKey}"));
     }
 }

@@ -178,6 +178,77 @@ class ResourceMemberContextValidatorTest {
     }
 
     @Test
+    @DisplayName("a variable name shared by the class and the method path is a compile error naming the method")
+    void duplicateVariableAcrossClassAndMethod_rejected() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Res", """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/o/{id:\\\\d+}")
+                public class Res {
+                    @GET
+                    @Path("/{id}")
+                    public String get(@PathParam("id") String id) { return id; }
+                }
+                """));
+        result.assertFailed();
+        result.assertErrorMessage("Res.get()");
+        result.assertErrorMessage("more than once");
+        result.assertErrorMessage("'id'");
+    }
+
+    @Test
+    @DisplayName("a variable name declared twice in a template with no regex constraint is a compile error")
+    void duplicateVariableInPlainTemplate_rejected() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Res", """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/p/{id}")
+                public class Res {
+                    @GET
+                    @Path("/x/{id}")
+                    public String get(@PathParam("id") String id) { return id; }
+                }
+                """));
+        result.assertFailed();
+        result.assertErrorMessage("Res.get()");
+        result.assertErrorMessage("more than once");
+    }
+
+    @Test
+    @DisplayName("a regex constraint that does not compile is a compile error naming the method and the variable")
+    void malformedRegexConstraint_rejected() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Res", """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/m")
+                public class Res {
+                    @GET
+                    @Path("/{id:[0-9}")
+                    public String get(@PathParam("id") String id) { return id; }
+                }
+                """));
+        result.assertFailed();
+        result.assertErrorMessage("Res.get()");
+        result.assertErrorMessage("not a valid regular expression");
+        result.assertErrorMessage("'id'");
+    }
+
+    @Test
     @DisplayName("two interfaces with different class-level paths are a compile error")
     void conflictingInterfacePaths_rejected() {
         var result = ProcessorTestHarness.run(
