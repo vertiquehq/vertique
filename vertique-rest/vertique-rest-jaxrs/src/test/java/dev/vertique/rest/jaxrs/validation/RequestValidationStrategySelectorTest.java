@@ -54,7 +54,7 @@ class RequestValidationStrategySelectorTest {
     }
 
     @Test
-    @DisplayName("select throws a startup exception naming the unknown id and listing the available ids")
+    @DisplayName("select throws a startup exception naming the setting and listing the available ids, never the value")
     void requestValidationStrategySelectorFailsFastOnUnknownId() {
         Set<RequestValidationStrategy> available = Set.of(strategy("web-validation"), strategy("none"));
 
@@ -64,7 +64,8 @@ class RequestValidationStrategySelectorTest {
                 "an unknown configured id must fail fast with RestConfigurationException");
 
         String message = ex.getMessage();
-        assertTrue(message.contains("nonexistent-typo"), "message must name the configured id; was: " + message);
+        assertTrue(message.contains("jaxrs.validationStrategy"), "message must name the setting; was: " + message);
+        assertFalse(message.contains("nonexistent-typo"), "message must not echo the configured id; was: " + message);
         assertTrue(
                 message.contains("[none, web-validation]"),
                 "message must list the available ids sorted; was: " + message);

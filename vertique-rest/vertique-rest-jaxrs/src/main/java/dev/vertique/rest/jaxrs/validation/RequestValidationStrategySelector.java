@@ -12,7 +12,8 @@ import java.util.Set;
  * RequestValidationStrategy#id()}.
  *
  * <p>Selection fails fast: when no registered strategy carries the configured id, this throws a
- * {@link RestConfigurationException} naming the configured id and listing the available ids (sorted).
+ * {@link RestConfigurationException} naming the {@code jaxrs.validationStrategy} setting and listing the
+ * available ids (sorted); the message never echoes the configured value.
  * There is no silent fallback to {@code none} and no special-casing of any particular id — the
  * registered {@code id()} values are the single source of truth, so a misconfiguration (e.g. selecting
  * {@code "web-validation"} without {@code vertique-rest-validation} on the classpath) surfaces at
@@ -31,17 +32,18 @@ public final class RequestValidationStrategySelector {
      *                     multibinding)
      * @return the matching strategy
      * @throws RestConfigurationException when no registered strategy carries {@code configuredId}; the
-     *     message names the configured id and lists the available ids sorted
+     *     message names the setting and lists the available ids sorted, never the configured value
      */
     public static RequestValidationStrategy select(String configuredId, Set<RequestValidationStrategy> available) {
         return available.stream()
                 .filter(strategy -> strategy.id().equals(configuredId))
                 .findFirst()
-                .orElseThrow(() -> new RestConfigurationException("No request-validation strategy registered with id '"
-                        + configuredId + "'. Available strategy ids: "
-                        + available.stream()
-                                .map(RequestValidationStrategy::id)
-                                .sorted()
-                                .toList()));
+                .orElseThrow(() -> new RestConfigurationException(
+                        "No request-validation strategy is registered with the configured jaxrs.validationStrategy"
+                                + " id. Available strategy ids: "
+                                + available.stream()
+                                        .map(RequestValidationStrategy::id)
+                                        .sorted()
+                                        .toList()));
     }
 }
