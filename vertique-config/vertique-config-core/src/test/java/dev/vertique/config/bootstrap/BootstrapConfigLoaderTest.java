@@ -5,7 +5,12 @@ package dev.vertique.config.bootstrap;
 
 import static dev.vertique.config.bootstrap.VertxThreadLeakAssertions.assertNoLeakedVertxThreads;
 import static dev.vertique.config.bootstrap.VertxThreadLeakAssertions.liveVertxThreadNames;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;

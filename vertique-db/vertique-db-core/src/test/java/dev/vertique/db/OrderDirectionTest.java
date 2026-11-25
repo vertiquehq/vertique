@@ -3,7 +3,7 @@
 
 package dev.vertique.db;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.db.query.OrderDirection;
 import org.junit.jupiter.api.Test;

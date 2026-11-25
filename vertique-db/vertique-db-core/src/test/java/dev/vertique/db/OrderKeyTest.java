@@ -3,7 +3,9 @@
 
 package dev.vertique.db;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.db.exception.InvalidDataAccessUsageException;
 import dev.vertique.db.query.NullHandling;

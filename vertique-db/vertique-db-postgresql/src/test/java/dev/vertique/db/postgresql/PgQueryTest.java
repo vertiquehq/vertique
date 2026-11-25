@@ -3,8 +3,9 @@
 
 package dev.vertique.db.postgresql;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.db.DbExceptionMapper;
 import io.vertx.sqlclient.SqlClient;

@@ -3,8 +3,8 @@
 
 package dev.vertique.kafka.health;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.core.health.HealthCheckResult;
 import dev.vertique.core.health.HealthStatus;
