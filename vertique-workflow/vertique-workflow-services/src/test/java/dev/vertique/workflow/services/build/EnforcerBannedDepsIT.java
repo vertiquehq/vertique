@@ -26,7 +26,7 @@ import org.w3c.dom.NodeList;
  * {@code vertique-workflow-services/pom.xml} is correctly declared and will reject both
  * banned artifacts if they are added as compile-time dependencies.
  *
- * <p>The rule (boundary 1, CG-WF-001 cycle 1) prohibits:
+ * <p>The rule prohibits:
  * <ul>
  *   <li>{@code dev.vertique:vertique-workflow-postgresql} — workflow-services must not
  *       compile-depend on the PostgreSQL engine; it uses the generic

@@ -83,8 +83,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * loser returns without ever binding its carrier.
  *
  * <p>Reuses the {@code runOnDuplicated} + {@link TenantCtx}/{@link TenantCtxCodec} fixture pattern
- * established by {@code WorkflowLiveSignalContextTest} (S6) and {@code WorkflowContextBinderTest}
- * (S3).
+ * established by {@code WorkflowLiveSignalContextTest} and {@code WorkflowContextBinderTest}.
  */
 @ExtendWith({VertxExtension.class, MockitoExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -295,7 +294,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
         TaskStore<SqlClient> taskStore = mock();
 
         // lenient(): unused by the dedup-race-loser test, whose drive short-circuits before ever
-        // reaching doApplySignal — proof that the dedup claim runs before the bind (FR-WF-CTX-042).
+        // reaching doApplySignal — proof that the dedup claim runs before the bind.
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         org.mockito.Mockito.lenient().when(history.append(any(), any())).thenReturn(Future.succeededFuture());
         org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
@@ -325,7 +324,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     }
 
     @Test
-    @DisplayName("signal(): explicit carrier wins over ambient and instance fills an absent namespace (AC-4 core)")
+    @DisplayName("signal(): explicit carrier wins over ambient and instance fills an absent namespace")
     void signal_explicitCarrierInstanceLevel_carrierWinsOverAmbientPlusInstanceFill(Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
         SqlClient tx = ActiveTransactionClient.create();
@@ -370,8 +369,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     }
 
     @Test
-    @DisplayName("signal(): explicit carrier on a NULL-metadata instance binds exactly the carrier's namespaces"
-            + " (FR-WF-CTX-012 sentence 2)")
+    @DisplayName("signal(): explicit carrier on a NULL-metadata instance binds exactly the carrier's namespaces")
     void signal_explicitCarrierNullInstanceMetadata_carrierNamespacesOnlyNoFillContribution(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
@@ -410,7 +408,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     }
 
     @Test
-    @DisplayName("signal(): a losing dedup-race delivery's carrier is discarded and never bound (FR-WF-CTX-042)")
+    @DisplayName("signal(): a losing dedup-race delivery's carrier is discarded and never bound")
     void signal_duplicateDedupKeyRace_loserCarrierDiscardedWithLoser(Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
         SqlClient tx = ActiveTransactionClient.create();
@@ -502,7 +500,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
 
     @Test
     @DisplayName("signal(): a non-null explicit carrier on an engine assembled with a null propagator fails fast"
-            + " instead of silently dropping the carrier (C4 no-silent-drop)")
+            + " instead of silently dropping the carrier")
     void signal_explicitCarrierWithNullPropagator_failsFastInsteadOfSilentlyDroppingCarrier(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarnessWithNullPropagator();

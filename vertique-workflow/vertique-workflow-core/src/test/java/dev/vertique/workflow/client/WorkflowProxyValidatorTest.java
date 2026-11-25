@@ -28,8 +28,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies {@link WorkflowProxyValidator} against every validation rule in §8.3 of the
- * implementation plan. Each test covers either a happy path or exactly one failure case.
+ * Verifies {@link WorkflowProxyValidator} against every validation rule. Each test covers either a happy
+ * path or exactly one failure case.
  */
 class WorkflowProxyValidatorTest {
 
@@ -336,8 +336,8 @@ class WorkflowProxyValidatorTest {
 
     /**
      * Failure: @WorkflowStart with only annotated params and no payload — e.g. the method that
-     * declares just an @IdempotencyKey String and no payload object. Previously accepted; now
-     * rejected because the proxy would route a null payload through WorkflowOperations.start().
+     * declares just an @IdempotencyKey String and no payload object. Rejected because the
+     * proxy would route a null payload through WorkflowOperations.start().
      */
     @WorkflowContract
     interface StartWithNoPayload {
@@ -353,8 +353,7 @@ class WorkflowProxyValidatorTest {
 
     /**
      * Failure: @WorkflowSignal with only annotated / WorkflowInstanceId params and no payload.
-     * Previously accepted; now rejected because the proxy would route a null payload through
-     * WorkflowOperations.signal().
+     * Rejected because the proxy would route a null payload through WorkflowOperations.signal().
      */
     @WorkflowContract
     interface SignalWithNoPayload {
@@ -384,7 +383,7 @@ class WorkflowProxyValidatorTest {
         Future<Void> doSomethingUnannotated(WorkflowInstanceId id);
     }
 
-    /** Failure: interface declares a default method — not supported in cycle 1. */
+    /** Failure: interface declares a default method — not supported. */
     @WorkflowContract
     interface ContractWithDefaultMethod {
         @WorkflowStart
@@ -396,7 +395,7 @@ class WorkflowProxyValidatorTest {
         @WorkflowQuery("view")
         Future<WorkflowView> query(WorkflowInstanceId id);
 
-        // Default method — not supported in cycle 1
+        // Default method — not supported
         default String helperMethod() {
             return "helper";
         }
@@ -471,7 +470,7 @@ class WorkflowProxyValidatorTest {
     }
 
     @Nested
-    @DisplayName("failure cases — §8.3")
+    @DisplayName("failure cases")
     class FailureCases {
 
         @Test

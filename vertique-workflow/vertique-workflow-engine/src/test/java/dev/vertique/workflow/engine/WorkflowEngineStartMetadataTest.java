@@ -236,8 +236,8 @@ class WorkflowEngineStartMetadataTest {
                             ctx.failNow(ar.cause());
                             return;
                         }
-                        // Start is capture-only (FR-WF-CTX-025 "start: none — no new bind"): the
-                        // ambient TenantCtx bound before the call must still be exactly what was
+                        // Start is capture-only: the ambient TenantCtx
+                        // bound before the call must still be exactly what was
                         // bound — no fresh install/replace touched it during doCreateInstance.
                         assertThat(holder.current(TenantCtx.class))
                                 .as("no new durable scope should replace the ambient binding during start")

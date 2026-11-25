@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Verifies {@link CelExpressionProfile} against all test scenarios specified in the Slice E plan:
+ * Verifies {@link CelExpressionProfile} across these scenario groups:
  * <ul>
  *   <li>Happy-path operator groups (boolean composition, comparisons, membership, strings, lists,
  *       nested property access, {@code has()} macro)</li>
@@ -31,7 +31,7 @@ import org.mockito.Mockito;
  *   <li>Named-condition variable injection</li>
  *   <li>Determinism: same source → same canonical form and fingerprint; whitespace-only changes
  *       → same fingerprint; parenthesis around entire expression → same fingerprint; semantic
- *       change → different fingerprint (FR-WF-DEF-045/049)</li>
+ *       change → different fingerprint</li>
  * </ul>
  *
  * <p>All assertions go through the {@link ExpressionProfile} interface — no CEL-internal types
@@ -412,10 +412,10 @@ class CelExpressionProfileTest {
         }
     }
 
-    // --- Determinism (FR-WF-DEF-006) ---
+    // --- Determinism ---
 
     @Nested
-    @DisplayName("Determinism (FR-WF-DEF-006)")
+    @DisplayName("Determinism")
     class Determinism {
 
         @Test
@@ -437,7 +437,7 @@ class CelExpressionProfileTest {
         }
 
         @Test
-        @DisplayName("whitespace-only changes → same fingerprint (AC #8)")
+        @DisplayName("whitespace-only changes → same fingerprint")
         void whitespaceOnlyChangesSameFingerprint() {
             CompiledExpression a = profile.compile("state.x > 5", boolEnv);
             CompiledExpression b = profile.compile("state.x  >  5", boolEnv);

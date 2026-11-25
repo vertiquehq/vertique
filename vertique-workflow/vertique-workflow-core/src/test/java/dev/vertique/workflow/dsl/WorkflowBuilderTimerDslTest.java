@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the cycle-2 DSL extensions on {@link WorkflowBuilder}: standalone {@code .timer(...)} /
+ * Verifies the timer DSL extensions on {@link WorkflowBuilder}: standalone {@code .timer(...)} /
  * {@code .timerAt(...)} steps, the new {@code .waitForSignal(...)} fluent chain with optional
  * {@code .timeoutAfter(...)} branch, and the corresponding plan-hash drift detection for
  * {@link TimerSpec} payload changes.
@@ -284,7 +284,7 @@ class WorkflowBuilderTimerDslTest {
 
         @Test
         @SuppressWarnings("deprecation")
-        @DisplayName("cycle-1 .waitFor(...) deprecated overload still emits WaitSignalNode with timeout=null")
+        @DisplayName("deprecated .waitFor(...) overload still emits WaitSignalNode with timeout=null")
         void deprecatedWaitForOverload() {
             WorkflowBuilder<State> wf = baseBuilder();
             wf.dispatch("start", "svc", s -> new Object(), "wait-shipped")
@@ -307,7 +307,7 @@ class WorkflowBuilderTimerDslTest {
     }
 
     @Nested
-    @DisplayName("planHash drift for cycle-2 DSL")
+    @DisplayName("planHash drift for the timer DSL")
     class PlanHashDrift {
 
         private static String hashOf(java.util.function.Consumer<WorkflowBuilder<State>> body) {
@@ -367,8 +367,8 @@ class WorkflowBuilderTimerDslTest {
         }
 
         @Test
-        @DisplayName("cycle-1-only plan hashes deterministically across builds")
-        void cycleOneOnlyDeterministic() {
+        @DisplayName("a plain dispatch-and-complete plan hashes deterministically across builds")
+        void plainPlanDeterministic() {
             String h1 = hashOf(
                     wf -> wf.dispatch("start", "svc", s -> new Object(), "done").complete("done"));
             String h2 = hashOf(
@@ -380,7 +380,7 @@ class WorkflowBuilderTimerDslTest {
         @DisplayName("TimerSpec.At sub-millisecond differences flip planHash (no toEpochMilli truncation)")
         void instantSubMillisecondDriftDetected() {
             // Two Instants that differ ONLY in nanoseconds — Long.toString(toEpochMilli()) would
-            // hash them identically. The fix hashes (epochSecond, nano) so the digest is sensitive
+            // hash them identically. The hash covers (epochSecond, nano), so the digest is sensitive
             // to nanosecond-level changes.
             Instant a = Instant.ofEpochSecond(1893456000L, 100);
             Instant b = Instant.ofEpochSecond(1893456000L, 200);

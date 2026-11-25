@@ -36,13 +36,13 @@ import org.junit.jupiter.api.Test;
  * <p>Verifies:
  * <ul>
  *   <li>Concurrent registrations of distinct definitionIds all succeed without data loss or
- *       exceptions (FR-WF-DEF-022).</li>
+ *       exceptions.</li>
  *   <li>Concurrent register + resolve of the same id never exposes half-published state —
  *       readers either see a fully-registered workflow or find nothing; they NEVER see a
  *       {@link NullPointerException} or {@link WorkflowVersionPinUnavailableException} from
- *       a partially-published-and-then-rolled-back entry (FR-WF-DEF-023).</li>
+ *       a partially-published-and-then-rolled-back entry.</li>
  *   <li>A failed {@code register()} rolls back atomically — no half-committed state is
- *       observable after the failure (FR-WF-DEF-024).</li>
+ *       observable after the failure.</li>
  *   <li>Multiple versions of the same id registered sequentially resolve correctly.</li>
  * </ul>
  */

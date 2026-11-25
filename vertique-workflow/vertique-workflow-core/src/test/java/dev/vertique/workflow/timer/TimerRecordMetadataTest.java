@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the {@link TimerRecord#metadata()} field invariants after the durable context
- * propagation migration (FR-CTX-178):
+ * propagation migration:
  *
  * <ul>
  *   <li>Null metadata is normalised to {@link DurableMetadata#empty()}.

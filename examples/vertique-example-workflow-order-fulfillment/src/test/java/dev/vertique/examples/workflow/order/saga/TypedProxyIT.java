@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Typed proxy integration test (§9.4 test 21).
+ * Typed proxy integration test.
  *
  * <p>Drives the same happy-path scenario as {@link OrderFulfillmentSagaIT} but invokes the saga
  * through the {@link OrderFulfillmentWorkflow} typed proxy created from

@@ -18,11 +18,11 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Verifies the {@link WorkflowInstance#metadata()} field invariants introduced by durable context completion:
+ * Verifies the {@link WorkflowInstance#metadata()} field invariants:
  *
  * <ul>
  *   <li>{@code metadata} is {@code null}-preserving — unlike {@link BranchToken#metadata()}, it is
- *       not normalised to {@link DurableMetadata#empty()} (C1: {@code null} means "no captured
+ *       not normalised to {@link DurableMetadata#empty()} ({@code null} means "no captured
  *       context", a semantically distinct state).
  *   <li>Every {@code with*} updater passes {@code metadata} through unchanged (immutability by
  *       omission — no {@code withMetadata} updater exists).

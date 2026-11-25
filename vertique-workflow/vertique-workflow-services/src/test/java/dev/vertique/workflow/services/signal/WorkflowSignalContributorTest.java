@@ -330,7 +330,7 @@ class WorkflowSignalContributorTest {
         }
     }
 
-    // --- handleSignal(): carrier decode at the async boundary (review round-1 FIX 1b/1c) ---
+    // --- handleSignal(): carrier decode at the async boundary ---
 
     @Nested
     @DisplayName("handleSignal(): explicit carrier decode boundary")
@@ -371,7 +371,7 @@ class WorkflowSignalContributorTest {
 
         @Test
         @DisplayName("malformed carrier redelivery: once processOnce reports Duplicate, the carrier is never re-decoded"
-                + " (poison-loop regression proof)")
+                + " (no poison loop)")
         @SuppressWarnings("unchecked")
         void handleSignal_malformedCarrierRedelivery_idempotentlySkipped() {
             WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());

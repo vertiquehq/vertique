@@ -142,7 +142,7 @@ class WorkflowEngineBinderWiringTest {
             DefaultContextHolder holder) {}
 
     /**
-     * Builds a {@link RuntimeWorkflow} whose plan covers every node shape the S4 entry points need:
+     * Builds a {@link RuntimeWorkflow} whose plan covers every node shape the entry points need:
      * a {@link WaitSignalNode} (signal), a {@link HumanTaskNode} with one decision (task complete /
      * reassign), a {@link TimerNode} (timer fire), and a terminal {@link CompleteNode}. All
      * callbacks are stubbed via a Mockito mock registry with lenient stubbing (each test only
@@ -851,7 +851,7 @@ class WorkflowEngineBinderWiringTest {
                 })));
     }
 
-    // --- Strict-context tests (AC-7): non-duplicated context + non-null instance metadata => ISE ---
+    // --- Strict-context tests: non-duplicated context + non-null instance metadata => ISE ---
 
     @Test
     @DisplayName("signal(): non-duplicated context + non-null instance metadata fails with IllegalStateException")

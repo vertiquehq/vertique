@@ -469,7 +469,7 @@ class DefaultWorkflowDefinitionServiceTest {
     }
 
     @Nested
-    @DisplayName("load() size cap — A1")
+    @DisplayName("load() size cap")
     class LoadSizeCap {
 
         @Test

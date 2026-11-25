@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for the static payload and guard helpers in {@link WorkflowPayloads}.
  *
- * <p>Covers the two behaviors specified in the C1 red-test spec:
+ * <p>Covers:
  * <ul>
  *   <li>{@link WorkflowPayloads#coercePayload} returns {@code null} when given a {@code null}
  *       input, regardless of the target type.</li>

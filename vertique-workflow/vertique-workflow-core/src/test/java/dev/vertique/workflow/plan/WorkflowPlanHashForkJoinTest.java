@@ -32,9 +32,8 @@ import org.junit.jupiter.api.Test;
  *   <li>join failure step id.</li>
  * </ol>
  *
- * <p>The DSL methods for fork/branch/join are introduced in a later slice; until then this test
- * builds plans by hand-constructing a {@link WorkflowPlan} record and computes the hash via the
- * package-private {@link WorkflowBuilder#computePlanHashForTesting(WorkflowPlan)} helper.
+ * <p>This test builds plans by hand-constructing a {@link WorkflowPlan} record and computes the
+ * hash via the package-private {@link WorkflowBuilder#computePlanHashForTesting(WorkflowPlan)} helper.
  */
 class WorkflowPlanHashForkJoinTest {
 

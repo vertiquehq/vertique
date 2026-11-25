@@ -30,11 +30,11 @@ import org.junit.jupiter.api.Test;
  *   <li>duplicate branch ids rejected;</li>
  *   <li>missing branch start step rejected;</li>
  *   <li>missing/mistyped joinStepId rejected;</li>
- *   <li>nested ForkNode rejected (FR-WF-PAR-008);</li>
- *   <li>FIRST_SUCCESS branch with NORMAL race-safety rejected (FR-WF-PAR-011);</li>
- *   <li>race branch with CompensationNode rejected (FR-WF-PAR-054);</li>
- *   <li>race branch with compensable ServiceDispatchNode rejected (FR-WF-PAR-054);</li>
- *   <li>race branch with non-race-safe target rejected (FR-WF-PAR-012);</li>
+ *   <li>nested ForkNode rejected;</li>
+ *   <li>FIRST_SUCCESS branch with NORMAL race-safety rejected;</li>
+ *   <li>race branch with CompensationNode rejected;</li>
+ *   <li>race branch with compensable ServiceDispatchNode rejected;</li>
+ *   <li>race branch with non-race-safe target rejected;</li>
  *   <li>FIRST_FAILURE without failureStepId rejected;</li>
  *   <li>JoinNode with unknown nextStepId/failureStepId rejected;</li>
  *   <li>JoinNode without a matching ForkNode rejected;</li>
@@ -369,7 +369,7 @@ class WorkflowPlanValidatorTest {
     }
 
     @Nested
-    @DisplayName("Nested fork rejection (FR-WF-PAR-008)")
+    @DisplayName("Nested fork rejection")
     class NestedForkRejection {
 
         @Test
@@ -396,7 +396,7 @@ class WorkflowPlanValidatorTest {
     }
 
     @Nested
-    @DisplayName("Race-safety rejection (FR-WF-PAR-011/012/054)")
+    @DisplayName("Race-safety rejection")
     class RaceSafetyRejection {
 
         @Test

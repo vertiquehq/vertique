@@ -13,10 +13,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies plan-hash drift detection for cycle-3 {@link dev.vertique.workflow.plan.HumanTaskNode}
- * additions: changing decision names, payload types, assignment values, literal vs. resolver
+ * Verifies plan-hash drift detection for {@link dev.vertique.workflow.plan.HumanTaskNode}
+ * fields: changing decision names, payload types, assignment values, literal vs. resolver
  * variants, and due-date specs all flip the hash. Plans without any {@code HumanTaskNode} hash
- * identically before and after cycle-3 changes (regression guard).
+ * identically regardless of the human-task fields (regression guard).
  */
 class WorkflowPlanHashTaskDriftTest {
 
@@ -241,11 +241,11 @@ class WorkflowPlanHashTaskDriftTest {
         }
     }
 
-    // --- Cycle-1/2 regression: plans without HumanTaskNode hash identically ---
+    // --- Regression: plans without HumanTaskNode hash identically ---
 
     @Nested
-    @DisplayName("cycle-1+2 regression: plans without HumanTaskNode are unaffected")
-    class CycleOneAndTwoRegression {
+    @DisplayName("regression: plans without HumanTaskNode are unaffected")
+    class PlansWithoutHumanTaskRegression {
 
         @Test
         @DisplayName("a pure service-dispatch + complete plan hashes identically across two builds")

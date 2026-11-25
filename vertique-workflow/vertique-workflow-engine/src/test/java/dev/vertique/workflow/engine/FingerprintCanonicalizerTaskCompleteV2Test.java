@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests verifying the cycle-5 {@code task-complete} fingerprint schema {@code v: 2}.
+ * Unit tests verifying the {@code task-complete} fingerprint schema {@code v: 2}.
  *
  * <p>Covers:
  * <ul>
@@ -241,7 +241,7 @@ class FingerprintCanonicalizerTaskCompleteV2Test {
     // =========================================================================
 
     /**
-     * Tests proving that the reassignment fingerprint was NOT changed by cycle 5 — it still emits
+     * Tests proving that the reassignment fingerprint is NOT affected by the {@code v: 2} schema — it still emits
      * {@code v: 1} and does not include {@code reviewedSubjectVersion}.
      */
     @Nested

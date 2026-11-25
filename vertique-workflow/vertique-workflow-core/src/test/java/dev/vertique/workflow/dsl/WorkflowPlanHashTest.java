@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 class WorkflowPlanHashTest {
 
     @Test
-    @DisplayName("a keyed wait with timeout keeps its baseline hash")
+    @DisplayName("a keyed wait with timeout keeps its pinned hash")
     void planWithoutAReplyKeepsItsHash() {
         var timeout = new WaitSignalNode.TimeoutBranch(
                 new dev.vertique.workflow.plan.TimerSpec.After(java.time.Duration.ofMinutes(3)),
@@ -54,7 +54,7 @@ class WorkflowPlanHashTest {
                 "wait",
                 java.util.List.of(wait, new dev.vertique.workflow.plan.CompleteNode("done")),
                 null);
-        // Pins the baseline digest for a keyed wait with a timeout.
+        // Pins the digest for a keyed wait with a timeout.
         assertThat(WorkflowBuilder.computePlanHashForTesting(plan))
                 .isEqualTo("90d0e2f1be6d1e76240a079e9b70f8605d27f791602d2b3d3fe577b45e81c26c");
     }
@@ -252,15 +252,15 @@ class WorkflowPlanHashTest {
     }
 
     /**
-     * Plan hash of {@code golden-saga} v1 with unannotated state, signal and decision classes, captured by
-     * registering this definition at revision {@code 778e8407}, before any logical type naming existed.
+     * Pinned plan hash of {@code golden-saga} v1 with unannotated state, signal and decision classes.
+     * It must stay unchanged for classes without a logical type name.
      */
     private static final String GOLDEN_UNANNOTATED_PLAN_HASH =
             "268d4fa429daf6dc490b4962b88b142216e0f685c1d2ebb096179157b4e00a73";
 
     @Test
-    @DisplayName("an unannotated definition registers with the plan hash it had before logical type names")
-    void unannotatedRegistryHashMatchesBaselineGolden() {
+    @DisplayName("an unannotated definition registers with its pinned plan hash")
+    void unannotatedRegistryHashMatchesPinnedGolden() {
         // Given: a definition whose state, start, signal and decision classes carry no annotation
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
 
@@ -307,7 +307,7 @@ class WorkflowPlanHashTest {
             }
         });
 
-        // Then: the plan hash is the one captured before the change
+        // Then: the plan hash is the pinned one
         assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "golden-saga", 1L))
                         .plan()
                         .planHash())

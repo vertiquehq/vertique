@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the additive {@link WorkflowBuilder#decideWithCallbackId(String, Function, CallbackId)}
- * overload introduced in WF-003 Slice F.
+ * overload used by the document compiler.
  *
  * <p>The overload allows the document compiler to embed a stable expression/route fingerprint into
  * the callback id rather than allocating the conventional {@code "{stepId}.resolver"} id. These

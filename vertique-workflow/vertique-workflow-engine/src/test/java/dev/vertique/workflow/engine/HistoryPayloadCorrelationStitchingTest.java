@@ -518,7 +518,7 @@ class HistoryPayloadCorrelationStitchingTest {
         });
     }
 
-    // --- taskCompleted: ambient correlation authoritative over instance fallback (AC-5 side-effect half) ---
+    // --- taskCompleted: ambient correlation authoritative over instance fallback ---
 
     @Test
     @DisplayName(
@@ -538,7 +538,7 @@ class HistoryPayloadCorrelationStitchingTest {
         // Instance metadata carries a different (irrelevant here since this record has no
         // metadata-derived correlation source) namespace; the correlation observed inside the
         // bound drive is whatever is ambient/bound at call time, which the binder authoritatively
-        // sets from the ambient base per FR-WF-CTX-020/024.
+        // sets from the ambient base.
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), WorkflowStatus.WAITING);
         TaskRecord task = new TaskRecord(
                 taskId,
@@ -587,8 +587,7 @@ class HistoryPayloadCorrelationStitchingTest {
         });
     }
 
-    // --- taskCompleted: branch-owned completion instance-metadata correlation fallback (review
-    // round-1 FIX 2) ---
+    // --- taskCompleted: branch-owned completion instance-metadata correlation fallback ---
 
     /**
      * Builds a {@link CorrelationContext} durable-metadata document under the {@code "correlation"}
@@ -699,7 +698,7 @@ class HistoryPayloadCorrelationStitchingTest {
                 .when(h.branchTokens().updateOptimistic(any(), anyLong(), any()))
                 .thenReturn(Future.succeededFuture(1));
 
-        // No ambient correlation is bound for this drive — the C2 bind-once rule keeps the
+        // No ambient correlation is bound for this drive — the bind-once rule keeps the
         // branch-owned path unbound; the fallback must read inst.metadata() instead.
         runOnDuplicated(vertx, v -> RecordedCompletionSegments.run(h.txOps(), inst, reserved, tx)
                 .onComplete(ar -> ctx.verify(() -> {
@@ -767,8 +766,7 @@ class HistoryPayloadCorrelationStitchingTest {
         });
     }
 
-    // --- taskCompleted: branch-owned completion, malformed nested correlationId shape (Codex
-    // round-2 FIX A) ---
+    // --- taskCompleted: branch-owned completion, malformed nested correlationId shape ---
 
     /**
      * Builds a durable-metadata document under the {@code "correlation"} namespace whose

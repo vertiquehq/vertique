@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Verifies {@link DecisionRouteCompiler} against the functional requirements in WF-003 Slice F:
+ * Verifies {@link DecisionRouteCompiler} against these requirements:
  *
  * <ul>
  *   <li>First-match semantics: routes are evaluated in declaration order and the first match wins.</li>
@@ -189,7 +189,7 @@ class DecisionRouteCompilerTest {
         void namedConditionInvokedOncePerEvaluation() {
             // Counter increments every time the condition callback runs. A naive implementation
             // that evaluates the condition once when building evalEnv AND again when walking the
-            // `condition` route would double-invoke; with the precompute-once-and-reuse fix the
+            // `condition` route would double-invoke; since the condition is computed once and reused, the
             // counter must be exactly 1 per resolver call regardless of how many routes reference
             // the same condition id.
             AtomicInteger invocations = new AtomicInteger(0);
@@ -217,7 +217,7 @@ class DecisionRouteCompilerTest {
     // --- Fingerprint stability ---
 
     @Nested
-    @DisplayName("fingerprint stability (AC #8)")
+    @DisplayName("fingerprint stability")
     class FingerprintStability {
 
         @Test
