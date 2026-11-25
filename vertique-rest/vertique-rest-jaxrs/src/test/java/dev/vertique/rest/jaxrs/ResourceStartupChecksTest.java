@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -157,6 +158,123 @@ class ResourceStartupChecksTest {
     @DisplayName("a name with an underscore in a template with no regex constraint is registered")
     void underscoreNameWithoutRegex_accepted() {
         registerAccepted(new PlainUnderscoreResource());
+    }
+
+    // --- Duplicate variables and malformed constraints ---
+
+    @Path("/o/{id:\\d+}")
+    @PermitAll
+    static class ClassAndMethodShareNameResource {
+        @GET
+        @Path("/{id}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Path("/p/{id}")
+    @PermitAll
+    static class PlainDuplicateResource {
+        @GET
+        @Path("/x/{id}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Path("/m")
+    @PermitAll
+    static class MalformedConstraintResource {
+        @GET
+        @Path("/{id:[0-9}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a class and a method path that declare one variable name fail startup naming the method and the variable")
+    void duplicateAcrossClassAndMethod_rejected() {
+        RouteRegistrationViolation violation = only(register(new ClassAndMethodShareNameResource()));
+        assertEquals(RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE, violation.type());
+        assertTrue(violation.message().contains("ClassAndMethodShareNameResource.get()"), violation.message());
+        assertTrue(violation.message().contains("'id'"), violation.message());
+        assertTrue(violation.message().contains("more than once"), violation.message());
+        assertFalse(violation.message().contains("Named capturing group"), violation.message());
+        assertFalse(violation.message().contains("PatternSyntaxException"), violation.message());
+    }
+
+    @Test
+    @DisplayName("a duplicate variable in a template with no regex constraint fails startup too")
+    void duplicateInPlainTemplate_rejected() {
+        RouteRegistrationViolation violation = only(register(new PlainDuplicateResource()));
+        assertTrue(violation.message().contains("PlainDuplicateResource.get()"), violation.message());
+        assertTrue(violation.message().contains("'id'"), violation.message());
+    }
+
+    @Test
+    @DisplayName("a malformed regex constraint fails startup naming the method and the variable")
+    void malformedConstraint_rejected() {
+        RouteRegistrationViolation violation = only(register(new MalformedConstraintResource()));
+        assertEquals(RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE, violation.type());
+        assertTrue(violation.message().contains("MalformedConstraintResource.get()"), violation.message());
+        assertTrue(violation.message().contains("'id'"), violation.message());
+        assertTrue(violation.message().contains("not a valid regular expression"), violation.message());
+    }
+
+    @Path("/m")
+    @PermitAll
+    static class UnclosedQuoteResource {
+        @GET
+        @Path("/{id:\\Qab}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Path("/m")
+    @PermitAll
+    static class NestedGroupReusesNameResource {
+        @GET
+        @Path("/{id:(?<id>a)}")
+        public Future<String> get(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+    }
+
+    @Path("/m")
+    @PermitAll
+    static class GroupReusesOtherVariableResource {
+        @GET
+        @Path("/{a:(?<b>x)}/{b}")
+        public Future<String> get(@PathParam("a") String a, @PathParam("b") String b) {
+            return Future.succeededFuture(a + b);
+        }
+    }
+
+    @Test
+    @DisplayName("a constraint that fails only inside its group is rejected naming the method and the variable")
+    void constraintFailingOnlyInsideTheGroup_rejected() {
+        for (Object resource : List.of(new UnclosedQuoteResource(), new NestedGroupReusesNameResource())) {
+            RouteRegistrationViolation violation = only(register(resource));
+            assertTrue(
+                    violation.message().contains(resource.getClass().getSimpleName() + ".get()"), violation.message());
+            assertTrue(violation.message().contains("'id'"), violation.message());
+            assertTrue(violation.message().contains("not a valid regular expression"), violation.message());
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a template whose variables each pass but whose route pattern does not compile names method and template")
+    void routePatternThatDoesNotCompile_rejected() {
+        RouteRegistrationViolation violation = only(register(new GroupReusesOtherVariableResource()));
+        assertEquals(RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE, violation.type());
+        assertTrue(violation.message().contains("GroupReusesOtherVariableResource.get()"), violation.message());
+        assertTrue(violation.message().contains("/m/{a:(?<b>x)}/{b}"), violation.message());
+        assertTrue(violation.message().contains("cannot be compiled into a route pattern"), violation.message());
+        assertFalse(violation.message().contains("Named capturing group"), violation.message());
     }
 
     // --- @Context on a resource member ---

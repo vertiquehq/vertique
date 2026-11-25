@@ -135,31 +135,13 @@ final class JaxRsPathTemplate {
 
     /**
      * Converts a regex-constrained JAX-RS template to a single anchored Java regex in which each
-     * variable becomes a named capture group. A constrained variable {@code {name:regex}} becomes
-     * {@code (?<name>regex)}; an unconstrained variable {@code {name}} in the same template becomes
-     * {@code (?<name>[^/]+)}. Literal (non-variable) text between variables is regex-quoted so that
-     * characters such as {@code .} match literally. The result is anchored with {@code ^…$} so the full
-     * path must match.
+     * variable becomes a named capture group; see {@link PathTemplateVariables#anchoredRegex}.
      *
      * @param jaxRsPath the JAX-RS path template carrying at least one regex constraint
      * @param capturing {@code false} to emit every variable as a non-capturing group
      * @return the anchored regex with named capture groups (none when {@code capturing} is false)
      */
     private static String toAnchoredRegex(String jaxRsPath, boolean capturing) {
-        var matcher = VARIABLE.matcher(jaxRsPath);
-        StringBuilder out = new StringBuilder("^");
-        int last = 0;
-        while (matcher.find()) {
-            out.append(Pattern.quote(jaxRsPath.substring(last, matcher.start())));
-            String name = matcher.group(1);
-            String constraint = matcher.group(2);
-            // A variant keeps its alternative text exactly (a trailing space is part of it).
-            String body = constraint != null ? (capturing ? constraint.trim() : constraint) : "[^/]+";
-            out.append(capturing ? "(?<" + name + ">" : "(?:").append(body).append(')');
-            last = matcher.end();
-        }
-        out.append(Pattern.quote(jaxRsPath.substring(last)));
-        out.append('$');
-        return out.toString();
+        return PathTemplateVariables.anchoredRegex(jaxRsPath, capturing);
     }
 }
