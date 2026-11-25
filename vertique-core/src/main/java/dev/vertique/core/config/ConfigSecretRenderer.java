@@ -256,10 +256,20 @@ public final class ConfigSecretRenderer {
      * {@code RAW{…}} (Camel) is masked whole, even when it contains a separator. The scheme, host, port,
      * and path are kept intact for debuggability.
      *
-     * <p>Known limit: a credential value that contains an unescaped {@code ;} or {@code &} ends at
+     * <p>The userinfo is everything between the {@code //} and the <em>last {@code @}</em> of the value,
+     * so a password that holds a raw {@code /}, {@code ?}, {@code #} or {@code @} is masked whole. An
+     * {@code @} in the path or query of a URL without userinfo is read the same way, so the host is
+     * masked with it ({@code https://host/p?to=a@b.com} renders as {@code https://***@b.com}).
+     *
+     * <p>Known limits: a credential value that contains an unescaped {@code ;} or {@code &} ends at
      * that character, so the rest renders as given; write such a value as {@code RAW(…)}. A parameter
      * name that is not one of the credential names above, such as {@code saslJaasConfig} in a camel-cased
-     * spelling the path predicate does not know, is not masked.
+     * spelling the path predicate does not know, is not masked. A credential value that ends early at
+     * a {@code ;} or {@code &} and is followed by an {@code @} shows the text after that {@code @}
+     * (the host in front of it is masked). A password that itself contains {@code ?name=} with a
+     * credential name as {@code name} is read as a parameter, and the user and the part of the password
+     * before the {@code ?} stay visible; percent-encode such a password. A value without a {@code //}
+     * (a scheme-less connection string) and a MySQL {@code (key=value)} host list are not recognized.
      *
      * <p>This is a best-effort string redaction that never throws: a {@code null} URI renders as
      * {@code "null"}; a URI with no scheme, no userinfo, or no parameters is handled gracefully. It does
@@ -322,16 +332,20 @@ public final class ConfigSecretRenderer {
     }
 
     /**
-     * Masks the authority userinfo of a URI: the {@code user:pass} (or bare {@code user}) between the
-     * {@code //} that opens the authority and the {@code @} that ends it. The scheme, host, port, and
-     * everything after the authority are left unchanged. A URI with no {@code //} authority or no
-     * {@code @} in the authority is returned unchanged.
+     * Masks the authority userinfo of a URI: everything between the {@code //} that opens the authority
+     * and the <em>last {@code @} of the value</em>. The scheme, the text after that {@code @} (host,
+     * port and path) and everything before the {@code //} are left unchanged. A URI with no {@code //}
+     * or no {@code @} after it is returned unchanged.
      *
-     * <p>Per RFC 3986 §3.2.1, userinfo is the substring <em>before the last {@code @}</em> in the
-     * authority component. When a password contains a literal (unencoded) {@code @} — e.g.
-     * {@code sftp://user:p@ss@host/path} — the entire {@code user:p@ss} is still userinfo and must
-     * be masked. Using {@code lastIndexOf} instead of {@code indexOf} handles this correctly while
-     * remaining backward-compatible with the single-{@code @} case (last == first).
+     * <p>The last {@code @} of the whole value ends the userinfo, not the last one before the first
+     * {@code /}, {@code ?} or {@code #}. A password may hold a raw {@code /}, {@code ?}, {@code #} or
+     * {@code @}, and the text cannot say whether such a character belongs to the password or to the
+     * path or query. Masking through the last {@code @} never leaves a userinfo character visible,
+     * because the {@code @} that ends the userinfo is never after the last {@code @} of the value. The
+     * cost is over-masking: an {@code @} in the path or query of a URL
+     * ({@code https://host/p?to=a@b.com}) is read as the end of the userinfo, so the host is masked
+     * with it. The {@code @} of a credential parameter value never reaches this method, because
+     * {@link #redactParameters(String)} runs first and replaces that value.
      *
      * @param uri the URI string (never {@code null})
      * @return the URI with any authority userinfo replaced by {@link #MASK}
@@ -342,21 +356,9 @@ public final class ConfigSecretRenderer {
             return uri;
         }
         int authorityFrom = authorityStart + 2;
-        // The authority ends at the first '/', '?' or '#' after it.
-        int authorityEnd = uri.length();
-        for (int i = authorityFrom; i < uri.length(); i++) {
-            char c = uri.charAt(i);
-            if (c == '/' || c == '?' || c == '#') {
-                authorityEnd = i;
-                break;
-            }
-        }
-        // RFC 3986 §3.2.1: userinfo ends at the LAST '@' within the authority.
-        // Using lastIndexOf ensures a raw '@' inside a password is treated as part of
-        // the userinfo, not as the host separator.
-        int at = uri.lastIndexOf('@', authorityEnd - 1);
+        int at = uri.lastIndexOf('@');
         if (at < authorityFrom) {
-            return uri; // no userinfo in this authority
+            return uri; // no userinfo after the authority marker
         }
         return uri.substring(0, authorityFrom) + MASK + uri.substring(at);
     }

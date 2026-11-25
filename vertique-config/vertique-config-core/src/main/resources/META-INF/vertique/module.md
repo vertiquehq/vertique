@@ -384,9 +384,11 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
   value masked whole) become `***`, scheme, host, port and path stay visible, and a URL without
   credentials serializes as given. Secret wins over URL (`tokenUrl` renders as `"***"`). A bag's
   `toString()` applies the same rule, so `redactBag` and the mapper dump agree. The URL rule covers
-  those forms only, with the userinfo percent-encoded — a raw `/`, `?` or `#` inside a password ends
-  the authority early, a credential value with an unescaped `;` or `&` ends there (write it as
-  `RAW(...)`), only the first authority of a comma-joined value is masked, and a scheme-less
+  those forms only. The userinfo is everything between the `//` and the last `@` of the value, so a
+  password with a raw `/`, `?`, `#` or `@` is masked whole, and any other `@` after the `//` masks the
+  host before it too (`https://host/p?to=a@b.com` renders as `https://***@b.com`). A credential value
+  with an unescaped `;` or `&` ends there (write it as `RAW(...)`), a comma-joined value is masked up
+  to its last `@`, and a scheme-less
   connection string, a `java.net.URI`, `URL` or array-typed value, or a URL under a name without one of
   the tokens (`address`) serializes as given. A masked URL fed back to `ConfigParser` is not rejected.
   The

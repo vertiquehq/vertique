@@ -12,6 +12,8 @@ import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link ConfigSecretRenderer} — the shared, array-aware redactor used by every
@@ -443,6 +445,87 @@ class ConfigSecretRendererTest {
                     "ftp://h/in?password=***", ConfigSecretRenderer.redactUri("ftp://h/in?password=RAW{se)&c;ret}"));
             assertEquals(
                     "ftp://h/in?password=***", ConfigSecretRenderer.redactUri("ftp://h/in?password=RAW(unclosed&x"));
+        }
+
+        @ParameterizedTest(name = "password \"{0}\"")
+        @ValueSource(
+                strings = {
+                    "12345#x",
+                    "12345/x",
+                    "12345?x",
+                    "12345%40x",
+                    "12345@x",
+                    "12#3/4?5@6",
+                    "#",
+                    "/",
+                    "?",
+                    "12345?x=1&y=2",
+                    "12345#x/y?z"
+                })
+        @DisplayName("masks a password that holds '#', '/', '?', '%40' or a raw '@', keeping host, port and path")
+        void passwordWithDelimitersMasked(String password) {
+            assertEquals(
+                    "https://***@minio.internal:9000/bucket/key",
+                    ConfigSecretRenderer.redactUri("https://admin:" + password + "@minio.internal:9000/bucket/key"));
+            assertEquals(
+                    "https://***@minio.internal:9000",
+                    ConfigSecretRenderer.redactUri("https://admin:" + password + "@minio.internal:9000"));
+        }
+
+        @Test
+        @DisplayName("masks the endpoint password that holds a '#' as the owner reported it")
+        void fragmentCharacterInPasswordMasked() {
+            assertEquals(
+                    "https://***@minio.internal:9000",
+                    ConfigSecretRenderer.redactUri("https://admin:12345#x@minio.internal:9000"));
+        }
+
+        @Test
+        @DisplayName("a password with a delimiter and a credential query parameter masks both")
+        void delimiterPasswordWithCredentialParameter() {
+            String redacted = ConfigSecretRenderer.redactUri("https://u:pa?ss@host/p?token=TOK&q=ok");
+
+            assertEquals("https://***@host/p?token=***&q=ok", redacted);
+        }
+
+        @Test
+        @DisplayName("a '@' in the path or query of a URL without userinfo is read as the end of the userinfo")
+        void atSignAfterTheAuthorityOverMasks() {
+            assertEquals("https://***@b.com", ConfigSecretRenderer.redactUri("https://host/p?to=a@b.com"));
+            assertEquals("https://***@scope/pkg", ConfigSecretRenderer.redactUri("https://host/@scope/pkg"));
+        }
+
+        @Test
+        @DisplayName("a value with several authorities masks everything up to the last '@'")
+        void severalAuthoritiesMaskedThroughTheLastAt() {
+            String redacted = ConfigSecretRenderer.redactUri("redis://u1:P1@h1:6379,redis://u2:p/2@h2:6379");
+
+            assertEquals("redis://***@h2:6379", redacted);
+        }
+
+        @Test
+        @DisplayName("percent-encoded userinfo and an empty host after the '@' are masked without failing")
+        void percentEncodedAndEmptyHost() {
+            assertEquals("https://***@host", ConfigSecretRenderer.redactUri("https://admin:p%40ss%23x@host"));
+            assertEquals("https://***@", ConfigSecretRenderer.redactUri("https://admin:p#x@"));
+        }
+
+        @Test
+        @DisplayName("a delimiter password inside a URL-named bag leaf is masked, as the mapper dump does")
+        void delimiterPasswordInBagLeaf() {
+            JsonObject bag = new JsonObject()
+                    .put("endpoint", "https://admin:12345#x@minio.internal:9000")
+                    .put(
+                            "endpoints",
+                            new JsonArray().add("https://admin:12/3@a:9000").add("https://b:9000"));
+
+            String rendered = ConfigSecretRenderer.redactBag(bag);
+
+            assertFalse(rendered.contains("12345"), rendered);
+            assertFalse(rendered.contains("12/3"), rendered);
+            assertTrue(rendered.contains("https://***@minio.internal:9000"), rendered);
+            assertTrue(rendered.contains("https://***@a:9000"), rendered);
+            assertTrue(rendered.contains("https://b:9000"), rendered);
         }
 
         @Test
