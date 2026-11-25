@@ -163,7 +163,8 @@ class FixtureGraphTest {
         FixtureSelfTestComponent defaulted = component(new JsonObject(), RestTestContributions.none());
         assertThatThrownBy(() -> buildRouter(defaulted))
                 .isInstanceOf(RestConfigurationException.class)
-                .hasMessageContaining("web-validation");
+                .hasMessageContaining("jaxrs.validationStrategy")
+                .hasMessageNotContaining("web-validation");
     }
 
     // --- Helpers ---
