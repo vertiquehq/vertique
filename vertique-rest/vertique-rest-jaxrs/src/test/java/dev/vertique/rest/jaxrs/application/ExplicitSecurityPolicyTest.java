@@ -10,6 +10,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
@@ -55,7 +56,7 @@ import org.slf4j.LoggerFactory;
  * {@code /api/mgmt} mount ({@link ExplicitPolicyComponents.ApplicationMountComponent}) around one
  * of {@link ManagementApis}'s six variant registrations at a time (one native
  * registration per variant): (a) is fully unannotated, with two implicit
- * operations that must both be named, sorted, in the mount's one WARN event; (b) to (e) each carry
+ * operations that must both be named, sorted, in the mount's one WARN event; (b) to (d) and (f) each carry
  * a declaration that the explicit-policy classification treats as either declared public or restricting callers, so none
  * of them warns; (f) is fully unannotated like (a), but its two operations' registration
  * order differs from their full-path sort order, proving the warning's {@code .sorted(...)} by full
@@ -156,10 +157,29 @@ class ExplicitSecurityPolicyTest {
         }
     }
 
+    @Test
+    @DisplayName("(e) @PermitAll with a scoped @SecurityRequirement fails startup naming the operation")
+    void permitAllWithScopedRequirementFailsStartup(Vertx vertx) {
+        ExplicitPolicyComponents.ApplicationMountComponent component =
+                DaggerExplicitPolicyComponents_ApplicationMountComponent.factory()
+                        .create(applicationConfig("permitAllScoped"));
+
+        ComposeResult result =
+                composeAndCreate(component, APPLICATION_MOUNT_PATH, Set.of(PermitAllScopedResource.class), vertx);
+
+        assertEquals(1, result.outcomes().size(), "expected exactly one composed mount");
+        Throwable failure = result.outcomes().get(0).failure();
+        assertTrue(failure != null, "createRouter must fail for a @PermitAll resource with a scoped requirement");
+        assertEquals(RestConfigurationException.class, failure.getClass(), () -> describe(failure));
+        assertTrue(failure.getMessage().contains("'permittedScopedGet'"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("@SecurityRequirements({})"), failure.getMessage());
+    }
+
     /**
-     * The six named rows, (a) to (f).
+     * The five named rows, (a) to (d) and (f); (e), @PermitAll with a scoped requirement, no longer starts and is
+     * proven by {@link #permitAllWithScopedRequirementFailsStartup}.
      *
-     * @return the six application-mount cases, in order
+     * @return the five application-mount cases, in order
      */
     private static Stream<ExplicitPolicyCase> applicationMountCases() {
         return Stream.of(
@@ -195,13 +215,6 @@ class ExplicitSecurityPolicyTest {
                         "(d) @RequiresAction resource",
                         "requiresAction",
                         RequiresActionResource.class,
-                        false,
-                        List.of(),
-                        Optional.empty()),
-                new ExplicitPolicyCase(
-                        "(e) @PermitAll with a scoped @SecurityRequirement",
-                        "permitAllScoped",
-                        PermitAllScopedResource.class,
                         false,
                         List.of(),
                         Optional.empty()),
