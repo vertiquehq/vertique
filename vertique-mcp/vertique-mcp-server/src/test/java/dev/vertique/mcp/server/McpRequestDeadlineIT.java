@@ -141,7 +141,7 @@ class McpRequestDeadlineIT {
                 closed.complete(null);
             }
         }));
-        closed.get(15, TimeUnit.SECONDS);
+        awaitStage(closed, "the fixture, client and Vert.x to close");
         fixture = null;
         client = null;
         assertThat(uncaught)
@@ -175,7 +175,7 @@ class McpRequestDeadlineIT {
         Siblings siblings = new Siblings();
         siblings.start();
 
-        Reply reply = hung.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Reply reply = awaitStage(hung, "the answer to the hung tool call");
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
         Session session = fixture.recorder().awaitNonDiscoverCompletion();
         siblings.stop();
@@ -259,7 +259,7 @@ class McpRequestDeadlineIT {
         HoldingInterceptor interceptor = new HoldingInterceptor();
         start(version, DEADLINE_MS, Set.of(interceptor));
 
-        Reply reply = callTool(PLAIN_TOOL).get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Reply reply = awaitStage(callTool(PLAIN_TOOL), "the answer to the plain tool call");
         Session session = fixture.recorder().awaitNonDiscoverCompletion();
         assertThat(reply.status()).isEqualTo(504);
         assertThat(interceptor.calls()).isOne();
@@ -298,7 +298,7 @@ class McpRequestDeadlineIT {
     void committedStreamIsResetOnH2c() throws Exception {
         start(HttpVersion.HTTP_2, DEADLINE_MS, Set.of());
 
-        Reply reply = callTool(STREAMED_TOOL, true).get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Reply reply = awaitStage(callTool(STREAMED_TOOL, true), "the answer to the streamed tool call");
         Session session = fixture.recorder().awaitNonDiscoverCompletion();
 
         assertThat(reply.status()).as("the head was committed before the cut").isEqualTo(200);
@@ -313,7 +313,7 @@ class McpRequestDeadlineIT {
     void committedStreamIsClosedOnHttp1() throws Exception {
         start(HttpVersion.HTTP_1_1, DEADLINE_MS, Set.of());
 
-        Reply reply = callTool(STREAMED_TOOL, true).get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Reply reply = awaitStage(callTool(STREAMED_TOOL, true), "the answer to the streamed tool call");
         Session session = fixture.recorder().awaitNonDiscoverCompletion();
 
         assertThat(reply.failure())
@@ -361,9 +361,9 @@ class McpRequestDeadlineIT {
         assertThat(upload.reply().failure()).isNull();
         assertThat(upload.reply().status()).isEqualTo(504);
         assertThat(upload.reply().body()).contains("-32603");
-        assertThat(upload.lateWriteFailure())
-                .as("the server aborted the inbound side, so the trickling client cannot hold the stream")
-                .isNotNull();
+        assertThat(upload.abortFailure())
+                .as("the server reset the stream, so the stalled client cannot hold it")
+                .isInstanceOf(StreamResetException.class);
         assertThat(fixture.recorder().sessionCount()).isZero();
         assertThat(uncaught).isEmpty();
     }
@@ -379,7 +379,7 @@ class McpRequestDeadlineIT {
         assertThat(upload.reply().failure()).isNull();
         assertThat(upload.reply().status()).isEqualTo(504);
         assertThat(upload.reply().body()).contains("-32603");
-        assertThat(upload.lateWriteFailure())
+        assertThat(upload.abortFailure())
                 .as("the connection was closed after the answer")
                 .isNotNull();
         assertThat(fixture.recorder().sessionCount()).isZero();
@@ -394,7 +394,7 @@ class McpRequestDeadlineIT {
         HoldingIdentityResolver resolver = new HoldingIdentityResolver();
         start(HttpVersion.HTTP_2, DEADLINE_MS, Set.of(interceptor), resolver);
 
-        Reply reply = callTool(PLAIN_TOOL).get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Reply reply = awaitStage(callTool(PLAIN_TOOL), "the answer to the plain tool call");
         Session session = fixture.recorder().awaitNonDiscoverCompletion();
 
         assertThat(reply.status()).isEqualTo(504);
@@ -431,7 +431,7 @@ class McpRequestDeadlineIT {
     void requestFinishedInTimeIsUnaffected() throws Exception {
         start(HttpVersion.HTTP_2, DEADLINE_MS, Set.of());
 
-        Reply reply = callTool(PLAIN_TOOL).get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Reply reply = awaitStage(callTool(PLAIN_TOOL), "the answer to the plain tool call");
         Session session = fixture.recorder().awaitNonDiscoverCompletion();
         quietFor(Duration.ofMillis(DEADLINE_MS * 2));
 
@@ -542,7 +542,7 @@ class McpRequestDeadlineIT {
 
     /** Sends a tools/call and leaves it unanswered, returning the request so the test can abort it. */
     private HttpClientRequest openToolCall(String toolName) throws Exception {
-        HttpClientRequest request = await(client.request(options(toolName)));
+        HttpClientRequest request = await(client.request(options(toolName)), "the tool call request to open");
         // The response is intentionally never read: the test aborts the request or connection.
         request.response().onComplete(ignored -> {});
         request.end(toolCallBody(toolName, false));
@@ -591,32 +591,34 @@ class McpRequestDeadlineIT {
     private void quietFor(Duration window) throws Exception {
         CompletableFuture<Void> elapsed = new CompletableFuture<>();
         vertx.setTimer(window.toMillis(), ignored -> elapsed.complete(null));
-        elapsed.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        awaitStage(elapsed, "the quiet window timer");
     }
 
     private static void drain(Context requestContext) throws Exception {
         CompletableFuture<Void> marker = new CompletableFuture<>();
         requestContext.runOnContext(ignored -> marker.complete(null));
-        marker.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        awaitStage(marker, "the request context to drain");
     }
 
     /**
      * A tools/call whose body is half sent and never finished, until the response arrives; then
-     * keeps writing until the server has aborted its inbound side, and returns that failure.
+     * waits for the server to abort its inbound side, and returns the failure the request's
+     * exception handler observed.
      */
     private StalledUpload stalledUpload() throws Exception {
         CompletableFuture<Reply> done = new CompletableFuture<>();
-        CompletableFuture<HttpClientRequest> request = new CompletableFuture<>();
+        CompletableFuture<Throwable> aborted = new CompletableFuture<>();
         Buffer full = toolCallBody(HELD_TOOL, false);
         Buffer half = full.getBuffer(0, full.length() / 2);
         client.request(options(HELD_TOOL)).onComplete(created -> {
             if (created.failed()) {
                 done.complete(new Reply(-1, null, created.cause()));
+                aborted.complete(created.cause());
                 return;
             }
             HttpClientRequest stalled = created.result();
             stalled.setChunked(true);
-            request.complete(stalled);
+            stalled.exceptionHandler(aborted::complete);
             stalled.response().onComplete(responded -> {
                 if (responded.failed()) {
                     done.complete(new Reply(-1, null, responded.cause()));
@@ -632,27 +634,26 @@ class McpRequestDeadlineIT {
             });
             stalled.write(half);
         });
-        Reply reply = done.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        // A client that keeps trickling the body after the answer must find the inbound side aborted.
-        Throwable lateWriteFailure = null;
-        for (int attempt = 0; attempt < 50 && lateWriteFailure == null; attempt++) {
-            CompletableFuture<Throwable> written = new CompletableFuture<>();
-            request.get()
-                    .write(Buffer.buffer("x"))
-                    .onComplete(result -> written.complete(result.failed() ? result.cause() : null));
-            lateWriteFailure = written.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (lateWriteFailure == null) {
-                quietFor(Duration.ofMillis(100));
-            }
-        }
-        return new StalledUpload(reply, lateWriteFailure);
+        Reply reply = awaitStage(done, "the answer to the stalled upload");
+        // The server aborts the inbound side after answering; the request's exception handler reports it.
+        Throwable abortFailure = awaitStage(aborted, "the inbound abort on the stalled upload");
+        return new StalledUpload(reply, abortFailure);
     }
 
-    /** The answer to a stalled upload and the failure a later write on the same request observed. */
-    private record StalledUpload(Reply reply, Throwable lateWriteFailure) {}
+    /** The answer to a stalled upload and the failure the same request's exception handler observed. */
+    private record StalledUpload(Reply reply, Throwable abortFailure) {}
 
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    private static <T> T await(Future<T> future, String stage) throws Exception {
+        return awaitStage(future.toCompletionStage().toCompletableFuture(), stage);
+    }
+
+    /** Waits for {@code future}; a timeout names the stage that never completed. */
+    private static <T> T awaitStage(CompletableFuture<T> future, String stage) throws Exception {
+        try {
+            return future.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException timedOut) {
+            throw new AssertionError("timed out after " + ASYNC_TIMEOUT_SECONDS + " s waiting for " + stage, timedOut);
+        }
     }
 
     /** What the client observed for one request; {@code headers} holds lower-cased names, when read. */
@@ -687,8 +688,9 @@ class McpRequestDeadlineIT {
                 vertx.cancelTimer(timerId);
                 timerId = -1;
             }
-            CompletableFuture.allOf(outstanding.toArray(CompletableFuture[]::new))
-                    .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            awaitStage(
+                    CompletableFuture.allOf(outstanding.toArray(CompletableFuture[]::new)),
+                    "the outstanding sibling discover calls");
         }
 
         int attempted() {
@@ -805,12 +807,12 @@ class McpRequestDeadlineIT {
                 ctx.next();
             });
             root.route().handler(new RequestContextLifecycle());
-            Router mountRouter = await(mount.createRouter(vertx));
+            Router mountRouter = await(mount.createRouter(vertx), "the MCP mount router");
             root.route(config.mountPath()).subRouter(mountRouter);
             HttpServerOptions serverOptions =
                     httpConfig.toHttpServerOptions().setPort(0).setHost(LOOPBACK);
             this.server = await(
-                    vertx.createHttpServer(serverOptions).requestHandler(root).listen());
+                    vertx.createHttpServer(serverOptions).requestHandler(root).listen(), "the test server to listen");
             this.port = server.actualPort();
         }
 
@@ -946,7 +948,7 @@ class McpRequestDeadlineIT {
         }
 
         void awaitInvoked() throws Exception {
-            firstInvoke.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            awaitStage(firstInvoke, "the first tool invocation");
         }
 
         boolean awaitInvoked(Duration window) throws Exception {
@@ -985,7 +987,7 @@ class McpRequestDeadlineIT {
         }
 
         Session awaitNonDiscoverCompletion() throws Exception {
-            return firstNonDiscoverCompletion.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return awaitStage(firstNonDiscoverCompletion, "the first non-discover session to complete");
         }
     }
 
