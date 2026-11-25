@@ -42,16 +42,16 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * TP-001 (T018, issue #379): {@code apt.ElementInvocationPolicies.resolveRoute}/{@code
- * resolveParameter} resolve the same IP-01..IP-19 matrix as {@code ReflectiveInvocationPolicies}
- * (T016 TP-002), but driven from real {@code javax.lang.model} elements obtained by compiling one
- * inline source per row through a probe annotation processor ({@link Probe}), instead of reflection.
+ * {@code apt.ElementInvocationPolicies.resolveRoute}/{@code resolveParameter} resolve the same
+ * invocation-policy matrix as {@code ReflectiveInvocationPolicies}, but driven from real
+ * {@code javax.lang.model} elements obtained by compiling one inline source per row through a probe
+ * annotation processor ({@link Probe}), instead of reflection.
  *
  * <p>Each row's carrier hierarchy is re-declared here as compilable source text (own package per
- * row, {@code dev.vertique.input.processing.apt.fixture.ipNN}), reusing the exact simple class and
- * method names of {@code InvocationPolicyScenarios}'s reflection carriers (e.g. {@code Ip14.bar},
- * {@code IFoo}/{@code FooImpl}) so the adapter's site/describe strings are byte-identical to the
- * reflective adapter's (contract, "Production design"). The row's expected outcome — {@link
+ * row, {@code dev.vertique.input.processing.apt.fixture.<scenario>}), reusing the exact simple class
+ * and method names of {@code InvocationPolicyScenarios}'s reflection carriers (e.g.
+ * {@code SameMethodConflict.bar}, {@code IFoo}/{@code FooImpl}) so the adapter's site/describe strings
+ * are byte-identical to the reflective adapter's. The row's expected outcome — {@link
  * Outcome.Chain} or {@link Outcome.Conflict} — is reused unchanged from {@link
  * InvocationPolicyScenarios#rows()}; only the source form differs from {@code
  * ReflectiveInvocationPoliciesTest}.
@@ -61,17 +61,18 @@ import org.junit.jupiter.params.provider.ValueSource;
  * Diagnostic.Kind#NOTE} (chain contents as canonical type names, or the caught {@link
  * InvocationPolicyConflictException}'s axis and message) — {@code NOTE} never fails the compilation,
  * so {@link ProcessorTestHarness.Result#assertSuccess()} holds for every row including the conflict
- * ones; TP-001 tests the adapter API directly, not the compile-error behavior (that is TP-002/TP-003
- * in {@code codegen-jaxrs}, where the caller turns the same exception into a real diagnostic).
+ * ones; this test exercises the adapter API directly, not the compile-error behavior (that is covered
+ * by the generator matrix tests, where the caller turns the same exception into a real diagnostic).
  *
- * <p>Only IP-14 (same-site) and IP-17 (real {@code IFoo}/{@code FooImpl} names) have a contract-frozen
- * exact message; IP-15 (parameter-level) and IP-19 (type-level) assert the axis and that both real
- * declaration sites appear in the message, mirroring {@code ReflectiveInvocationPoliciesTest}'s own
- * ruling (T016 L01) that the contract does not pin an exact literal for those element kinds.
+ * <p>Only {@code same-method-conflict} (same-site) and {@code override-skip-conflict} (real
+ * {@code IFoo}/{@code FooImpl} names) assert an exact message; {@code same-parameter-conflict}
+ * (parameter-level) and {@code supertype-skip-conflict} (type-level) assert the axis and that both
+ * real declaration sites appear in the message, mirroring {@code ReflectiveInvocationPoliciesTest}:
+ * no exact literal is pinned for those element kinds.
  *
- * <p>Sensitivity (contract-required): skipping the overridden-method walk (not using {@code
- * Elements.overrides}/{@code getAllMembers} inherited-method semantics) would make IP-09 and IP-12
- * resolve to empty chains instead of {@code [B]}/{@code [C]} — {@link
+ * <p>Sensitivity: skipping the overridden-method walk (not using {@code Elements.overrides}/
+ * {@code getAllMembers} inherited-method semantics) would make {@code interface-method-chain} and
+ * {@code interface-parameter-chain} resolve to empty chains instead of {@code [B]}/{@code [C]} — {@link
  * #resolvesRouteAndParameterFromCompiledElements} would fail for those rows.
  */
 class ElementInvocationPoliciesTest {
@@ -93,7 +94,7 @@ class ElementInvocationPoliciesTest {
                 rowSource.sources().toArray(JavaFileObject[]::new));
 
         // A conflict is caught and reported as a NOTE by the probe — the compilation itself always
-        // succeeds for TP-001 (see class javadoc).
+        // succeeds (see class javadoc).
         result.assertSuccess();
 
         String routeNote = firstNote(result, "ROUTE", row.id());
@@ -130,8 +131,8 @@ class ElementInvocationPoliciesTest {
     }
 
     /**
-     * W-1 (T018 review): resolution-order parity with the reflective reference for the one shape the
-     * IP matrix does not pin — a <em>direct</em> annotation on a farther site competing with a
+     * Resolution-order parity with the reflective reference for the one shape the scenario matrix
+     * does not pin — a <em>direct</em> annotation on a farther site competing with a
      * <em>composed</em> one on a nearer site.
      *
      * <p>{@code AnnotationResolver.findMetaAnnotation(List, Class)} — the reference the reflective
@@ -184,7 +185,7 @@ class ElementInvocationPoliciesTest {
     }
 
     /**
-     * W-3 (T018 review): the composed-annotation walk's cycle bound is decisive, not decorative.
+     * The composed-annotation walk's cycle bound is decisive, not decorative.
      *
      * <p>{@code CycA} is meta-annotated {@code @CycB} and {@code CycB} is meta-annotated
      * {@code @CycA}; a carrier method annotated {@code @CycA} alone declares no policy on either
@@ -245,7 +246,7 @@ class ElementInvocationPoliciesTest {
     }
 
     /**
-     * R5 (security review): {@code resolveParameter} rejects an out-of-range index with
+     * {@code resolveParameter} rejects an out-of-range index with
      * {@link IllegalArgumentException} naming the method and the index, instead of letting an
      * {@link IndexOutOfBoundsException} escape from the parameter-site walk and abort the processor.
      *
@@ -290,8 +291,9 @@ class ElementInvocationPoliciesTest {
 
     /**
      * Asserts a {@code CONFLICT}-status note matches the row's expected {@link Outcome.Conflict},
-     * mirroring {@code ReflectiveInvocationPoliciesTest#assertConflict} (T016): exact message for
-     * IP-14/IP-17, axis plus both declaration sites for IP-15/IP-19.
+     * mirroring {@code ReflectiveInvocationPoliciesTest#assertConflict}: exact message for
+     * {@code same-method-conflict}/{@code override-skip-conflict}, axis plus both declaration sites for
+     * {@code same-parameter-conflict}/{@code supertype-skip-conflict}.
      *
      * @param row      the scenario row
      * @param expected the row's expected conflict
@@ -302,25 +304,35 @@ class ElementInvocationPoliciesTest {
         assertEquals(PolicyAxis.SANITIZE.name(), fields[2], row.id() + " conflict axis");
         String message = fields[3];
         switch (row.id()) {
-            case "IP-14" ->
+            case "same-method-conflict" ->
                 assertEquals(
                         InvocationPolicyScenarios.expectedConflictMessage(
-                                PolicyAxis.SANITIZE, "Ip14.bar", "Ip14.bar", "method Ip14.bar"),
+                                PolicyAxis.SANITIZE,
+                                "SameMethodConflict.bar",
+                                "SameMethodConflict.bar",
+                                "method SameMethodConflict.bar"),
                         message);
-            case "IP-17" ->
+            case "override-skip-conflict" ->
                 assertEquals(
                         InvocationPolicyScenarios.expectedConflictMessage(
                                 PolicyAxis.SANITIZE, "IFoo.bar", "FooImpl.bar", "method FooImpl.bar"),
                         message);
-            case "IP-15" -> assertTrue(message.contains("Ip15.bar"), "message should name Ip15.bar: " + message);
-            case "IP-19" -> {
-                assertTrue(message.contains("Ip19Base"), "message should name Ip19Base: " + message);
-                assertTrue(message.contains("Ip19"), "message should name Ip19: " + message);
+            case "same-parameter-conflict" ->
+                assertTrue(
+                        message.contains("SameParameterConflict.bar"),
+                        "message should name SameParameterConflict.bar: " + message);
+            case "supertype-skip-conflict" -> {
+                assertTrue(
+                        message.contains("SupertypeSkipConflictBase"),
+                        "message should name SupertypeSkipConflictBase: " + message);
+                assertTrue(
+                        message.contains("SupertypeSkipConflict"),
+                        "message should name SupertypeSkipConflict: " + message);
             }
             default -> throw new AssertionError("unexpected conflict row " + row.id());
         }
         // expected's own site strings are asserted structurally above via the row.id() switch,
-        // matching InvocationPolicyScenarios's own IP-14/15/17/19 Outcome.Conflict data exactly.
+        // matching InvocationPolicyScenarios's own conflict-row Outcome.Conflict data exactly.
         assertTrue(
                 expected.elementDescription() != null
                         && !expected.elementDescription().isBlank(),
@@ -348,176 +360,176 @@ class ElementInvocationPoliciesTest {
     private record RowSource(List<JavaFileObject> sources, String ownerFqn) {}
 
     /**
-     * Builds the inline source(s) and owner FQN for one IP-01..IP-19 row, re-declaring
+     * Builds the inline source(s) and owner FQN for one scenario row, re-declaring
      * {@link InvocationPolicyScenarios}'s reflection carriers as compilable source text in a
      * row-scoped package.
      *
-     * @param rowId the scenario id (e.g. {@code "IP-14"})
+     * @param rowId the scenario id (e.g. {@code "same-method-conflict"})
      * @return the row's sources and owner FQN
      */
     private static RowSource rowSource(String rowId) {
         String pkg = "dev.vertique.input.processing.apt.fixture."
                 + rowId.toLowerCase(Locale.ROOT).replace("-", "");
         return switch (rowId) {
-            case "IP-01" -> single(pkg, "Ip01", """
+            case "no-policy" -> single(pkg, "NoPolicy", """
                     package %s;
-                    public class Ip01 {
+                    public class NoPolicy {
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-02" -> single(pkg, "Ip02", """
+            case "type-chain" -> single(pkg, "TypeChain", """
                     package %s;
                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                    public class Ip02 {
+                    public class TypeChain {
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-03" -> single(pkg, "Ip03", """
+            case "method-chain" -> single(pkg, "MethodChain", """
                     package %s;
-                    public class Ip03 {
+                    public class MethodChain {
                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.B.class)
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-04" -> single(pkg, "Ip04", """
+            case "method-overrides-type" -> single(pkg, "MethodOverridesType", """
                     package %s;
                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                    public class Ip04 {
+                    public class MethodOverridesType {
                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.B.class)
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-05" -> single(pkg, "Ip05", """
+            case "method-skip-over-type-chain" -> single(pkg, "MethodSkipOverTypeChain", """
                     package %s;
                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                    public class Ip05 {
+                    public class MethodSkipOverTypeChain {
                         @dev.vertique.core.sanitization.SkipSanitization
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-06" -> single(pkg, "Ip06", """
+            case "method-skip-only" -> single(pkg, "MethodSkipOnly", """
                     package %s;
-                    public class Ip06 {
+                    public class MethodSkipOnly {
                         @dev.vertique.core.sanitization.SkipSanitization
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-07" -> single(pkg, "Ip07", """
+            case "parameter-overrides-type" -> single(pkg, "ParameterOverridesType", """
                     package %s;
                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                    public class Ip07 {
+                    public class ParameterOverridesType {
                         public void bar(
                                 @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.C.class) String p) {}
                     }
                     """);
-            case "IP-08" -> single(pkg, "Ip08", """
+            case "parameter-skip-over-type-chain" -> single(pkg, "ParameterSkipOverTypeChain", """
                     package %s;
                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                    public class Ip08 {
+                    public class ParameterSkipOverTypeChain {
                         public void bar(@dev.vertique.core.sanitization.SkipSanitization String p) {}
                     }
                     """);
-            case "IP-09" ->
+            case "interface-method-chain" ->
                 new RowSource(
                         List.of(
-                                SourceFiles.inline(pkg + ".Ip09Iface", """
+                                SourceFiles.inline(pkg + ".InterfaceMethodChainIface", """
                                     package %s;
-                                    public interface Ip09Iface {
+                                    public interface InterfaceMethodChainIface {
                                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.B.class)
                                         void bar(String p);
                                     }
                                     """.formatted(pkg)),
-                                SourceFiles.inline(pkg + ".Ip09", """
+                                SourceFiles.inline(pkg + ".InterfaceMethodChain", """
                                     package %s;
-                                    public class Ip09 implements Ip09Iface {
+                                    public class InterfaceMethodChain implements InterfaceMethodChainIface {
                                         @Override
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg))),
-                        pkg + ".Ip09");
-            case "IP-10" ->
+                        pkg + ".InterfaceMethodChain");
+            case "superclass-type-chain" ->
                 new RowSource(
                         List.of(
-                                SourceFiles.inline(pkg + ".Ip10Base", """
+                                SourceFiles.inline(pkg + ".SuperclassTypeChainBase", """
                                     package %s;
                                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                                    public class Ip10Base {
+                                    public class SuperclassTypeChainBase {
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg)),
-                                SourceFiles.inline(pkg + ".Ip10", """
+                                SourceFiles.inline(pkg + ".SuperclassTypeChain", """
                                     package %s;
-                                    public class Ip10 extends Ip10Base {}
+                                    public class SuperclassTypeChain extends SuperclassTypeChainBase {}
                                     """.formatted(pkg))),
-                        pkg + ".Ip10");
-            case "IP-11" -> single(pkg, "Ip11", """
+                        pkg + ".SuperclassTypeChain");
+            case "composed-annotation" -> single(pkg, "ComposedAnnotation", """
                     package %s;
-                    public class Ip11 {
+                    public class ComposedAnnotation {
                         @dev.vertique.input.processing.testkit.ComposedSanitize
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-12" ->
+            case "interface-parameter-chain" ->
                 new RowSource(
                         List.of(
-                                SourceFiles.inline(pkg + ".Ip12Iface", """
+                                SourceFiles.inline(pkg + ".InterfaceParameterChainIface", """
                                     package %s;
-                                    public interface Ip12Iface {
+                                    public interface InterfaceParameterChainIface {
                                         void bar(
                                                 @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.C.class) String p);
                                     }
                                     """.formatted(pkg)),
-                                SourceFiles.inline(pkg + ".Ip12", """
+                                SourceFiles.inline(pkg + ".InterfaceParameterChain", """
                                     package %s;
-                                    public class Ip12 implements Ip12Iface {
+                                    public class InterfaceParameterChain implements InterfaceParameterChainIface {
                                         @Override
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg))),
-                        pkg + ".Ip12");
-            case "IP-13" -> single(pkg, "Ip13", """
+                        pkg + ".InterfaceParameterChain");
+            case "independent-axes" -> single(pkg, "IndependentAxes", """
                     package %s;
                     @dev.vertique.core.sanitization.Canonicalize(dev.vertique.input.processing.testkit.K.class)
-                    public class Ip13 {
+                    public class IndependentAxes {
                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.B.class)
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-14" -> single(pkg, "Ip14", """
+            case "same-method-conflict" -> single(pkg, "SameMethodConflict", """
                     package %s;
-                    public class Ip14 {
+                    public class SameMethodConflict {
                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.B.class)
                         @dev.vertique.core.sanitization.SkipSanitization
                         public void bar(String p) {}
                     }
                     """);
-            case "IP-15" -> single(pkg, "Ip15", """
+            case "same-parameter-conflict" -> single(pkg, "SameParameterConflict", """
                     package %s;
-                    public class Ip15 {
+                    public class SameParameterConflict {
                         public void bar(
                                 @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.C.class)
                                 @dev.vertique.core.sanitization.SkipSanitization String p) {}
                     }
                     """);
-            case "IP-16" ->
+            case "interface-method-skip" ->
                 new RowSource(
                         List.of(
-                                SourceFiles.inline(pkg + ".Ip16Iface", """
+                                SourceFiles.inline(pkg + ".InterfaceMethodSkipIface", """
                                     package %s;
-                                    public interface Ip16Iface {
+                                    public interface InterfaceMethodSkipIface {
                                         @dev.vertique.core.sanitization.SkipSanitization
                                         void bar(String p);
                                     }
                                     """.formatted(pkg)),
-                                SourceFiles.inline(pkg + ".Ip16", """
+                                SourceFiles.inline(pkg + ".InterfaceMethodSkip", """
                                     package %s;
-                                    public class Ip16 implements Ip16Iface {
+                                    public class InterfaceMethodSkip implements InterfaceMethodSkipIface {
                                         @Override
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg))),
-                        pkg + ".Ip16");
-            case "IP-17" ->
+                        pkg + ".InterfaceMethodSkip");
+            case "override-skip-conflict" ->
                 new RowSource(
                         List.of(
                                 SourceFiles.inline(pkg + ".IFoo", """
@@ -536,41 +548,41 @@ class ElementInvocationPoliciesTest {
                                     }
                                     """.formatted(pkg))),
                         pkg + ".FooImpl");
-            case "IP-18" ->
+            case "override-replaces-chain" ->
                 new RowSource(
                         List.of(
-                                SourceFiles.inline(pkg + ".Ip18Base", """
+                                SourceFiles.inline(pkg + ".OverrideReplacesChainBase", """
                                     package %s;
-                                    public class Ip18Base {
+                                    public class OverrideReplacesChainBase {
                                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.B.class)
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg)),
-                                SourceFiles.inline(pkg + ".Ip18", """
+                                SourceFiles.inline(pkg + ".OverrideReplacesChain", """
                                     package %s;
-                                    public class Ip18 extends Ip18Base {
+                                    public class OverrideReplacesChain extends OverrideReplacesChainBase {
                                         @Override
                                         @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg))),
-                        pkg + ".Ip18");
-            case "IP-19" ->
+                        pkg + ".OverrideReplacesChain");
+            case "supertype-skip-conflict" ->
                 new RowSource(
                         List.of(
-                                SourceFiles.inline(pkg + ".Ip19Base", """
+                                SourceFiles.inline(pkg + ".SupertypeSkipConflictBase", """
                                     package %s;
                                     @dev.vertique.core.sanitization.SkipSanitization
-                                    public class Ip19Base {
+                                    public class SupertypeSkipConflictBase {
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg)),
-                                SourceFiles.inline(pkg + ".Ip19", """
+                                SourceFiles.inline(pkg + ".SupertypeSkipConflict", """
                                     package %s;
                                     @dev.vertique.core.sanitization.Sanitize(dev.vertique.input.processing.testkit.A.class)
-                                    public class Ip19 extends Ip19Base {}
+                                    public class SupertypeSkipConflict extends SupertypeSkipConflictBase {}
                                     """.formatted(pkg))),
-                        pkg + ".Ip19");
+                        pkg + ".SupertypeSkipConflict");
             default -> throw new IllegalArgumentException("no fixture registered for row " + rowId);
         };
     }
@@ -585,8 +597,9 @@ class ElementInvocationPoliciesTest {
     /**
      * Locates the row's owner {@link TypeElement} (by the {@link #OPTION_OWNER_FQN} processor
      * option), resolves its {@code bar} member via {@link Elements#getAllMembers} (inherited-method
-     * semantics — the merged view sees only the overriding declaration, exactly like IP-09/IP-17's
-     * carriers), and drives {@link ElementInvocationPolicies#resolveRoute}/{@code resolveParameter}.
+     * semantics — the merged view sees only the overriding declaration, exactly like the
+     * {@code interface-method-chain} and {@code override-skip-conflict} carriers), and drives
+     * {@link ElementInvocationPolicies#resolveRoute}/{@code resolveParameter}.
      * Each stage's outcome is reported as a {@link Diagnostic.Kind#NOTE} so it survives the
      * in-process compile-testing round trip without relying on same-classloader static-field capture.
      */
@@ -594,13 +607,13 @@ class ElementInvocationPoliciesTest {
     @SupportedSourceVersion(SourceVersion.RELEASE_21)
     public static final class Probe extends AbstractProcessor {
 
-        static final String OPTION_OWNER_FQN = "t018.ownerFqn";
+        static final String OPTION_OWNER_FQN = "probe.ownerFqn";
 
         /**
          * Optional zero-based parameter index handed to {@code resolveParameter}; defaults to
-         * {@code 0}. Set to an out-of-range value to drive the R5 precondition.
+         * {@code 0}. Set to an out-of-range value to drive the out-of-range precondition.
          */
-        static final String OPTION_PARAM_INDEX = "t018.paramIndex";
+        static final String OPTION_PARAM_INDEX = "probe.paramIndex";
 
         private static final String METHOD_NAME = "bar";
 

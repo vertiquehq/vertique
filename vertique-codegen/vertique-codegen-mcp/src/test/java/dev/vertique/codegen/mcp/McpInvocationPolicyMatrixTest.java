@@ -17,11 +17,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001 (T019, issue #379): {@link McpInputPolicyResolver}, wired to {@code
- * apt.ElementInvocationPolicies}, resolves the same IP-01..IP-19 matrix as {@code
- * ElementInvocationPoliciesTest} (T018 TP-001), {@code ReflectiveInvocationPoliciesTest} (T016
- * TP-002), and {@code JaxRsInvocationPolicyMatrixTest} (T018 TP-002/TP-003) — end-to-end through
- * the real {@link McpToolProcessor} pipeline, asserting the generated {@code Input} carrier's
+ * {@link McpInputPolicyResolver}, wired to {@code apt.ElementInvocationPolicies}, resolves the same
+ * invocation-policy matrix as {@code ElementInvocationPoliciesTest},
+ * {@code ReflectiveInvocationPoliciesTest}, and {@code JaxRsInvocationPolicyMatrixTest} — end-to-end
+ * through the real {@link McpToolProcessor} pipeline, asserting the generated {@code Input} carrier's
  * per-component {@code @Canonicalize}/{@code @Sanitize} annotations (not the adapter's return value
  * directly, and not a {@code POL0} literal: unlike the JAX-RS/REST codegen carrier, MCP's generated
  * carrier emits the resolved chains as normalized base annotations directly on the record component,
@@ -44,24 +43,27 @@ import org.junit.jupiter.params.provider.MethodSource;
  * resolved chain is always the row's <em>parameter-axis</em> (final, combined) expectation — the
  * same values {@code JaxRsInvocationPolicyMatrixTest}'s {@code row()} helper asserts as {@code POL0}.
  *
- * <p><strong>Non-conflict rows</strong> ({@link #generatedCarrierMatchesTheMatrix}, IP-01..IP-13,
- * IP-16, IP-18): asserts the generated {@code Input} carrier's sole component carries
+ * <p><strong>Non-conflict rows</strong> ({@link #generatedCarrierMatchesTheMatrix}, {@code no-policy}
+ * through {@code independent-axes}, {@code interface-method-skip}, {@code override-replaces-chain}):
+ * asserts the generated {@code Input} carrier's sole component carries
  * {@code @Canonicalize(X.class)}/{@code @Sanitize(X.class)} for each non-empty resolved axis, and
  * that the annotation is entirely absent (never emitted, per {@code addPolicyAnnotation}'s
- * empty-chain skip) for an empty axis. IP-16's fixture also carries a class-level
- * {@code @Sanitize(A.class)} on top of the scenario's interface method-level
- * {@code @SkipSanitization} (mirrors T018 A4, contract L159-162): the hierarchy walk resolves this
- * row to the same {@code []} expectation as every other row in the matrix.
+ * empty-chain skip) for an empty axis. The {@code interface-method-skip} fixture also carries a
+ * class-level {@code @Sanitize(A.class)} on top of the scenario's interface method-level
+ * {@code @SkipSanitization}: the hierarchy walk resolves this row to the same {@code []} expectation
+ * as every other row in the matrix.
  *
- * <p><strong>Conflict rows</strong> ({@link #conflictOnMethodIsACompileErrorNamingTheMethod} IP-14,
- * {@link #conflictOnParameterIsACompileError} IP-15,
- * {@link #overrideSkipOverInheritedAdditiveIsACompileError} IP-17,
- * {@link #subclassAdditiveOverSuperclassSkipIsACompileError} IP-19): asserts {@code assertFailed()}
- * plus the contract-shaped diagnostic. IP-14/IP-17 assert the exact message via
+ * <p><strong>Conflict rows</strong> ({@link #conflictOnMethodIsACompileErrorNamingTheMethod}
+ * {@code same-method-conflict}, {@link #conflictOnParameterIsACompileError}
+ * {@code same-parameter-conflict}, {@link #overrideSkipOverInheritedAdditiveIsACompileError}
+ * {@code override-skip-conflict}, {@link #subclassAdditiveOverSuperclassSkipIsACompileError}
+ * {@code supertype-skip-conflict}): asserts {@code assertFailed()} plus the expected diagnostic.
+ * {@code same-method-conflict} and {@code override-skip-conflict} assert the exact message via
  * {@link InvocationPolicyScenarios#expectedConflictMessage} (the site names match this test's own
- * fixture class/method names); IP-15/IP-19 assert {@code "Conflicting @Sanitize"} plus the real
- * declaration sites, mirroring {@code JaxRsInvocationPolicyMatrixTest}'s own ruling that the contract
- * does not pin an exact literal for parameter-level/type-level conflicts.
+ * fixture class/method names); {@code same-parameter-conflict} and {@code supertype-skip-conflict}
+ * assert {@code "Conflicting @Sanitize"} plus the real declaration sites, mirroring
+ * {@code JaxRsInvocationPolicyMatrixTest}: no exact literal is pinned for parameter-level/type-level
+ * conflicts.
  */
 class McpInvocationPolicyMatrixTest {
 
@@ -76,10 +78,11 @@ class McpInvocationPolicyMatrixTest {
     }
 
     @Test
-    @DisplayName("IP-14: @Sanitize + @SkipSanitization on the same method is a compile error naming the method")
+    @DisplayName("same-method-conflict: @Sanitize + @SkipSanitization on the same method is a compile error "
+            + "naming the method")
     void conflictOnMethodIsACompileErrorNamingTheMethod() {
-        var result = compile(SourceFiles.inline("dev.vertique.test.mcp.ip14.Ip14", """
-                package dev.vertique.test.mcp.ip14;
+        var result = compile(SourceFiles.inline("dev.vertique.test.mcp.samemethodconflict.SameMethodConflict", """
+                package dev.vertique.test.mcp.samemethodconflict;
 
                 import dev.vertique.core.sanitization.Sanitize;
                 import dev.vertique.core.sanitization.SkipSanitization;
@@ -88,14 +91,14 @@ class McpInvocationPolicyMatrixTest {
                 import dev.vertique.mcp.annotation.McpToolParam;
                 import jakarta.inject.Inject;
 
-                public class Ip14 {
+                public class SameMethodConflict {
 
                     @Inject
-                    public Ip14() {}
+                    public SameMethodConflict() {}
 
                     @Sanitize(B.class)
                     @SkipSanitization
-                    @McpTool(name = "ip14.bar", description = "IP-14: method-level conflict.")
+                    @McpTool(name = "same-method-conflict.bar", description = "same-method-conflict: method-level conflict.")
                     public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                         return p;
                     }
@@ -104,14 +107,18 @@ class McpInvocationPolicyMatrixTest {
 
         result.assertFailed();
         result.assertErrorMessage(InvocationPolicyScenarios.expectedConflictMessage(
-                PolicyAxis.SANITIZE, "Ip14.bar", "Ip14.bar", "method Ip14.bar"));
+                PolicyAxis.SANITIZE,
+                "SameMethodConflict.bar",
+                "SameMethodConflict.bar",
+                "method SameMethodConflict.bar"));
     }
 
     @Test
-    @DisplayName("IP-15: @Sanitize + @SkipSanitization on the same parameter is a compile error")
+    @DisplayName("same-parameter-conflict: @Sanitize + @SkipSanitization on the same parameter is a compile error")
     void conflictOnParameterIsACompileError() {
-        var result = compile(SourceFiles.inline("dev.vertique.test.mcp.ip15.Ip15", """
-                package dev.vertique.test.mcp.ip15;
+        var result =
+                compile(SourceFiles.inline("dev.vertique.test.mcp.sameparameterconflict.SameParameterConflict", """
+                package dev.vertique.test.mcp.sameparameterconflict;
 
                 import dev.vertique.core.sanitization.Sanitize;
                 import dev.vertique.core.sanitization.SkipSanitization;
@@ -120,12 +127,12 @@ class McpInvocationPolicyMatrixTest {
                 import dev.vertique.mcp.annotation.McpToolParam;
                 import jakarta.inject.Inject;
 
-                public class Ip15 {
+                public class SameParameterConflict {
 
                     @Inject
-                    public Ip15() {}
+                    public SameParameterConflict() {}
 
-                    @McpTool(name = "ip15.bar", description = "IP-15: parameter-level conflict.")
+                    @McpTool(name = "same-parameter-conflict.bar", description = "same-parameter-conflict: parameter-level conflict.")
                     public String bar(
                             @McpToolParam(name = "p", description = "The value.")
                             @Sanitize(C.class) @SkipSanitization String p) {
@@ -136,15 +143,16 @@ class McpInvocationPolicyMatrixTest {
 
         result.assertFailed();
         result.assertErrorMessage("Conflicting @Sanitize");
-        result.assertErrorMessage("Ip15.bar");
+        result.assertErrorMessage("SameParameterConflict.bar");
     }
 
     @Test
-    @DisplayName("IP-17: an override @SkipSanitization over an inherited interface @Sanitize is a compile error")
+    @DisplayName("override-skip-conflict: an override @SkipSanitization over an inherited interface @Sanitize is "
+            + "a compile error")
     void overrideSkipOverInheritedAdditiveIsACompileError() {
         var result = compile(
-                SourceFiles.inline("dev.vertique.test.mcp.ip17.IFoo", """
-                        package dev.vertique.test.mcp.ip17;
+                SourceFiles.inline("dev.vertique.test.mcp.overrideskipconflict.IFoo", """
+                        package dev.vertique.test.mcp.overrideskipconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.B;
@@ -154,8 +162,8 @@ class McpInvocationPolicyMatrixTest {
                             String bar(String p);
                         }
                         """),
-                SourceFiles.inline("dev.vertique.test.mcp.ip17.FooImpl", """
-                        package dev.vertique.test.mcp.ip17;
+                SourceFiles.inline("dev.vertique.test.mcp.overrideskipconflict.FooImpl", """
+                        package dev.vertique.test.mcp.overrideskipconflict;
 
                         import dev.vertique.core.sanitization.SkipSanitization;
                         import dev.vertique.mcp.annotation.McpTool;
@@ -169,7 +177,7 @@ class McpInvocationPolicyMatrixTest {
 
                             @Override
                             @SkipSanitization
-                            @McpTool(name = "ip17.bar", description = "IP-17: override-over-inherited conflict.")
+                            @McpTool(name = "override-skip-conflict.bar", description = "override-skip-conflict: override-over-inherited conflict.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
@@ -182,22 +190,22 @@ class McpInvocationPolicyMatrixTest {
     }
 
     @Test
-    @DisplayName("IP-19: a subclass class-level @Sanitize over a superclass class-level @SkipSanitization "
-            + "is a compile error")
+    @DisplayName("supertype-skip-conflict: a subclass class-level @Sanitize over a superclass class-level "
+            + "@SkipSanitization is a compile error")
     void subclassAdditiveOverSuperclassSkipIsACompileError() {
         var result = compile(
-                SourceFiles.inline("dev.vertique.test.mcp.ip19.Ip19Base", """
-                        package dev.vertique.test.mcp.ip19;
+                SourceFiles.inline("dev.vertique.test.mcp.supertypeskipconflict.SupertypeSkipConflictBase", """
+                        package dev.vertique.test.mcp.supertypeskipconflict;
 
                         import dev.vertique.core.sanitization.SkipSanitization;
 
                         @SkipSanitization
-                        public class Ip19Base {
-                            public Ip19Base() {}
+                        public class SupertypeSkipConflictBase {
+                            public SupertypeSkipConflictBase() {}
                         }
                         """),
-                SourceFiles.inline("dev.vertique.test.mcp.ip19.Ip19", """
-                        package dev.vertique.test.mcp.ip19;
+                SourceFiles.inline("dev.vertique.test.mcp.supertypeskipconflict.SupertypeSkipConflict", """
+                        package dev.vertique.test.mcp.supertypeskipconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -206,12 +214,12 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Sanitize(A.class)
-                        public class Ip19 extends Ip19Base {
+                        public class SupertypeSkipConflict extends SupertypeSkipConflictBase {
 
                             @Inject
-                            public Ip19() {}
+                            public SupertypeSkipConflict() {}
 
-                            @McpTool(name = "ip19.bar", description = "IP-19: type-hierarchy conflict.")
+                            @McpTool(name = "supertype-skip-conflict.bar", description = "supertype-skip-conflict: type-hierarchy conflict.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
@@ -220,8 +228,8 @@ class McpInvocationPolicyMatrixTest {
 
         result.assertFailed();
         result.assertErrorMessage("Conflicting @Sanitize");
-        result.assertErrorMessage("Ip19Base");
-        result.assertErrorMessage("Ip19");
+        result.assertErrorMessage("SupertypeSkipConflictBase");
+        result.assertErrorMessage("SupertypeSkipConflict");
     }
 
     // --- Non-conflict row fixtures ---
@@ -242,26 +250,26 @@ class McpInvocationPolicyMatrixTest {
 
     private static Stream<ScenarioRow> nonConflictRows() {
         return Stream.of(
-                row("IP-01", List.of(), List.of(), """
-                        package dev.vertique.test.mcp.ip01;
+                row("no-policy", List.of(), List.of(), """
+                        package dev.vertique.test.mcp.nopolicy;
 
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
 
-                        public class Ip01 {
+                        public class NoPolicy {
 
                             @Inject
-                            public Ip01() {}
+                            public NoPolicy() {}
 
-                            @McpTool(name = "ip01.bar", description = "IP-01: no policy annotations anywhere.")
+                            @McpTool(name = "no-policy.bar", description = "no-policy: no policy annotations anywhere.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
-                row("IP-02", List.of(), List.of("A"), """
-                        package dev.vertique.test.mcp.ip02;
+                row("type-chain", List.of(), List.of("A"), """
+                        package dev.vertique.test.mcp.typechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -270,19 +278,19 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Sanitize(A.class)
-                        public class Ip02 {
+                        public class TypeChain {
 
                             @Inject
-                            public Ip02() {}
+                            public TypeChain() {}
 
-                            @McpTool(name = "ip02.bar", description = "IP-02: type-level @Sanitize.")
+                            @McpTool(name = "type-chain.bar", description = "type-chain: type-level @Sanitize.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
-                row("IP-03", List.of(), List.of("B"), """
-                        package dev.vertique.test.mcp.ip03;
+                row("method-chain", List.of(), List.of("B"), """
+                        package dev.vertique.test.mcp.methodchain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.B;
@@ -290,20 +298,20 @@ class McpInvocationPolicyMatrixTest {
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
 
-                        public class Ip03 {
+                        public class MethodChain {
 
                             @Inject
-                            public Ip03() {}
+                            public MethodChain() {}
 
                             @Sanitize(B.class)
-                            @McpTool(name = "ip03.bar", description = "IP-03: method-level @Sanitize.")
+                            @McpTool(name = "method-chain.bar", description = "method-chain: method-level @Sanitize.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
-                row("IP-04", List.of(), List.of("B"), """
-                        package dev.vertique.test.mcp.ip04;
+                row("method-overrides-type", List.of(), List.of("B"), """
+                        package dev.vertique.test.mcp.methodoverridestype;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -313,20 +321,20 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Sanitize(A.class)
-                        public class Ip04 {
+                        public class MethodOverridesType {
 
                             @Inject
-                            public Ip04() {}
+                            public MethodOverridesType() {}
 
                             @Sanitize(B.class)
-                            @McpTool(name = "ip04.bar", description = "IP-04: method over type.")
+                            @McpTool(name = "method-overrides-type.bar", description = "method-overrides-type: method over type.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
-                row("IP-05", List.of(), List.of(), """
-                        package dev.vertique.test.mcp.ip05;
+                row("method-skip-over-type-chain", List.of(), List.of(), """
+                        package dev.vertique.test.mcp.methodskipovertypechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
@@ -336,40 +344,40 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Sanitize(A.class)
-                        public class Ip05 {
+                        public class MethodSkipOverTypeChain {
 
                             @Inject
-                            public Ip05() {}
+                            public MethodSkipOverTypeChain() {}
 
                             @SkipSanitization
-                            @McpTool(name = "ip05.bar", description = "IP-05: method skip over type additive.")
+                            @McpTool(name = "method-skip-over-type-chain.bar", description = "method-skip-over-type-chain: method skip over type additive.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
-                row("IP-06", List.of(), List.of(), """
-                        package dev.vertique.test.mcp.ip06;
+                row("method-skip-only", List.of(), List.of(), """
+                        package dev.vertique.test.mcp.methodskiponly;
 
                         import dev.vertique.core.sanitization.SkipSanitization;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
 
-                        public class Ip06 {
+                        public class MethodSkipOnly {
 
                             @Inject
-                            public Ip06() {}
+                            public MethodSkipOnly() {}
 
                             @SkipSanitization
-                            @McpTool(name = "ip06.bar", description = "IP-06: method skip, no type.")
+                            @McpTool(name = "method-skip-only.bar", description = "method-skip-only: method skip, no type.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
-                row("IP-07", List.of(), List.of("C"), """
-                        package dev.vertique.test.mcp.ip07;
+                row("parameter-overrides-type", List.of(), List.of("C"), """
+                        package dev.vertique.test.mcp.parameteroverridestype;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -379,12 +387,12 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Sanitize(A.class)
-                        public class Ip07 {
+                        public class ParameterOverridesType {
 
                             @Inject
-                            public Ip07() {}
+                            public ParameterOverridesType() {}
 
-                            @McpTool(name = "ip07.bar", description = "IP-07: parameter override over type.")
+                            @McpTool(name = "parameter-overrides-type.bar", description = "parameter-overrides-type: parameter override over type.")
                             public String bar(
                                     @McpToolParam(name = "p", description = "The value.")
                                     @Sanitize(C.class) String p) {
@@ -392,8 +400,8 @@ class McpInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-08", List.of(), List.of(), """
-                        package dev.vertique.test.mcp.ip08;
+                row("parameter-skip-over-type-chain", List.of(), List.of(), """
+                        package dev.vertique.test.mcp.parameterskipovertypechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
@@ -403,12 +411,12 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Sanitize(A.class)
-                        public class Ip08 {
+                        public class ParameterSkipOverTypeChain {
 
                             @Inject
-                            public Ip08() {}
+                            public ParameterSkipOverTypeChain() {}
 
-                            @McpTool(name = "ip08.bar", description = "IP-08: parameter skip over type additive.")
+                            @McpTool(name = "parameter-skip-over-type-chain.bar", description = "parameter-skip-over-type-chain: parameter skip over type additive.")
                             public String bar(
                                     @McpToolParam(name = "p", description = "The value.")
                                     @SkipSanitization String p) {
@@ -417,136 +425,143 @@ class McpInvocationPolicyMatrixTest {
                         }
                         """),
                 new ScenarioRow(
-                        "IP-09",
+                        "interface-method-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.mcp.ip09.Ip09Iface", """
-                                        package dev.vertique.test.mcp.ip09;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.interfacemethodchain.InterfaceMethodChainIface", """
+                                        package dev.vertique.test.mcp.interfacemethodchain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.B;
 
-                                        public interface Ip09Iface {
+                                        public interface InterfaceMethodChainIface {
                                             @Sanitize(B.class)
                                             String bar(String p);
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.mcp.ip09.Ip09", """
-                                        package dev.vertique.test.mcp.ip09;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.interfacemethodchain.InterfaceMethodChain", """
+                                        package dev.vertique.test.mcp.interfacemethodchain;
 
                                         import dev.vertique.mcp.annotation.McpTool;
                                         import dev.vertique.mcp.annotation.McpToolParam;
                                         import jakarta.inject.Inject;
 
-                                        public class Ip09 implements Ip09Iface {
+                                        public class InterfaceMethodChain implements InterfaceMethodChainIface {
 
                                             @Inject
-                                            public Ip09() {}
+                                            public InterfaceMethodChain() {}
 
                                             @Override
-                                            @McpTool(name = "ip09.bar", description = "IP-09: interface method.")
+                                            @McpTool(name = "interface-method-chain.bar", description = "interface-method-chain: interface method.")
                                             public String bar(
                                                     @McpToolParam(name = "p", description = "The value.") String p) {
                                                 return p;
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.mcp.ip09.Ip09_bar_McpToolInvoker",
+                        "dev.vertique.test.mcp.interfacemethodchain.InterfaceMethodChain_bar_McpToolInvoker",
                         List.of(),
                         List.of("B")),
                 new ScenarioRow(
-                        "IP-10",
+                        "superclass-type-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.mcp.ip10.Ip10Base", """
-                                        package dev.vertique.test.mcp.ip10;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.superclasstypechain.SuperclassTypeChainBase", """
+                                        package dev.vertique.test.mcp.superclasstypechain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.A;
 
                                         @Sanitize(A.class)
-                                        public class Ip10Base {
-                                            public Ip10Base() {}
+                                        public class SuperclassTypeChainBase {
+                                            public SuperclassTypeChainBase() {}
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.mcp.ip10.Ip10", """
-                                        package dev.vertique.test.mcp.ip10;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.superclasstypechain.SuperclassTypeChain", """
+                                        package dev.vertique.test.mcp.superclasstypechain;
 
                                         import dev.vertique.mcp.annotation.McpTool;
                                         import dev.vertique.mcp.annotation.McpToolParam;
                                         import jakarta.inject.Inject;
 
-                                        public class Ip10 extends Ip10Base {
+                                        public class SuperclassTypeChain extends SuperclassTypeChainBase {
 
                                             @Inject
-                                            public Ip10() {}
+                                            public SuperclassTypeChain() {}
 
-                                            @McpTool(name = "ip10.bar", description = "IP-10: superclass class-level.")
+                                            @McpTool(name = "superclass-type-chain.bar", description = "superclass-type-chain: superclass class-level.")
                                             public String bar(
                                                     @McpToolParam(name = "p", description = "The value.") String p) {
                                                 return p;
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.mcp.ip10.Ip10_bar_McpToolInvoker",
+                        "dev.vertique.test.mcp.superclasstypechain.SuperclassTypeChain_bar_McpToolInvoker",
                         List.of(),
                         List.of("A")),
-                row("IP-11", List.of(), List.of("B"), """
-                        package dev.vertique.test.mcp.ip11;
+                row("composed-annotation", List.of(), List.of("B"), """
+                        package dev.vertique.test.mcp.composedannotation;
 
                         import dev.vertique.input.processing.testkit.ComposedSanitize;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
 
-                        public class Ip11 {
+                        public class ComposedAnnotation {
 
                             @Inject
-                            public Ip11() {}
+                            public ComposedAnnotation() {}
 
                             @ComposedSanitize
-                            @McpTool(name = "ip11.bar", description = "IP-11: composed meta-annotation.")
+                            @McpTool(name = "composed-annotation.bar", description = "composed-annotation: composed meta-annotation.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
                 new ScenarioRow(
-                        "IP-12",
+                        "interface-parameter-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.mcp.ip12.Ip12Iface", """
-                                        package dev.vertique.test.mcp.ip12;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.interfaceparameterchain.InterfaceParameterChainIface",
+                                        """
+                                        package dev.vertique.test.mcp.interfaceparameterchain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.C;
 
-                                        public interface Ip12Iface {
+                                        public interface InterfaceParameterChainIface {
                                             String bar(@Sanitize(C.class) String p);
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.mcp.ip12.Ip12", """
-                                        package dev.vertique.test.mcp.ip12;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.interfaceparameterchain.InterfaceParameterChain", """
+                                        package dev.vertique.test.mcp.interfaceparameterchain;
 
                                         import dev.vertique.mcp.annotation.McpTool;
                                         import dev.vertique.mcp.annotation.McpToolParam;
                                         import jakarta.inject.Inject;
 
-                                        public class Ip12 implements Ip12Iface {
+                                        public class InterfaceParameterChain implements InterfaceParameterChainIface {
 
                                             @Inject
-                                            public Ip12() {}
+                                            public InterfaceParameterChain() {}
 
                                             @Override
-                                            @McpTool(name = "ip12.bar", description = "IP-12: interface parameter.")
+                                            @McpTool(name = "interface-parameter-chain.bar", description = "interface-parameter-chain: interface parameter.")
                                             public String bar(
                                                     @McpToolParam(name = "p", description = "The value.") String p) {
                                                 return p;
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.mcp.ip12.Ip12_bar_McpToolInvoker",
+                        "dev.vertique.test.mcp.interfaceparameterchain.InterfaceParameterChain_bar_McpToolInvoker",
                         List.of(),
                         List.of("C")),
-                row("IP-13", List.of("K"), List.of("B"), """
-                        package dev.vertique.test.mcp.ip13;
+                row("independent-axes", List.of("K"), List.of("B"), """
+                        package dev.vertique.test.mcp.independentaxes;
 
                         import dev.vertique.core.sanitization.Canonicalize;
                         import dev.vertique.core.sanitization.Sanitize;
@@ -557,33 +572,35 @@ class McpInvocationPolicyMatrixTest {
                         import jakarta.inject.Inject;
 
                         @Canonicalize(K.class)
-                        public class Ip13 {
+                        public class IndependentAxes {
 
                             @Inject
-                            public Ip13() {}
+                            public IndependentAxes() {}
 
                             @Sanitize(B.class)
-                            @McpTool(name = "ip13.bar", description = "IP-13: independent axes.")
+                            @McpTool(name = "independent-axes.bar", description = "independent-axes: independent axes.")
                             public String bar(@McpToolParam(name = "p", description = "The value.") String p) {
                                 return p;
                             }
                         }
                         """),
                 new ScenarioRow(
-                        "IP-16",
+                        "interface-method-skip",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.mcp.ip16.Ip16Iface", """
-                                        package dev.vertique.test.mcp.ip16;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.interfacemethodskip.InterfaceMethodSkipIface", """
+                                        package dev.vertique.test.mcp.interfacemethodskip;
 
                                         import dev.vertique.core.sanitization.SkipSanitization;
 
-                                        public interface Ip16Iface {
+                                        public interface InterfaceMethodSkipIface {
                                             @SkipSanitization
                                             String bar(String p);
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.mcp.ip16.Ip16", """
-                                        package dev.vertique.test.mcp.ip16;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.interfacemethodskip.InterfaceMethodSkip", """
+                                        package dev.vertique.test.mcp.interfacemethodskip;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.A;
@@ -592,13 +609,13 @@ class McpInvocationPolicyMatrixTest {
                                         import jakarta.inject.Inject;
 
                                         @Sanitize(A.class)
-                                        public class Ip16 implements Ip16Iface {
+                                        public class InterfaceMethodSkip implements InterfaceMethodSkipIface {
 
                                             @Inject
-                                            public Ip16() {}
+                                            public InterfaceMethodSkip() {}
 
                                             @Override
-                                            @McpTool(name = "ip16.bar", description = "IP-16: inherited skip over "
+                                            @McpTool(name = "interface-method-skip.bar", description = "interface-method-skip: inherited skip over "
                                                     + "concrete class-level additive.")
                                             public String bar(
                                                     @McpToolParam(name = "p", description = "The value.") String p) {
@@ -606,20 +623,21 @@ class McpInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.mcp.ip16.Ip16_bar_McpToolInvoker",
+                        "dev.vertique.test.mcp.interfacemethodskip.InterfaceMethodSkip_bar_McpToolInvoker",
                         List.of(),
                         List.of()),
                 new ScenarioRow(
-                        "IP-18",
+                        "override-replaces-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.mcp.ip18.Ip18Base", """
-                                        package dev.vertique.test.mcp.ip18;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.overridereplaceschain.OverrideReplacesChainBase", """
+                                        package dev.vertique.test.mcp.overridereplaceschain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.B;
 
-                                        public class Ip18Base {
-                                            public Ip18Base() {}
+                                        public class OverrideReplacesChainBase {
+                                            public OverrideReplacesChainBase() {}
 
                                             @Sanitize(B.class)
                                             public String bar(String p) {
@@ -627,8 +645,9 @@ class McpInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.mcp.ip18.Ip18", """
-                                        package dev.vertique.test.mcp.ip18;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.mcp.overridereplaceschain.OverrideReplacesChain", """
+                                        package dev.vertique.test.mcp.overridereplaceschain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.A;
@@ -636,45 +655,55 @@ class McpInvocationPolicyMatrixTest {
                                         import dev.vertique.mcp.annotation.McpToolParam;
                                         import jakarta.inject.Inject;
 
-                                        public class Ip18 extends Ip18Base {
+                                        public class OverrideReplacesChain extends OverrideReplacesChainBase {
 
                                             @Inject
-                                            public Ip18() {}
+                                            public OverrideReplacesChain() {}
 
                                             @Override
                                             @Sanitize(A.class)
-                                            @McpTool(name = "ip18.bar", description = "IP-18: direct override wins.")
+                                            @McpTool(name = "override-replaces-chain.bar", description = "override-replaces-chain: direct override wins.")
                                             public String bar(
                                                     @McpToolParam(name = "p", description = "The value.") String p) {
                                                 return p;
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.mcp.ip18.Ip18_bar_McpToolInvoker",
+                        "dev.vertique.test.mcp.overridereplaceschain.OverrideReplacesChain_bar_McpToolInvoker",
                         List.of(),
                         List.of("A")));
     }
 
     /**
      * Builds a single-source {@link ScenarioRow} whose generated invoker FQN follows the standard
-     * {@code dev.vertique.test.mcp.ipNN.IpNN_bar_McpToolInvoker} shape.
+     * {@code dev.vertique.test.mcp.<scenario>.<Scenario>_bar_McpToolInvoker} shape.
      *
-     * @param id             the scenario id (e.g. {@code "IP-01"})
+     * @param id             the scenario id (e.g. {@code "no-policy"})
      * @param canonicalizers expected carrier canonicalizer simple class names, in order
      * @param sanitizers     expected carrier sanitizer simple class names, in order
-     * @param body           the inline source body (must declare a top-level {@code IpNN} class)
+     * @param body           the inline source body (must declare the scenario's top-level class)
      * @return the built row
      */
     private static ScenarioRow row(String id, List<String> canonicalizers, List<String> sanitizers, String body) {
         String pkg =
                 "dev.vertique.test.mcp." + id.toLowerCase(java.util.Locale.ROOT).replace("-", "");
-        String simpleName = "Ip" + id.substring("IP-".length());
+        String simpleName = pascalCase(id);
         return new ScenarioRow(
                 id,
                 List.of(SourceFiles.inline(pkg + "." + simpleName, body)),
                 pkg + "." + simpleName + "_bar_McpToolInvoker",
                 canonicalizers,
                 sanitizers);
+    }
+
+    /**
+     * Converts a kebab-case scenario id such as {@code "type-chain"} to the {@code TypeChain} simple
+     * class name of its fixture.
+     */
+    private static String pascalCase(String kebab) {
+        return java.util.Arrays.stream(kebab.split("-"))
+                .map(part -> Character.toUpperCase(part.charAt(0)) + part.substring(1))
+                .collect(java.util.stream.Collectors.joining());
     }
 
     // --- Assertion helper ---
@@ -714,9 +743,9 @@ class McpInvocationPolicyMatrixTest {
      * mcp-server runtime stubs every generated invoker references ({@link
      * #mcpToolParameterMetadataStub()}, {@link #mcpToolRuntimeFactoryStub()}, {@link
      * #mcpToolRuntimeStub()}). Unlike {@code McpToolProcessorCompileTest}'s equivalent helper, no
-     * {@code InputObjectProcessor}/{@code EffectiveInputPolicies} stub is needed: T019 (issue #379)
-     * adds {@code vertique-input-processing} as a real compile-scope dependency of this module, so
-     * both types are already on the classpath.
+     * {@code InputObjectProcessor}/{@code EffectiveInputPolicies} stub is needed:
+     * {@code vertique-input-processing} is a real compile-scope dependency of this module, so both
+     * types are already on the classpath.
      *
      * @param sources the fixture sources; must not be empty
      * @return the harness result

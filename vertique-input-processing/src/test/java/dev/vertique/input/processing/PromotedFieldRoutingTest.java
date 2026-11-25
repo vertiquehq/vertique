@@ -23,7 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * GH-376 — the engine routes a key its codec <em>promoted</em> out of a nested member to the
+ * The engine routes a key its codec <em>promoted</em> out of a nested member to the
  * policies declared on the type that field actually lives on.
  *
  * <p>The resolver here is a hand-written stub rather than the Jackson one, which is the correct unit

@@ -17,36 +17,38 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-002/TP-003 (T018, issue #379): {@link EffectiveJaxRsContractResolver}, wired to {@code
- * apt.ElementInvocationPolicies}, resolves the same IP-01..IP-19 matrix as {@code
- * ElementInvocationPoliciesTest} (TP-001) and {@code ReflectiveInvocationPoliciesTest} (T016
- * TP-002) — end-to-end through the real {@link JaxRsPipelineProcessor} pipeline, asserting the
- * generated {@code POL0} literal content (not the adapter's return value
- * directly).
+ * {@link EffectiveJaxRsContractResolver}, wired to {@code apt.ElementInvocationPolicies}, resolves the
+ * same invocation-policy matrix as {@code ElementInvocationPoliciesTest} and
+ * {@code ReflectiveInvocationPoliciesTest} — end-to-end through the real
+ * {@link JaxRsPipelineProcessor} pipeline, asserting the generated {@code POL0} literal content (not
+ * the adapter's return value directly).
  *
  * <p>Every fixture reuses the exact class/method names of {@link InvocationPolicyScenarios}'s
- * reflection carriers (e.g. {@code Ip14.bar}, {@code IFoo}/{@code FooImpl}), decorated with the
- * JAX-RS wiring annotations ({@code @Path}, {@code @GET}, {@code @QueryParam}) needed for {@link
- * JaxRsMethodDiscovery}/{@code classifyEffectiveParam} to discover the method and parameter at all
- * — so the resolved {@code POL0} content and (for conflicts) the diagnostic message reuse the exact
- * site strings the contract documents as byte-identical to the reflective adapter.
+ * reflection carriers (e.g. {@code SameMethodConflict.bar}, {@code IFoo}/{@code FooImpl}), decorated
+ * with the JAX-RS wiring annotations ({@code @Path}, {@code @GET}, {@code @QueryParam}) needed for
+ * {@link JaxRsMethodDiscovery}/{@code classifyEffectiveParam} to discover the method and parameter at
+ * all — so the resolved {@code POL0} content and (for conflicts) the diagnostic message reuse the
+ * exact site strings the reflective adapter produces.
  *
- * <p><strong>TP-002</strong> ({@link #generatedPlanMatchesTheMatrix}, IP-01..IP-13, IP-16, IP-18):
+ * <p><strong>Non-conflict rows</strong> ({@link #generatedPlanMatchesTheMatrix}, {@code no-policy}
+ * through {@code independent-axes}, {@code interface-method-skip}, {@code override-replaces-chain}):
  * asserts the generated {@code POL0} constant equals the matrix's parameter-axis expectation (the
- * per-parameter combined chain — route baseline plus any parameter-level override — via {@link
- * PolicyLiteralAssertions#effectiveInputPolicies}). IP-16's fixture also carries a class-level
- * {@code @Sanitize(A.class)} on top of the scenario's interface method-level {@code
- * @SkipSanitization} (A4, contract L159-162): the hierarchy walk resolves this row to the same
- * {@code []} expectation as every other row in the matrix.
+ * per-parameter combined chain — route baseline plus any parameter-level override — via
+ * {@link PolicyLiteralAssertions#effectiveInputPolicies}). The {@code interface-method-skip} fixture
+ * also carries a class-level {@code @Sanitize(A.class)} on top of the scenario's interface
+ * method-level {@code @SkipSanitization}: the hierarchy walk resolves this row to the same {@code []}
+ * expectation as every other row in the matrix.
  *
- * <p><strong>TP-003</strong> ({@link #conflictOnMethodIsACompileErrorNamingTheMethod} IP-14, {@link
- * #conflictOnParameterIsACompileError} IP-15, {@link #overrideSkipOverInheritedAdditiveIsACompileError}
- * IP-17, {@link #subclassAdditiveOverSuperclassSkipIsACompileError} IP-19): asserts {@code
- * assertFailed()} plus the contract-shaped diagnostic. IP-14/IP-17 assert the exact message via
- * {@link InvocationPolicyScenarios#expectedConflictMessage} (contract: message shape tested on
- * IP-14/IP-17); IP-15/IP-19 assert {@code "Conflicting @Sanitize"} plus both real declaration sites,
- * mirroring {@code ReflectiveInvocationPoliciesTest}'s own ruling (T016 L01) that the contract does
- * not pin an exact literal for parameter-level/type-level conflicts.
+ * <p><strong>Conflict rows</strong> ({@link #conflictOnMethodIsACompileErrorNamingTheMethod}
+ * {@code same-method-conflict}, {@link #conflictOnParameterIsACompileError}
+ * {@code same-parameter-conflict}, {@link #overrideSkipOverInheritedAdditiveIsACompileError}
+ * {@code override-skip-conflict}, {@link #subclassAdditiveOverSuperclassSkipIsACompileError}
+ * {@code supertype-skip-conflict}): asserts {@code assertFailed()} plus the expected diagnostic.
+ * {@code same-method-conflict} and {@code override-skip-conflict} assert the exact message via
+ * {@link InvocationPolicyScenarios#expectedConflictMessage}; {@code same-parameter-conflict} and
+ * {@code supertype-skip-conflict} assert {@code "Conflicting @Sanitize"} plus both real declaration
+ * sites, mirroring {@code ReflectiveInvocationPoliciesTest}: no exact literal is pinned for
+ * parameter-level/type-level conflicts.
  */
 class JaxRsInvocationPolicyMatrixTest {
 
@@ -63,11 +65,13 @@ class JaxRsInvocationPolicyMatrixTest {
     }
 
     @Test
-    @DisplayName("IP-14: @Sanitize + @SkipSanitization on the same method is a compile error naming the method")
+    @DisplayName("same-method-conflict: @Sanitize + @SkipSanitization on the same method is a compile error "
+            + "naming the method")
     void conflictOnMethodIsACompileErrorNamingTheMethod() {
         var result = ProcessorTestHarness.run(
-                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.ip14.Ip14", """
-                        package dev.vertique.test.ip14;
+                new JaxRsPipelineProcessor(),
+                SourceFiles.inline("dev.vertique.test.samemethodconflict.SameMethodConflict", """
+                        package dev.vertique.test.samemethodconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
@@ -77,10 +81,10 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip14")
+                        @Path("/same-method-conflict")
                         @PermitAll
-                        public class Ip14 {
-                            public Ip14() {}
+                        public class SameMethodConflict {
+                            public SameMethodConflict() {}
 
                             @GET
                             @Sanitize(B.class)
@@ -93,15 +97,19 @@ class JaxRsInvocationPolicyMatrixTest {
 
         result.assertFailed();
         result.assertErrorMessage(InvocationPolicyScenarios.expectedConflictMessage(
-                PolicyAxis.SANITIZE, "Ip14.bar", "Ip14.bar", "method Ip14.bar"));
+                PolicyAxis.SANITIZE,
+                "SameMethodConflict.bar",
+                "SameMethodConflict.bar",
+                "method SameMethodConflict.bar"));
     }
 
     @Test
-    @DisplayName("IP-15: @Sanitize + @SkipSanitization on the same parameter is a compile error")
+    @DisplayName("same-parameter-conflict: @Sanitize + @SkipSanitization on the same parameter is a compile error")
     void conflictOnParameterIsACompileError() {
         var result = ProcessorTestHarness.run(
-                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.ip15.Ip15", """
-                        package dev.vertique.test.ip15;
+                new JaxRsPipelineProcessor(),
+                SourceFiles.inline("dev.vertique.test.sameparameterconflict.SameParameterConflict", """
+                        package dev.vertique.test.sameparameterconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
@@ -111,10 +119,10 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip15")
+                        @Path("/same-parameter-conflict")
                         @PermitAll
-                        public class Ip15 {
-                            public Ip15() {}
+                        public class SameParameterConflict {
+                            public SameParameterConflict() {}
 
                             @GET
                             public String bar(
@@ -126,16 +134,17 @@ class JaxRsInvocationPolicyMatrixTest {
 
         result.assertFailed();
         result.assertErrorMessage("Conflicting @Sanitize");
-        result.assertErrorMessage("Ip15.bar");
+        result.assertErrorMessage("SameParameterConflict.bar");
     }
 
     @Test
-    @DisplayName("IP-17: an override @SkipSanitization over an inherited interface @Sanitize is a compile error")
+    @DisplayName("override-skip-conflict: an override @SkipSanitization over an inherited interface @Sanitize is "
+            + "a compile error")
     void overrideSkipOverInheritedAdditiveIsACompileError() {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(),
-                SourceFiles.inline("dev.vertique.test.ip17.IFoo", """
-                        package dev.vertique.test.ip17;
+                SourceFiles.inline("dev.vertique.test.overrideskipconflict.IFoo", """
+                        package dev.vertique.test.overrideskipconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.B;
@@ -143,15 +152,15 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip17")
+                        @Path("/override-skip-conflict")
                         public interface IFoo {
                             @GET
                             @Sanitize(B.class)
                             String bar(@QueryParam("p") String p);
                         }
                         """),
-                SourceFiles.inline("dev.vertique.test.ip17.FooImpl", """
-                        package dev.vertique.test.ip17;
+                SourceFiles.inline("dev.vertique.test.overrideskipconflict.FooImpl", """
+                        package dev.vertique.test.overrideskipconflict;
 
                         import dev.vertique.core.sanitization.SkipSanitization;
                         import jakarta.annotation.security.PermitAll;
@@ -174,23 +183,23 @@ class JaxRsInvocationPolicyMatrixTest {
     }
 
     @Test
-    @DisplayName("IP-19: a subclass class-level @Sanitize over a superclass class-level @SkipSanitization "
-            + "is a compile error")
+    @DisplayName("supertype-skip-conflict: a subclass class-level @Sanitize over a superclass class-level "
+            + "@SkipSanitization is a compile error")
     void subclassAdditiveOverSuperclassSkipIsACompileError() {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(),
-                SourceFiles.inline("dev.vertique.test.ip19.Ip19Base", """
-                        package dev.vertique.test.ip19;
+                SourceFiles.inline("dev.vertique.test.supertypeskipconflict.SupertypeSkipConflictBase", """
+                        package dev.vertique.test.supertypeskipconflict;
 
                         import dev.vertique.core.sanitization.SkipSanitization;
 
                         @SkipSanitization
-                        public class Ip19Base {
-                            public Ip19Base() {}
+                        public class SupertypeSkipConflictBase {
+                            public SupertypeSkipConflictBase() {}
                         }
                         """),
-                SourceFiles.inline("dev.vertique.test.ip19.Ip19", """
-                        package dev.vertique.test.ip19;
+                SourceFiles.inline("dev.vertique.test.supertypeskipconflict.SupertypeSkipConflict", """
+                        package dev.vertique.test.supertypeskipconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -199,11 +208,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip19")
+                        @Path("/supertype-skip-conflict")
                         @PermitAll
                         @Sanitize(A.class)
-                        public class Ip19 extends Ip19Base {
-                            public Ip19() {}
+                        public class SupertypeSkipConflict extends SupertypeSkipConflictBase {
+                            public SupertypeSkipConflict() {}
 
                             @GET
                             public String bar(@QueryParam("p") String p) {
@@ -214,13 +223,13 @@ class JaxRsInvocationPolicyMatrixTest {
 
         result.assertFailed();
         result.assertErrorMessage("Conflicting @Sanitize");
-        result.assertErrorMessage("Ip19Base");
-        result.assertErrorMessage("Ip19");
+        result.assertErrorMessage("SupertypeSkipConflictBase");
+        result.assertErrorMessage("SupertypeSkipConflict");
     }
 
-    // --- TP-002 row fixtures ---
+    // --- Non-conflict row fixtures ---
 
-    /** One TP-002 (non-conflict) row: sources, the generated plan FQN, and expected POL0 chains. */
+    /** One non-conflict row: sources, the generated plan FQN, and expected POL0 chains. */
     private record ScenarioRow(
             String id,
             List<JavaFileObject> sources,
@@ -235,18 +244,18 @@ class JaxRsInvocationPolicyMatrixTest {
 
     private static Stream<ScenarioRow> nonConflictRows() {
         return Stream.of(
-                row("IP-01", List.of(), List.of(), """
-                        package dev.vertique.test.ip01;
+                row("no-policy", List.of(), List.of(), """
+                        package dev.vertique.test.nopolicy;
 
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip01")
+                        @Path("/no-policy")
                         @PermitAll
-                        public class Ip01 {
-                            public Ip01() {}
+                        public class NoPolicy {
+                            public NoPolicy() {}
 
                             @GET
                             public String bar(@QueryParam("p") String p) {
@@ -254,8 +263,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-02", List.of(), List.of("A"), """
-                        package dev.vertique.test.ip02;
+                row("type-chain", List.of(), List.of("A"), """
+                        package dev.vertique.test.typechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -264,11 +273,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip02")
+                        @Path("/type-chain")
                         @PermitAll
                         @Sanitize(A.class)
-                        public class Ip02 {
-                            public Ip02() {}
+                        public class TypeChain {
+                            public TypeChain() {}
 
                             @GET
                             public String bar(@QueryParam("p") String p) {
@@ -276,8 +285,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-03", List.of(), List.of("B"), """
-                        package dev.vertique.test.ip03;
+                row("method-chain", List.of(), List.of("B"), """
+                        package dev.vertique.test.methodchain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.B;
@@ -286,10 +295,10 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip03")
+                        @Path("/method-chain")
                         @PermitAll
-                        public class Ip03 {
-                            public Ip03() {}
+                        public class MethodChain {
+                            public MethodChain() {}
 
                             @GET
                             @Sanitize(B.class)
@@ -298,8 +307,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-04", List.of(), List.of("B"), """
-                        package dev.vertique.test.ip04;
+                row("method-overrides-type", List.of(), List.of("B"), """
+                        package dev.vertique.test.methodoverridestype;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -309,11 +318,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip04")
+                        @Path("/method-overrides-type")
                         @PermitAll
                         @Sanitize(A.class)
-                        public class Ip04 {
-                            public Ip04() {}
+                        public class MethodOverridesType {
+                            public MethodOverridesType() {}
 
                             @GET
                             @Sanitize(B.class)
@@ -322,8 +331,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-05", List.of(), List.of(), """
-                        package dev.vertique.test.ip05;
+                row("method-skip-over-type-chain", List.of(), List.of(), """
+                        package dev.vertique.test.methodskipovertypechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
@@ -333,11 +342,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip05")
+                        @Path("/method-skip-over-type-chain")
                         @PermitAll
                         @Sanitize(A.class)
-                        public class Ip05 {
-                            public Ip05() {}
+                        public class MethodSkipOverTypeChain {
+                            public MethodSkipOverTypeChain() {}
 
                             @GET
                             @SkipSanitization
@@ -346,8 +355,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-06", List.of(), List.of(), """
-                        package dev.vertique.test.ip06;
+                row("method-skip-only", List.of(), List.of(), """
+                        package dev.vertique.test.methodskiponly;
 
                         import dev.vertique.core.sanitization.SkipSanitization;
                         import jakarta.annotation.security.PermitAll;
@@ -355,10 +364,10 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip06")
+                        @Path("/method-skip-only")
                         @PermitAll
-                        public class Ip06 {
-                            public Ip06() {}
+                        public class MethodSkipOnly {
+                            public MethodSkipOnly() {}
 
                             @GET
                             @SkipSanitization
@@ -367,8 +376,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-07", List.of(), List.of("C"), """
-                        package dev.vertique.test.ip07;
+                row("parameter-overrides-type", List.of(), List.of("C"), """
+                        package dev.vertique.test.parameteroverridestype;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.input.processing.testkit.A;
@@ -378,11 +387,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip07")
+                        @Path("/parameter-overrides-type")
                         @PermitAll
                         @Sanitize(A.class)
-                        public class Ip07 {
-                            public Ip07() {}
+                        public class ParameterOverridesType {
+                            public ParameterOverridesType() {}
 
                             @GET
                             public String bar(@QueryParam("p") @Sanitize(C.class) String p) {
@@ -390,8 +399,8 @@ class JaxRsInvocationPolicyMatrixTest {
                             }
                         }
                         """),
-                row("IP-08", List.of(), List.of(), """
-                        package dev.vertique.test.ip08;
+                row("parameter-skip-over-type-chain", List.of(), List.of(), """
+                        package dev.vertique.test.parameterskipovertypechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
@@ -401,11 +410,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip08")
+                        @Path("/parameter-skip-over-type-chain")
                         @PermitAll
                         @Sanitize(A.class)
-                        public class Ip08 {
-                            public Ip08() {}
+                        public class ParameterSkipOverTypeChain {
+                            public ParameterSkipOverTypeChain() {}
 
                             @GET
                             public String bar(@QueryParam("p") @SkipSanitization String p) {
@@ -414,10 +423,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         }
                         """),
                 new ScenarioRow(
-                        "IP-09",
+                        "interface-method-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.ip09.Ip09Iface", """
-                                        package dev.vertique.test.ip09;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.interfacemethodchain.InterfaceMethodChainIface", """
+                                        package dev.vertique.test.interfacemethodchain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.B;
@@ -425,21 +435,21 @@ class JaxRsInvocationPolicyMatrixTest {
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
 
-                                        @Path("/ip09")
-                                        public interface Ip09Iface {
+                                        @Path("/interface-method-chain")
+                                        public interface InterfaceMethodChainIface {
                                             @GET
                                             @Sanitize(B.class)
                                             String bar(@QueryParam("p") String p);
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.ip09.Ip09", """
-                                        package dev.vertique.test.ip09;
+                                SourceFiles.inline("dev.vertique.test.interfacemethodchain.InterfaceMethodChain", """
+                                        package dev.vertique.test.interfacemethodchain;
 
                                         import jakarta.annotation.security.PermitAll;
 
                                         @PermitAll
-                                        public class Ip09 implements Ip09Iface {
-                                            public Ip09() {}
+                                        public class InterfaceMethodChain implements InterfaceMethodChainIface {
+                                            public InterfaceMethodChain() {}
 
                                             @Override
                                             public String bar(String p) {
@@ -447,35 +457,36 @@ class JaxRsInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.ip09.Ip09_bar_0_ExecutionPlan",
+                        "dev.vertique.test.interfacemethodchain.InterfaceMethodChain_bar_0_ExecutionPlan",
                         List.of(),
                         List.of("B")),
                 new ScenarioRow(
-                        "IP-10",
+                        "superclass-type-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.ip10.Ip10Base", """
-                                        package dev.vertique.test.ip10;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.superclasstypechain.SuperclassTypeChainBase", """
+                                        package dev.vertique.test.superclasstypechain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.A;
 
                                         @Sanitize(A.class)
-                                        public class Ip10Base {
-                                            public Ip10Base() {}
+                                        public class SuperclassTypeChainBase {
+                                            public SuperclassTypeChainBase() {}
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.ip10.Ip10", """
-                                        package dev.vertique.test.ip10;
+                                SourceFiles.inline("dev.vertique.test.superclasstypechain.SuperclassTypeChain", """
+                                        package dev.vertique.test.superclasstypechain;
 
                                         import jakarta.annotation.security.PermitAll;
                                         import jakarta.ws.rs.GET;
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
 
-                                        @Path("/ip10")
+                                        @Path("/superclass-type-chain")
                                         @PermitAll
-                                        public class Ip10 extends Ip10Base {
-                                            public Ip10() {}
+                                        public class SuperclassTypeChain extends SuperclassTypeChainBase {
+                                            public SuperclassTypeChain() {}
 
                                             @GET
                                             public String bar(@QueryParam("p") String p) {
@@ -483,11 +494,11 @@ class JaxRsInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.ip10.Ip10_bar_0_ExecutionPlan",
+                        "dev.vertique.test.superclasstypechain.SuperclassTypeChain_bar_0_ExecutionPlan",
                         List.of(),
                         List.of("A")),
-                row("IP-11", List.of(), List.of("B"), """
-                        package dev.vertique.test.ip11;
+                row("composed-annotation", List.of(), List.of("B"), """
+                        package dev.vertique.test.composedannotation;
 
                         import dev.vertique.input.processing.testkit.ComposedSanitize;
                         import jakarta.annotation.security.PermitAll;
@@ -495,10 +506,10 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip11")
+                        @Path("/composed-annotation")
                         @PermitAll
-                        public class Ip11 {
-                            public Ip11() {}
+                        public class ComposedAnnotation {
+                            public ComposedAnnotation() {}
 
                             @GET
                             @ComposedSanitize
@@ -508,10 +519,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         }
                         """),
                 new ScenarioRow(
-                        "IP-12",
+                        "interface-parameter-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.ip12.Ip12Iface", """
-                                        package dev.vertique.test.ip12;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.interfaceparameterchain.InterfaceParameterChainIface", """
+                                        package dev.vertique.test.interfaceparameterchain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.C;
@@ -519,20 +531,21 @@ class JaxRsInvocationPolicyMatrixTest {
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
 
-                                        @Path("/ip12")
-                                        public interface Ip12Iface {
+                                        @Path("/interface-parameter-chain")
+                                        public interface InterfaceParameterChainIface {
                                             @GET
                                             String bar(@QueryParam("p") @Sanitize(C.class) String p);
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.ip12.Ip12", """
-                                        package dev.vertique.test.ip12;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.interfaceparameterchain.InterfaceParameterChain", """
+                                        package dev.vertique.test.interfaceparameterchain;
 
                                         import jakarta.annotation.security.PermitAll;
 
                                         @PermitAll
-                                        public class Ip12 implements Ip12Iface {
-                                            public Ip12() {}
+                                        public class InterfaceParameterChain implements InterfaceParameterChainIface {
+                                            public InterfaceParameterChain() {}
 
                                             @Override
                                             public String bar(String p) {
@@ -540,11 +553,11 @@ class JaxRsInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.ip12.Ip12_bar_0_ExecutionPlan",
+                        "dev.vertique.test.interfaceparameterchain.InterfaceParameterChain_bar_0_ExecutionPlan",
                         List.of(),
                         List.of("C")),
-                row("IP-13", List.of("K"), List.of("B"), """
-                        package dev.vertique.test.ip13;
+                row("independent-axes", List.of("K"), List.of("B"), """
+                        package dev.vertique.test.independentaxes;
 
                         import dev.vertique.core.sanitization.Canonicalize;
                         import dev.vertique.core.sanitization.Sanitize;
@@ -555,11 +568,11 @@ class JaxRsInvocationPolicyMatrixTest {
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
 
-                        @Path("/ip13")
+                        @Path("/independent-axes")
                         @PermitAll
                         @Canonicalize(K.class)
-                        public class Ip13 {
-                            public Ip13() {}
+                        public class IndependentAxes {
+                            public IndependentAxes() {}
 
                             @GET
                             @Sanitize(B.class)
@@ -569,25 +582,26 @@ class JaxRsInvocationPolicyMatrixTest {
                         }
                         """),
                 new ScenarioRow(
-                        "IP-16",
+                        "interface-method-skip",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.ip16.Ip16Iface", """
-                                        package dev.vertique.test.ip16;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.interfacemethodskip.InterfaceMethodSkipIface", """
+                                        package dev.vertique.test.interfacemethodskip;
 
                                         import dev.vertique.core.sanitization.SkipSanitization;
                                         import jakarta.ws.rs.GET;
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
 
-                                        @Path("/ip16")
-                                        public interface Ip16Iface {
+                                        @Path("/interface-method-skip")
+                                        public interface InterfaceMethodSkipIface {
                                             @GET
                                             @SkipSanitization
                                             String bar(@QueryParam("p") String p);
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.ip16.Ip16", """
-                                        package dev.vertique.test.ip16;
+                                SourceFiles.inline("dev.vertique.test.interfacemethodskip.InterfaceMethodSkip", """
+                                        package dev.vertique.test.interfacemethodskip;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.A;
@@ -595,8 +609,8 @@ class JaxRsInvocationPolicyMatrixTest {
 
                                         @PermitAll
                                         @Sanitize(A.class)
-                                        public class Ip16 implements Ip16Iface {
-                                            public Ip16() {}
+                                        public class InterfaceMethodSkip implements InterfaceMethodSkipIface {
+                                            public InterfaceMethodSkip() {}
 
                                             @Override
                                             public String bar(String p) {
@@ -604,20 +618,21 @@ class JaxRsInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.ip16.Ip16_bar_0_ExecutionPlan",
+                        "dev.vertique.test.interfacemethodskip.InterfaceMethodSkip_bar_0_ExecutionPlan",
                         List.of(),
                         List.of()),
                 new ScenarioRow(
-                        "IP-18",
+                        "override-replaces-chain",
                         List.of(
-                                SourceFiles.inline("dev.vertique.test.ip18.Ip18Base", """
-                                        package dev.vertique.test.ip18;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.overridereplaceschain.OverrideReplacesChainBase", """
+                                        package dev.vertique.test.overridereplaceschain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.B;
 
-                                        public class Ip18Base {
-                                            public Ip18Base() {}
+                                        public class OverrideReplacesChainBase {
+                                            public OverrideReplacesChainBase() {}
 
                                             @Sanitize(B.class)
                                             public String bar(String p) {
@@ -625,8 +640,9 @@ class JaxRsInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """),
-                                SourceFiles.inline("dev.vertique.test.ip18.Ip18", """
-                                        package dev.vertique.test.ip18;
+                                SourceFiles.inline(
+                                        "dev.vertique.test.overridereplaceschain.OverrideReplacesChain", """
+                                        package dev.vertique.test.overridereplaceschain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
                                         import dev.vertique.input.processing.testkit.A;
@@ -635,10 +651,10 @@ class JaxRsInvocationPolicyMatrixTest {
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
 
-                                        @Path("/ip18")
+                                        @Path("/override-replaces-chain")
                                         @PermitAll
-                                        public class Ip18 extends Ip18Base {
-                                            public Ip18() {}
+                                        public class OverrideReplacesChain extends OverrideReplacesChainBase {
+                                            public OverrideReplacesChain() {}
 
                                             @Override
                                             @GET
@@ -648,30 +664,40 @@ class JaxRsInvocationPolicyMatrixTest {
                                             }
                                         }
                                         """)),
-                        "dev.vertique.test.ip18.Ip18_bar_0_ExecutionPlan",
+                        "dev.vertique.test.overridereplaceschain.OverrideReplacesChain_bar_0_ExecutionPlan",
                         List.of(),
                         List.of("A")));
     }
 
     /**
      * Builds a single-source {@link ScenarioRow} whose generated plan FQN follows the standard
-     * {@code dev.vertique.test.ipNN.IpNN_bar_0_ExecutionPlan} shape.
+     * {@code dev.vertique.test.<scenario>.<Scenario>_bar_0_ExecutionPlan} shape.
      *
-     * @param id             the scenario id (e.g. {@code "IP-01"})
+     * @param id             the scenario id (e.g. {@code "no-policy"})
      * @param canonicalizers expected {@code POL0} canonicalizer simple class names, in order
      * @param sanitizers     expected {@code POL0} sanitizer simple class names, in order
-     * @param body           the inline source body (must declare a top-level {@code IpNN} class)
+     * @param body           the inline source body (must declare the scenario's top-level class)
      * @return the built row
      */
     private static ScenarioRow row(String id, List<String> canonicalizers, List<String> sanitizers, String body) {
         String pkg =
                 "dev.vertique.test." + id.toLowerCase(java.util.Locale.ROOT).replace("-", "");
-        String simpleName = "Ip" + id.substring("IP-".length());
+        String simpleName = pascalCase(id);
         return new ScenarioRow(
                 id,
                 List.of(SourceFiles.inline(pkg + "." + simpleName, body)),
                 pkg + "." + simpleName + "_bar_0_ExecutionPlan",
                 canonicalizers,
                 sanitizers);
+    }
+
+    /**
+     * Converts a kebab-case scenario id such as {@code "type-chain"} to the {@code TypeChain} simple
+     * class name of its fixture.
+     */
+    private static String pascalCase(String kebab) {
+        return java.util.Arrays.stream(kebab.split("-"))
+                .map(part -> Character.toUpperCase(part.charAt(0)) + part.substring(1))
+                .collect(java.util.stream.Collectors.joining());
     }
 }

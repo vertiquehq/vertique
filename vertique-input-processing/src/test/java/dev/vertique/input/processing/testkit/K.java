@@ -7,7 +7,7 @@ import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
 
 /**
- * Deterministic marker canonicalizer used by {@link InvocationPolicyScenarios} (T016, issue #379);
+ * Deterministic marker canonicalizer used by {@link InvocationPolicyScenarios};
  * see {@link A} for the shared rationale, applied to the {@code CANONICALIZE} axis.
  */
 public final class K implements Canonicalizer {

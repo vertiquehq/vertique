@@ -25,27 +25,27 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-001 (T016, issue #379): {@code InvocationPolicyResolver.resolveRouteChain}/
- * {@code resolveParameterChain} honor the IP-01..IP-19 precedence matrix and reject conflicts, driven
- * entirely by hand-built {@link dev.vertique.input.processing.testkit.InvocationPolicyScenarios}
- * stubs — no reflection, no real annotated carriers.
+ * {@code InvocationPolicyResolver.resolveRouteChain}/{@code resolveParameterChain} honor the
+ * invocation-policy precedence matrix and reject conflicts, driven entirely by hand-built
+ * {@link dev.vertique.input.processing.testkit.InvocationPolicyScenarios} stubs — no reflection, no
+ * real annotated carriers.
  *
  * <p>Every row is exercised on both axes, since {@code resolveRouteChain}/{@code resolveParameterChain}
  * take an explicit {@link PolicyAxis}: the {@code CANONICALIZE} axis is a real, separate call for every
  * row, not skipped just because a row's declarative description only mentions {@code @Sanitize}.
  *
- * <p>Sensitivity (contract-required): promoting {@code type.additive()} ahead of {@code method.skip()}
- * in {@code resolveRouteChain}'s precedence would make IP-05 resolve {@code [A]} instead of {@code []}
- * — {@link #resolvesSanitizeAxis} would fail.
+ * <p>Sensitivity: promoting {@code type.additive()} ahead of {@code method.skip()} in
+ * {@code resolveRouteChain}'s precedence would make {@code method-skip-over-type-chain} resolve
+ * {@code [A]} instead of {@code []} — {@link #resolvesSanitizeAxis} would fail.
  *
- * <p>The {@code inheritedSkip*} cases below cover the security review's R2 finding: a skip declared on
+ * <p>The {@code inheritedSkip*} cases below cover an inherited skip: a skip declared on
  * a supertype site removes a chain declared one level below without the element itself saying so, so
  * the resolver announces the removal with a WARN. The precedence itself is unchanged — every row of
  * the matrix above resolves to exactly the same chain with or without the warning.
  */
 class InvocationPolicyResolverTest {
 
-    private static final String OWN_SITE_SKIP = "Ip05.bar";
+    private static final String OWN_SITE_SKIP = "MethodSkipOverTypeChain.bar";
     private static final String INHERITED_SKIP_SITE = "IFoo.bar";
     private static final String METHOD_DESCRIBE = "method FooImpl.bar";
     private static final String PARAM_DESCRIBE = "parameter 0 of method FooImpl.bar";
@@ -112,7 +112,7 @@ class InvocationPolicyResolverTest {
         assertEquals(((Outcome.Chain) expectation.param()).values(), paramChain, "parameter chain for " + axis);
     }
 
-    // --- R2 (security review): an inherited skip that silently removes a chain declared below it ---
+    // --- An inherited skip that silently removes a chain declared below it ---
 
     @Test
     @DisplayName("an inherited method skip over a class-level chain warns, naming both declaration sites")
@@ -132,12 +132,12 @@ class InvocationPolicyResolverTest {
     }
 
     @Test
-    @DisplayName("an own-site method skip over a class-level chain (IP-05) warns not at all")
+    @DisplayName("an own-site method skip over a class-level chain (method-skip-over-type-chain) warns not at all")
     void ownSiteMethodSkipOverClassChainDoesNotWarn() {
-        InvocationPolicySource<Class<?>> method =
-                InvocationPolicyScenarios.sources(null, null, true, OWN_SITE_SKIP, "method Ip05.bar");
-        InvocationPolicySource<Class<?>> type =
-                InvocationPolicyScenarios.sources(List.of(A.class), "Ip05", false, null, "type Ip05");
+        InvocationPolicySource<Class<?>> method = InvocationPolicyScenarios.sources(
+                null, null, true, OWN_SITE_SKIP, "method MethodSkipOverTypeChain.bar");
+        InvocationPolicySource<Class<?>> type = InvocationPolicyScenarios.sources(
+                List.of(A.class), "MethodSkipOverTypeChain", false, null, "type MethodSkipOverTypeChain");
 
         List<Class<?>> chain = InvocationPolicyResolver.resolveRouteChain(method, type, PolicyAxis.SANITIZE);
 

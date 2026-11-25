@@ -7,7 +7,7 @@ import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
 
 /**
- * Deterministic marker sanitizer used by {@link InvocationPolicyScenarios} (T016, issue #379); see
+ * Deterministic marker sanitizer used by {@link InvocationPolicyScenarios}; see
  * {@link A} for the shared rationale. Also the target of {@link ComposedSanitize}'s meta-annotation.
  */
 public final class B implements Sanitizer {

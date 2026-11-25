@@ -11,10 +11,10 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * A composed annotation meta-annotated with {@code @Sanitize(B.class)}, used by IP-11 to prove
- * {@code AnnotationResolver.findMetaAnnotation} recursion (T016, issue #379): a method carrying only
- * this annotation must resolve the same sanitize chain as one carrying {@code @Sanitize(B.class)}
- * directly.
+ * A composed annotation meta-annotated with {@code @Sanitize(B.class)}, used by the
+ * {@code composed-annotation} scenario to prove {@code AnnotationResolver.findMetaAnnotation}
+ * recursion: a method carrying only this annotation must resolve the same sanitize chain as one
+ * carrying {@code @Sanitize(B.class)} directly.
  */
 @Documented
 @Sanitize(B.class)

@@ -442,11 +442,10 @@ class GeneratedVsReflectiveEquivalenceTest {
         @Test
         @DisplayName("extra Jackson key with list-shaped value applies object-level chain to each element")
         void extraListKeyReceivesObjectChainOnElements() {
-            // Regression for the round-3 Codex Critical: processNestedList's no-schema fallback
-            // formerly called walkUnknown without descending, so list-valued unknown keys did not
-            // see the type-level @Canonicalize on the reflective path while the generated path
-            // (which descends in applyDefault before dispatcher.walkUnknown) did. Both paths now
-            // apply the type chain to each list element.
+            // processNestedList's no-schema fallback must descend before walkUnknown, so list-valued
+            // unknown keys see the type-level @Canonicalize on the reflective path exactly as on the
+            // generated path (which descends in applyDefault before dispatcher.walkUnknown). Both
+            // paths apply the type chain to each list element.
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("known", "  visible  ");
             input.put("extras", new ArrayList<>(List.of("  a  ", "  b  ")));
@@ -477,8 +476,8 @@ class GeneratedVsReflectiveEquivalenceTest {
             // ObjLevelReflective / ObjLevelGenerated declare @Canonicalize(TestTrim) at the class
             // level. The reflective walker applies the object chain to extra Jackson keys via
             // processStringValue + buildCanonicalizerChain. The generated path must do the same
-            // through applyDefault — previously applyDefault carried only inherited chains and
-            // would have left the extra key untrimmed.
+            // through applyDefault, which must carry the object-level chain and not only inherited
+            // chains — otherwise the extra key would be left untrimmed.
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("known", "  visible  "); // declared field
             input.put("extra", "  surprise  "); // not declared — flows through default arm

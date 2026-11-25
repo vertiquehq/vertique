@@ -8,9 +8,8 @@ import dev.vertique.core.sanitization.Sanitizer;
 import java.util.Locale;
 
 /**
- * Deterministic, transport-agnostic sanitizer used by {@link CrossTransportInputCorpus} (R03, finding
- * #425): brackets and upper-cases every string value it sees (e.g. {@code "alpha"} becomes
- * {@code "[ALPHA]"}).
+ * Deterministic, transport-agnostic sanitizer used by {@link CrossTransportInputCorpus}: brackets and
+ * upper-cases every string value it sees (e.g. {@code "alpha"} becomes {@code "[ALPHA]"}).
  *
  * <p>{@link #transform(String)} is the single source of truth for this sanitizer's behavior. {@link
  * #sanitize(String, InputValueContext)} delegates to it, and {@link CrossTransportInputCorpus} computes
