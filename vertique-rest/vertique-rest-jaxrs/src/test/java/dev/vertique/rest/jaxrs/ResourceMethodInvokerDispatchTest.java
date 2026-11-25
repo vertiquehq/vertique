@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the CG-010 slice 2 plan-or-reflective dispatch in
+ * Unit tests for the plan-or-reflective dispatch in
  * {@link ResourceMethodInvoker#handle(RoutingContext)}'s private {@code invokeMethod} step.
  *
  * <p>Two paths must be distinguishable from outside the class:
@@ -70,7 +70,7 @@ class ResourceMethodInvokerDispatchTest {
     }
 
     @Nested
-    @DisplayName("invokeMethod — plan-or-reflective dispatch (CG-010 slice 2)")
+    @DisplayName("invokeMethod — plan-or-reflective dispatch")
     class Dispatch {
 
         @Test
@@ -163,7 +163,7 @@ class ResourceMethodInvokerDispatchTest {
     }
 
     @Nested
-    @DisplayName("invokeMethod — resolvedBodyMapper fallback (#666)")
+    @DisplayName("invokeMethod — resolvedBodyMapper fallback")
     class ResolvedBodyMapperFallback {
 
         @Test
@@ -222,7 +222,7 @@ class ResourceMethodInvokerDispatchTest {
     }
 
     @Nested
-    @DisplayName("invokeMethod — bound request reuse (Slice 9a fix 2)")
+    @DisplayName("invokeMethod — bound request reuse")
     class BoundRequestReuse {
 
         @Test
@@ -325,7 +325,7 @@ class ResourceMethodInvokerDispatchTest {
 
     /**
      * Minimal RoutingContext stub providing the raw-request stubs the {@code DefaultBoundRequest}
-     * binding consults (FR-024): {@code request()}, {@code pathParams()}, {@code queryParams()},
+     * binding consults: {@code request()}, {@code pathParams()}, {@code queryParams()},
      * {@code headers()}, {@code cookies()}, and {@code body()}. The invoker builds the
      * {@link dev.vertique.rest.jaxrs.request.BoundRequest} from these and stashes it via
      * {@code ctx.put(...)} for both the generated and reflective paths.

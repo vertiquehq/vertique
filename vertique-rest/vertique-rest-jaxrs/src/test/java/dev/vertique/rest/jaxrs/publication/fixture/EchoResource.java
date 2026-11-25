@@ -9,7 +9,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * Minimal single-operation JAX-RS resource reused across T006's non-empty mounts (TP-005, TP-008)
+ * Minimal single-operation JAX-RS resource reused across the non-empty mounts
  * wherever a test needs a mount to be non-empty but the operation's own shape does not matter.
  */
 @Path("/echo")

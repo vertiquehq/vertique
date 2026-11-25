@@ -10,7 +10,7 @@ import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 
 /**
  * Binds a fresh {@link WebValidationPassThroughStrategy} into {@code Set<RequestValidationStrategy>}
- * so a component can select the built-in {@code "web-validation"} id (TP-009's row (a)) without the
+ * so a component can select the built-in {@code "web-validation"} id without the
  * real vertx-json-schema strategy.
  */
 @Module

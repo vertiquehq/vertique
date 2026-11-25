@@ -28,10 +28,9 @@ import org.junit.jupiter.api.Test;
  * {@link ResourceMethodMeta} by the production accessor
  * {@link ParameterExtractor#invocationPolicies(ResourceMethodMeta)} yields the expected chains for
  * various combinations of {@code @Canonicalize}, {@code @Sanitize}, {@code @SkipCanonicalization},
- * and {@code @SkipSanitization} on resource classes and methods (ruling A6, T017, issue #379: this
- * test keeps its six fixtures and now drives the real production derivation instead of a hand-copy
- * of the algorithm; the matrix-wide proof, including the IP-15 parameter conflict none of these six
- * fixtures exercises, is {@link RestInvocationPolicyMatrixTest}).
+ * and {@code @SkipSanitization} on resource classes and methods (this test keeps its six
+ * fixtures and drives the real production derivation instead of a hand-copy of the algorithm; the
+ * matrix-wide proof, including the parameter-level conflict none of these six fixtures exercises, is {@link RestInvocationPolicyMatrixTest}).
  *
  * <p>This test covers the runtime side of the parity contract. The APT side is covered by
  * {@code InputPolicyParityTest} in the {@code vertique-codegen-jaxrs} module.
@@ -171,8 +170,8 @@ class InputPolicyRuntimeParityTest {
     /**
      * Derives the effective {@link EffectiveInputPolicies} for the first parameter of the given
      * method meta using the production accessor
-     * {@link ParameterExtractor#invocationPolicies(ResourceMethodMeta)} (ruling A6: this test no
-     * longer hand-copies the derivation algorithm).
+     * {@link ParameterExtractor#invocationPolicies(ResourceMethodMeta)} (this test does not
+     * hand-copy the derivation algorithm).
      *
      * @param meta the method meta
      * @return the effective policies for the first parameter

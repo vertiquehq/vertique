@@ -12,7 +12,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * TP-009 row (a): registers {@code public} and {@code partner}, unconditionally active, with no
+ * Row (a): registers {@code public} and {@code partner}, unconditionally active, with no
  * contract location (irrelevant under {@code web-validation}, which never reports
  * {@code resolvesOperationsFromMountContract()}).
  */

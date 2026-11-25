@@ -31,9 +31,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * STEP-1 characterization IT — NOT a behavioral test of the feature. It empirically determines, in
+ * Characterization IT, not a behavioral test of a feature. It empirically determines, in
  * Vert.x, the reliable mechanism for a failure handler to recover the matched route's identity
- * for the four error origins the fix cares about:
+ * for the four error origins:
  *
  * <ol>
  *   <li>(a) a handler that threw mid-dispatch ({@code ctx.fail(Throwable)});</li>
@@ -57,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * This characterization asserts on the server-side {@link Observation} records rather than on the body,
  * so the raw idiom is latent rather than actively broken here — but a {@link WebClient} aggregates the
  * response before completing the send, which removes the trap for whoever next adds a body assertion.

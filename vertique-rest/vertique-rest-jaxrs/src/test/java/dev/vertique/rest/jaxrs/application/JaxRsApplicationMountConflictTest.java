@@ -33,12 +33,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-016 (ported): proves composer step 1b — conflicting active application paths fail before any
+ * Proves that conflicting active application paths fail before any
  * resource is resolved. Every case pairs two applications from the self-contained
  * {@code conflict.paths} compilation unit, so the only possible violation is the deliberate path
- * conflict, never an unrelated membership violation. The only changed expectations from the
- * pre-port {@code Application}-based suite are that failure messages name the application by its
- * registered name and declaring interface where they named the {@code Application} class.
+ * conflict, never an unrelated membership violation. Failure messages name each application by its
+ * registered name and declaring interface.
  */
 class JaxRsApplicationMountConflictTest {
 
@@ -72,7 +71,7 @@ class JaxRsApplicationMountConflictTest {
         if (testCase.expectConflict()) {
             RestConfigurationException ex = assertThrows(
                     RestConfigurationException.class, testCase.action()::get, testCase.name() + " must fail");
-            LOG.info("TP-016 {} failure: {}", testCase.name(), ex.getMessage());
+            LOG.info("{} failure: {}", testCase.name(), ex.getMessage());
 
             for (String fragment : testCase.expectedMessageFragments()) {
                 assertTrue(
@@ -87,7 +86,7 @@ class JaxRsApplicationMountConflictTest {
                     testCase.name() + ": no resource is resolved before a step 1b violation fails");
         } else {
             Set<RouterMount> mounts = assertDoesNotThrow(testCase.action()::get, testCase.name() + " must compose");
-            LOG.info("TP-016 {} composed {} mount(s)", testCase.name(), mounts.size());
+            LOG.info("{} composed {} mount(s)", testCase.name(), mounts.size());
             assertEquals(2, mounts.size(), testCase.name() + ": both non-conflicting applications must mount");
         }
     }
@@ -101,17 +100,17 @@ class JaxRsApplicationMountConflictTest {
     }
 
     /**
-     * TP-016's four cases: three conflicting pairs (same normalized path; {@code /api} beside
+     * The four cases: three conflicting pairs (same normalized path; {@code /api} beside
      * {@code /api/mgmt}; root {@code /} beside {@code /api/mgmt}) and the control ({@code
      * /api/public} beside {@code /api/publicity}). Each failure names both applications' registered
      * name and declaring interface.
      *
-     * @return the four cases, in contract order
+     * @return the four cases
      */
     private static Stream<ConflictCase> conflictCases() {
         return Stream.of(
                 new ConflictCase(
-                        "case 1: two applications with the same normalized path",
+                        "two applications with the same normalized path",
                         () -> conflictPathsComponent(activate("alpha", "beta")).routerMounts(),
                         true,
                         List.of(
@@ -120,7 +119,7 @@ class JaxRsApplicationMountConflictTest {
                                 "paths-beta",
                                 PathConflictApis.BetaApi.class.getName())),
                 new ConflictCase(
-                        "case 2: /api beside /api/mgmt",
+                        "/api beside /api/mgmt",
                         () -> conflictPathsComponent(activate("gamma", "delta")).routerMounts(),
                         true,
                         List.of(
@@ -129,7 +128,7 @@ class JaxRsApplicationMountConflictTest {
                                 "paths-delta",
                                 PathConflictApis.DeltaApi.class.getName())),
                 new ConflictCase(
-                        "case 3: root / beside /api/mgmt",
+                        "root / beside /api/mgmt",
                         () -> conflictPathsComponent(activate("root", "delta")).routerMounts(),
                         true,
                         List.of(
@@ -138,7 +137,7 @@ class JaxRsApplicationMountConflictTest {
                                 "paths-delta",
                                 PathConflictApis.DeltaApi.class.getName())),
                 new ConflictCase(
-                        "case 4 (control): /api/public beside /api/publicity",
+                        "control: /api/public beside /api/publicity",
                         () -> conflictPathsComponent(activate("publicProbe", "publicityProbe"))
                                 .routerMounts(),
                         false,
@@ -169,7 +168,7 @@ class JaxRsApplicationMountConflictTest {
     }
 
     /**
-     * One TP-016 case: its name, the {@code Set<RouterMount>} resolution to run, whether it must
+     * One case: its name, the {@code Set<RouterMount>} resolution to run, whether it must
      * fail with a conflict, and (for a conflicting case) the message fragments the thrown
      * {@link RestConfigurationException} must contain.
      *

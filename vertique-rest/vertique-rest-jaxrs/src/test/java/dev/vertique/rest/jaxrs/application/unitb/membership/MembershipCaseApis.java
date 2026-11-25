@@ -10,24 +10,24 @@ import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
 import dev.vertique.rest.jaxrs.application.unita.DisabledResource;
 import dev.vertique.rest.jaxrs.application.unita.ExtraResource;
 import dev.vertique.rest.jaxrs.application.unita.membership.AmbiguousResource;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case21Resource;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case22Resource;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogResource;
+import dev.vertique.rest.jaxrs.application.unita.membership.HandWrittenEntryResource;
+import dev.vertique.rest.jaxrs.application.unita.membership.SubstitutedBindingResource;
 
 /**
- * TP-003's declaring interfaces, one per row of
+ * Declaring interfaces, one per row of
  * {@code JaxRsApplicationCompositionTest.membershipViolationsFailNamingApplicationAndClass} and its
- * two accepted-row supporting tests, plus the restored step 1 and catalog-instance rows (T023 L22:
+ * two accepted-row supporting tests, plus the duplicate-catalog and catalog-instance rows (
  * {@link DuplicateManualApi}, {@link DuplicateCatalogApi}, {@link SubstitutedSubclassBindingApi},
  * {@link UnrelatedCatalogInstanceApi}, {@link NullCatalogEntryApi}). Every interface is registered
- * by exactly one method of {@link MembershipViolationRegistrations} or, for the restored
+ * by exactly one method of {@link MembershipViolationRegistrations} or, for the
  * dedicated-component rows, its own single-purpose registration module named after it. Every property-gated row shares
  * {@code MembershipComponents.StandardViolationComponent} so exactly one row's registration is
- * active per test invocation (inactive registrations skip membership evaluation entirely,
- * AC-026.2); the always-active dedicated rows each get their own isolated component instead,
+ * active per test invocation (inactive registrations skip membership evaluation entirely);
+ * the always-active dedicated rows each get their own isolated component instead,
  * because their fixtures (a duplicate catalog entry, a substituted binding, an unrelated-type
  * provider) would otherwise affect every other row sharing the component. Every interface lists
- * exactly the one class its row's Given names. None is ever implemented or constructed (native
+ * exactly the one class its row names. None is ever implemented or constructed (native
  * composition never instantiates a declaring interface).
  */
 final class MembershipCaseApis {
@@ -156,7 +156,7 @@ final class MembershipCaseApis {
     interface DisabledAcceptedApi {}
 
     /**
-     * Row (T023 L22 restoration): the listed class ({@link DuplicateManualResource}) is contributed
+     * Row: the listed class ({@link DuplicateManualResource}) is contributed
      * manually twice, by two separate modules, so it has two manual matches when listed (no catalog
      * entry exists for this class). Shares {@code MembershipComponents.StandardViolationComponent}
      * with every other row above; harmless when inactive, since membership is only evaluated for a
@@ -169,10 +169,10 @@ final class MembershipCaseApis {
     interface DuplicateManualApi {}
 
     /**
-     * Row (T023 L22 restoration): the listed class ({@link DuplicateCatalogResource}) is cataloged
-     * twice, by two separate modules, tripping the composer's step 1 duplicate-catalog-entry check
+     * Row: the listed class ({@link DuplicateCatalogResource}) is cataloged
+     * twice, by two separate modules, tripping the composer's duplicate-catalog-entry check
      * before any manual contribution or catalog entry resolves. Never shares a component with any
-     * other row: a duplicate catalog entry is a step 1, whole-composition violation, so it would
+     * other row: a duplicate catalog entry is a whole-composition violation, so it would
      * fail every other row sharing the same component too.
      */
     @RestApplication(
@@ -182,44 +182,44 @@ final class MembershipCaseApis {
     interface DuplicateCatalogApi {}
 
     /**
-     * Row (T023 L22 restoration, case 21): the listed class ({@link Case21Resource}) is cataloged in
-     * the exact C-GEN shape, but its Dagger binding is substituted with a
-     * {@code Case21SubclassResource} instance that adds a resource method, tripping the catalog
+     * Row: the listed class ({@link SubstitutedBindingResource}) is cataloged in
+     * the generated-module shape, but its Dagger binding is substituted with a
+     * {@code SubstitutedBindingSubclassResource} instance that adds a resource method, tripping the catalog
      * instance's {@code sameSurface} check. Its own dedicated component: the substituted binding
-     * would affect every other row's use of {@link Case21Resource}, so none exists.
+     * would affect every other row's use of {@link SubstitutedBindingResource}, so none exists.
      */
     @RestApplication(
             name = "membership-substituted-subclass-binding",
             path = "/membership/substituted-subclass-binding",
-            resources = Case21Resource.class)
+            resources = SubstitutedBindingResource.class)
     interface SubstitutedSubclassBindingApi {}
 
     /**
-     * Row (T023 L22 restoration, case 22): the listed class ({@link Case22Resource}) has a
-     * hand-written (not C-GEN-shaped) catalog entry whose provider returns an instance of an
+     * Row: the listed class ({@link HandWrittenEntryResource}) has a
+     * hand-written (not generated-module-shaped) catalog entry whose provider returns an instance of an
      * unrelated type, tripping the catalog instance's {@code sameSurface} check. Its own dedicated
      * component, isolated from {@link NullCatalogEntryApi}'s reuse of the same resource type.
      */
     @RestApplication(
             name = "membership-unrelated-catalog-instance",
             path = "/membership/unrelated-catalog-instance",
-            resources = Case22Resource.class)
+            resources = HandWrittenEntryResource.class)
     interface UnrelatedCatalogInstanceApi {}
 
     /**
-     * Row (T023 L22 restoration, G-07 (b)): reuses {@link Case22Resource} purely for its type and
+     * Row: reuses {@link HandWrittenEntryResource} purely for its type and
      * path; its dedicated component's hand-written catalog entry provider always returns
      * {@code null}. Never shares a component with {@link UnrelatedCatalogInstanceApi}: two catalog
-     * entries for the same type would trip the step 1 duplicate-catalog-entry check.
+     * entries for the same type would trip the duplicate-catalog-entry check.
      */
     @RestApplication(
             name = "membership-null-catalog-entry",
             path = "/membership/null-catalog-entry",
-            resources = Case22Resource.class)
+            resources = HandWrittenEntryResource.class)
     interface NullCatalogEntryApi {}
 
     /**
-     * Row (T023 L22 restoration, G-08 (c)): lists only {@link CatalogResource}, leaving
+     * Row: lists only {@link CatalogResource}, leaving
      * {@code unita}'s enabled {@link ExtraResource} catalog entry unselected by any active
      * application, so composing this row alone triggers the unselected-resource report, which names
      * {@link ExtraResource} by fully qualified name.

@@ -10,7 +10,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (a) fixture: {@link OpidApis.OpidBetaApi}'s sole listed resource, at its own
+ * Operation-id conflict case (a) fixture: {@link OpidApis.OpidBetaApi}'s sole listed resource, at its own
  * {@code @Path}, unrelated to {@link OpidAlphaListResource}. Its {@link #list()} method's default
  * operationId ({@code "list"}) is shared with {@link OpidAlphaListResource#list()}'s.
  */

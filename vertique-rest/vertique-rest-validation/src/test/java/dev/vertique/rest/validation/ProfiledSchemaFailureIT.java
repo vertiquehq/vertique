@@ -57,7 +57,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-007. Every declared profiled-synthesis failure surfaces at <em>router construction</em>, with a
+ * Every declared profiled-synthesis failure surfaces at <em>router construction</em>, with a
  * diagnostic that identifies the operation and the position without disclosing the schema fragment or
  * the pattern that failed to compile.
  *
@@ -98,13 +98,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * reworded a description cannot silently turn this proof green.
  */
 @ExtendWith(VertxExtension.class)
-// 60s rather than testing.md's 20s default: every method builds its own Dagger graph and router.
+// 60s rather than the default 20s: every method builds its own Dagger graph and router.
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ProfiledSchemaFailureIT {
 
     private static final long ASYNC_TIMEOUT_SECONDS = 20;
 
-    /** The bound the strategy truncates its assembled message to, in UTF-16 code units (FR-008). */
+    /** The bound the strategy truncates its assembled message to, in UTF-16 code units. */
     private static final int MESSAGE_BOUND_CODE_UNITS = 512;
 
     /** An unparseable pattern: an unclosed group. */
@@ -112,7 +112,7 @@ public class ProfiledSchemaFailureIT {
 
     /**
      * A perfectly valid {@code patternProperties} key, chosen as a distinctive marker so that its
-     * disclosure can be asserted against literally (CO-001, FR-008, AC-008.2). It compiles, so it is
+     * disclosure can be asserted against literally. It compiles, so it is
      * never itself the failing pattern: it is only the member name the walk descends through.
      */
     private static final String VALID_PATTERN_PROPERTIES_KEY = "^SECRET-[a-z]{4}$";
@@ -145,7 +145,7 @@ public class ProfiledSchemaFailureIT {
     // --- Generator construction failures ---
 
     /**
-     * TP-007 (AC-008.1). A profile declaring two {@code BigDecimal} overrides for the {@code INPUT}
+     * A profile declaring two {@code BigDecimal} overrides for the {@code INPUT}
      * direction fails the mount: the generator refuses to construct, and the failure surfaces as a
      * {@link RestConfigurationException} naming the operation, with the generator's
      * {@link JsonSchemaGenerationException} preserved as a cause and neither fragment's JSON nor its
@@ -186,12 +186,11 @@ public class ProfiledSchemaFailureIT {
     // --- Regex precompilation failures ---
 
     /**
-     * TP-007 (AC-008.2). A profile fragment carrying an unparseable {@code pattern} fails the mount at
+     * A profile fragment carrying an unparseable {@code pattern} fails the mount at
      * router construction, where the gate compiles every string-valued member keyed {@code pattern} at
      * any depth — not per request, and not at the first request that happens to exercise the route.
      *
-     * <p>The long-token case is asserted here as well. The frozen proof set names six methods for
-     * TP-007 and none of them is dedicated to it, so it lands beside the case it is a variant of: the
+     * <p>The long-token case is asserted here as well, beside the case it is a variant of: the
      * same failure, distinguished only by a description too long to fit the message bound. Its
      * assertion is the bound itself — at most {@value #MESSAGE_BOUND_CODE_UNITS} UTF-16 code units,
      * with the operation id, the pointer, and the index intact and the description elided rather than
@@ -241,7 +240,7 @@ public class ProfiledSchemaFailureIT {
     }
 
     /**
-     * TP-007 (AC-008.2). The same failure for a {@code patternProperties} <em>key</em>: the walk
+     * The same failure for a {@code patternProperties} <em>key</em>: the walk
      * compiles every key of every object keyed {@code patternProperties}, at any depth, with no
      * position allowlist.
      *
@@ -274,7 +273,7 @@ public class ProfiledSchemaFailureIT {
     }
 
     /**
-     * TP-001 (CO-001, FR-008, AC-008.2). A failure <em>beneath</em> a {@code patternProperties} key
+     * A failure <em>beneath</em> a {@code patternProperties} key
      * discloses neither the failing pattern nor the key it sits under.
      *
      * <p>The sibling above covers the branch where the key itself is unparseable, which the walk
@@ -322,7 +321,7 @@ public class ProfiledSchemaFailureIT {
     // --- Characterizations: what the walk must NOT fail on ---
 
     /**
-     * TP-007 (AC-008.2, characterization). A DTO with a property literally named {@code pattern} still
+     * A DTO with a property literally named {@code pattern} still
      * mounts: under {@code properties}, {@code pattern} is a subschema object, not a regular
      * expression, and it is never compiled.
      *
@@ -346,7 +345,7 @@ public class ProfiledSchemaFailureIT {
     }
 
     /**
-     * TP-007 (AC-008.2, characterization). The unparseable-pattern profile on a mount configured with
+     * The unparseable-pattern profile on a mount configured with
      * {@code jaxrs.validationStrategy: none} still builds: the precompilation check lives in
      * {@link WebValidationStrategy#gateFor}, and {@link NoneValidationStrategy} installs no gate, so
      * nothing walks the document.
@@ -375,7 +374,7 @@ public class ProfiledSchemaFailureIT {
     // --- Preserved guard ---
 
     /**
-     * TP-007. An unregistered {@code @JsonProfile} id still fails the router build with
+     * An unregistered {@code @JsonProfile} id still fails the router build with
      * {@link JsonProfileConfigurationException}, exactly as it does today: the profiled schema seam
      * never gets the chance to run, because the route's profile cannot be resolved.
      *

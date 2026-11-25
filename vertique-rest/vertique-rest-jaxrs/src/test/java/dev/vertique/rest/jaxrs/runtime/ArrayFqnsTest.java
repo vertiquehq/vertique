@@ -113,7 +113,7 @@ class ArrayFqnsTest {
         }
     }
 
-    // --- Class-initialization semantics (plan finding F3) ---
+    // --- Class-initialization semantics ---
 
     @Nested
     @DisplayName("initialization semantics")

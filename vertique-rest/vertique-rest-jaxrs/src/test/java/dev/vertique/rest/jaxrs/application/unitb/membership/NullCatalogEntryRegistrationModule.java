@@ -7,18 +7,18 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case22Resource;
+import dev.vertique.rest.jaxrs.application.unita.membership.HandWrittenEntryResource;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * T023 L22 restoration (G-07 (b)): registers {@link MembershipCaseApis.NullCatalogEntryApi},
- * unconditionally active, listing {@link Case22Resource} purely for its type and path. Paired, in
+ * Null-instance check: registers {@link MembershipCaseApis.NullCatalogEntryApi},
+ * unconditionally active, listing {@link HandWrittenEntryResource} purely for its type and path. Paired, in
  * its own dedicated Dagger component, with {@code NullCatalogEntryModule}, whose hand-written
  * catalog entry's provider always returns {@code null} — never combined with
- * {@code Case22HandWrittenEntryModule}'s catalog entry for the same type, which would trip the step
- * 1 duplicate-catalog-entry check instead of exercising this row's null-instance check.
+ * {@code HandWrittenCatalogEntryModule}'s catalog entry for the same type, which would trip the
+ * duplicate-catalog-entry check instead of exercising this row's null-instance check.
  */
 @Module
 public final class NullCatalogEntryRegistrationModule {
@@ -39,7 +39,7 @@ public final class NullCatalogEntryRegistrationModule {
                 MembershipCaseApis.NullCatalogEntryApi.class,
                 "membership-null-catalog-entry",
                 "/membership/null-catalog-entry",
-                List.of(Case22Resource.class),
+                List.of(HandWrittenEntryResource.class),
                 false,
                 "",
                 true);

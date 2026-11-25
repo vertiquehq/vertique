@@ -19,12 +19,12 @@ import dev.vertique.rest.jaxrs.application.manual.MembershipRolesAllowedResource
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResourceModuleA;
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResourceModuleB;
 import dev.vertique.rest.jaxrs.application.unita.membership.AmbiguousResourceCatalogModule;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case21CatalogModule;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case21SubstitutionModule;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case22HandWrittenEntryModule;
+import dev.vertique.rest.jaxrs.application.unita.membership.BindingSubstitutionModule;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleA;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleB;
+import dev.vertique.rest.jaxrs.application.unita.membership.HandWrittenCatalogEntryModule;
 import dev.vertique.rest.jaxrs.application.unita.membership.NullCatalogEntryModule;
+import dev.vertique.rest.jaxrs.application.unita.membership.SubstitutedBindingCatalogModule;
 import dev.vertique.rest.jaxrs.application.unitb.membership.DuplicateCatalogRegistrationModule;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipViolationRegistrations;
 import dev.vertique.rest.jaxrs.application.unitb.membership.NullCatalogEntryRegistrationModule;
@@ -35,12 +35,12 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger components for {@link JaxRsApplicationCompositionTest}'s TP-003 (membership violations)
+ * Dagger components for {@link JaxRsApplicationCompositionTest}'s membership-violation
  * cases and its accepted-row supports. Every registration is provided by
  * {@link MembershipViolationRegistrations}, each gated on its own property so exactly one row is
  * active per test invocation (or exactly two, for the two-applications row).
  *
- * <p>T023 L26 restoration: the seven surface-mismatch rows (each listing
+ * <p>The seven surface-mismatch rows (each listing
  * {@code MembershipBaseResource} and gated on its own {@code membership.surface*.active} property)
  * and the AOP-shaped accepted row each need a manual candidate module no other row may see, so each
  * gets its own dedicated component ({@link #SurfaceOwnAnnotationComponent} and its seven siblings
@@ -66,18 +66,18 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003's shared component: every row's registration (each property-gated, only the row under
+     * The shared component: every row's registration (each property-gated, only the row under
      * test active), every unbound "kind check" and "no binding" type, the ambiguous catalog entry
-     * and manual instance, the twice-manually-contributed duplicate-manual resource (case 13), and
+     * and manual instance, the twice-manually-contributed duplicate-manual resource, and
      * {@code unita}'s catalog (for the disabled-catalog accepted row). {@code
      * DuplicateManualResourceModuleA} and {@code DuplicateManualResourceModuleB} contribute
      * manual-only instances, never a catalog entry, so their presence is harmless for every other
      * row: membership for a listed class is only evaluated when some active registration actually
-     * lists it (AC-026.2).
+     * lists it.
      *
      * <p>Never wires any {@code MembershipBaseResource} manual candidate module: the seven
      * surface-mismatch rows and the AOP-shaped accepted row each need their own dedicated component
-     * below, isolated from one another and from this component (T023 L26).
+     * below, isolated from one another and from this component.
      */
     @Singleton
     @Component(
@@ -108,7 +108,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: own annotation": {@link MembershipViolationRegistrations}'s registrations
+     * The "surface: own annotation" row: {@link MembershipViolationRegistrations}'s registrations
      * (only {@code membership.surfaceOwnAnnotation.active} set), plus the sole manual candidate
      * {@code MembershipClassPathResource}, which adds a class-level annotation the listed
      * {@code MembershipBaseResource} does not declare, so {@code sameSurface} fails. Isolated from
@@ -141,7 +141,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: own method": {@link MembershipViolationRegistrations}'s registrations (only
+     * The "surface: own method" row: {@link MembershipViolationRegistrations}'s registrations (only
      * {@code membership.surfaceOwnMethod.active} set), plus the sole manual candidate {@code
      * MembershipOwnMethodResource}, which declares a new resource method the listed {@code
      * MembershipBaseResource} does not declare, so {@code sameSurface} fails. Isolated as {@link
@@ -172,7 +172,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: parameter annotation only": {@link MembershipViolationRegistrations}'s
+     * The "surface: parameter annotation only" row: {@link MembershipViolationRegistrations}'s
      * registrations (only {@code membership.surfaceParamAnnotation.active} set), plus the sole
      * manual candidate {@code MembershipParamAnnotationOnlyResource}, which overrides a base method
      * and annotates only its parameter, so {@code sameSurface} fails. Isolated as {@link
@@ -203,7 +203,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: added interface": {@link MembershipViolationRegistrations}'s registrations
+     * The "surface: added interface" row: {@link MembershipViolationRegistrations}'s registrations
      * (only {@code membership.surfaceNewInterface.active} set), plus the sole manual candidate
      * {@code MembershipNewInterfaceResource}, which implements a new interface the listed {@code
      * MembershipBaseResource} does not implement, so {@code sameSurface} fails. Isolated as {@link
@@ -234,7 +234,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: grandchild": {@link MembershipViolationRegistrations}'s registrations (only
+     * The "surface: grandchild" row: {@link MembershipViolationRegistrations}'s registrations (only
      * {@code membership.surfaceGrandchild.active} set), plus the sole manual candidate {@code
      * MembershipGrandchildResource}, a grandchild of the listed {@code MembershipBaseResource}
      * rather than a direct subclass, so {@code sameSurface} fails. Isolated as {@link
@@ -265,7 +265,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: class-level @PermitAll": {@link MembershipViolationRegistrations}'s
+     * The "surface: class-level @PermitAll" row: {@link MembershipViolationRegistrations}'s
      * registrations (only {@code membership.surfaceClassLevelPermitAll.active} set), plus the sole
      * manual candidate {@code MembershipClassLevelPermitAllResource}, which carries a class-level
      * {@code @PermitAll} the listed {@code MembershipBaseResource} does not declare, so {@code
@@ -296,7 +296,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003 "surface: @RolesAllowed": {@link MembershipViolationRegistrations}'s registrations
+     * The "surface: @RolesAllowed" row: {@link MembershipViolationRegistrations}'s registrations
      * (only {@code membership.surfaceRolesAllowed.active} set), plus the sole manual candidate
      * {@code MembershipRolesAllowedResource}, whose override of the listed {@code
      * MembershipBaseResource}'s method carries {@code @RolesAllowed}, so {@code sameSurface} fails.
@@ -327,7 +327,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-003's accepted row: {@link MembershipViolationRegistrations}'s registrations (only {@code
+     * The accepted row: {@link MembershipViolationRegistrations}'s registrations (only {@code
      * membership.aopAccepted.active} set), plus the sole manual candidate {@code
      * MembershipAopProxyResource}, whose AOP-proxy shape {@code sameSurface} accepts. Isolated from
      * every surface-mismatch component: were it wired alongside any of them, its resource would
@@ -359,7 +359,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * T023 L22 restoration (TP-003 case 14): the dedicated
+     * The dedicated
      * {@link DuplicateCatalogRegistrationModule} registration, plus two separate catalog-entry
      * modules for the same resource class, tripping the composer's step 1 duplicate-catalog-entry
      * check before any manual contribution or catalog entry resolves. Isolated from
@@ -392,8 +392,8 @@ public final class MembershipComponents {
     }
 
     /**
-     * T023 L22 restoration (TP-003 case 21): the dedicated {@link SubstitutedSubclassBindingRegistrationModule}
-     * registration, plus the substituted {@code Case21Resource} binding and its catalog entry.
+     * The dedicated {@link SubstitutedSubclassBindingRegistrationModule}
+     * registration, plus the substituted {@code SubstitutedBindingResource} binding and its catalog entry.
      */
     @Singleton
     @Component(
@@ -401,8 +401,8 @@ public final class MembershipComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 SubstitutedSubclassBindingRegistrationModule.class,
-                Case21SubstitutionModule.class,
-                Case21CatalogModule.class
+                BindingSubstitutionModule.class,
+                SubstitutedBindingCatalogModule.class
             })
     public interface SubstitutedBindingComponent extends Provisions {
 
@@ -421,8 +421,8 @@ public final class MembershipComponents {
     }
 
     /**
-     * T023 L22 restoration (TP-003 case 22): the dedicated {@link UnrelatedCatalogInstanceRegistrationModule}
-     * registration, plus the hand-written {@code Case22Resource} entry whose provider returns an
+     * The dedicated {@link UnrelatedCatalogInstanceRegistrationModule}
+     * registration, plus the hand-written {@code HandWrittenEntryResource} entry whose provider returns an
      * unrelated instance.
      */
     @Singleton
@@ -431,7 +431,7 @@ public final class MembershipComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 UnrelatedCatalogInstanceRegistrationModule.class,
-                Case22HandWrittenEntryModule.class
+                HandWrittenCatalogEntryModule.class
             })
     public interface HandWrittenEntryComponent extends Provisions {
 
@@ -450,7 +450,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * T023 L22 restoration (G-07 (b)): the dedicated {@link NullCatalogEntryRegistrationModule}
+     * The dedicated {@link NullCatalogEntryRegistrationModule}
      * registration, plus {@code NullCatalogEntryModule}, whose hand-written catalog entry's provider
      * always returns {@code null}.
      */

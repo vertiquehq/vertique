@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs.application.manual;
 import jakarta.inject.Inject;
 
 /**
- * TP-005 case 18's direct subclass of {@link MembershipBaseResource}: implements
+ * The direct subclass of {@link MembershipBaseResource}: implements
  * {@link MembershipGetInterface}, a new interface the base does not implement, so
  * {@code sameSurface(MembershipBaseResource.class, this.getClass())} fails.
  */

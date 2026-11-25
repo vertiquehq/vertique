@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-012 (FR-037, AC-037.1): without the docs module — the optional {@code ApiDocsModuleInstalled} empty
+ * Without the docs module — the optional {@code ApiDocsModuleInstalled} empty
  * — the view logs one INFO line per active registration whose declaring interface carries an
  * annotation named {@link ApiDocsModuleInstalled#ANNOTATION_NAME}, naming the application and stating
  * that documentation is not installed. With {@code ApiDocsModuleInstalled} bound (the docs module
@@ -142,12 +142,12 @@ class ApiDocsNotInstalledTest {
 
     // --- Fixtures ---
 
-    /** TP-012's active application whose declaring interface carries the test-source {@code @ApiDocs}. */
+    /** The active application whose declaring interface carries the test-source {@code @ApiDocs}. */
     @ApiDocs
     @RestApplication(name = "docs-a", path = "/docs-a", resources = DocsAResource.class)
     interface DocsAApi {}
 
-    /** TP-012's resource for {@link DocsAApi}. */
+    /** The resource for {@link DocsAApi}. */
     @Path("/docs-a")
     public static class DocsAResource {
 
@@ -168,14 +168,14 @@ class ApiDocsNotInstalledTest {
     }
 
     /**
-     * TP-012's inactive application whose declaring interface also carries {@code @ApiDocs}: never
+     * The inactive application whose declaring interface also carries {@code @ApiDocs}: never
      * logged, since it never mounts.
      */
     @ApiDocs
     @RestApplication(name = "docs-b", path = "/docs-b", resources = DocsBResource.class)
     interface DocsBApi {}
 
-    /** TP-012's resource for {@link DocsBApi}. Never constructed: {@code docs-b} is always inactive. */
+    /** The resource for {@link DocsBApi}. Never constructed: {@code docs-b} is always inactive. */
     @Path("/docs-b")
     public static class DocsBResource {
 
@@ -195,11 +195,11 @@ class ApiDocsNotInstalledTest {
         }
     }
 
-    /** TP-012's active application whose declaring interface carries no {@code @ApiDocs}. */
+    /** The active application whose declaring interface carries no {@code @ApiDocs}. */
     @RestApplication(name = "plain", path = "/plain", resources = PlainResource.class)
     interface PlainApi {}
 
-    /** TP-012's resource for {@link PlainApi}. */
+    /** The resource for {@link PlainApi}. */
     @Path("/plain")
     public static class PlainResource {
 
@@ -219,7 +219,7 @@ class ApiDocsNotInstalledTest {
         }
     }
 
-    /** TP-012's registrations and manual resource bindings, shared by both components. */
+    /** The registrations and manual resource bindings, shared by both components. */
     @Module
     static final class ApiDocsRegistrationModule {
 

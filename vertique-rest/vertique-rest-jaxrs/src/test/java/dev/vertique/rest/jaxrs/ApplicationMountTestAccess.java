@@ -20,7 +20,7 @@ import java.util.Set;
  * only {@link JaxRsRouterMount#orderedResources()}, {@link JaxRsRouterMount#applicationName()},
  * {@link JaxRsRouterMount#declaringType()}, {@link JaxRsRouterMount#isValidated()}, {@link
  * TestFactories}, and the package-private {@code JaxRsRouterMount.Factory#createApplicationMount}
- * overload and {@link JaxRsApplicationMountValidator} constructor (E4) — no other access (G-05).
+ * overload and {@link JaxRsApplicationMountValidator} constructor — no other access.
  */
 public final class ApplicationMountTestAccess {
 
@@ -75,7 +75,7 @@ public final class ApplicationMountTestAccess {
     /**
      * Builds an application mount through the package-private 5-argument
      * {@code JaxRsRouterMount.Factory#createApplicationMount}, for tests that assemble mount lists
-     * by hand (E4).
+     * by hand.
      *
      * @param factory         the mount factory
      * @param mountPath       the application's mount path, as registered
@@ -97,7 +97,7 @@ public final class ApplicationMountTestAccess {
 
     /**
      * Returns the given validator as a {@link MountCompositionValidator}, for tests that call
-     * {@link MountCompositionValidator#validate(List)} directly on a hand-built mount list (E4).
+     * {@link MountCompositionValidator#validate(List)} directly on a hand-built mount list.
      *
      * @param validator the rest-jaxrs mount composition validator under test
      * @return {@code validator}, typed as {@link MountCompositionValidator}
@@ -110,7 +110,7 @@ public final class ApplicationMountTestAccess {
      * Returns a default {@link JaxRsRouterMount.Factory}, wired with the same inert stubs {@link
      * TestFactories} gives every rest-jaxrs routing test, for tests in the {@code application} test
      * package that build mounts by hand through {@link JaxRsRouterMount.Factory#create} or {@link
-     * #createApplicationMount} (TP-010, E4). {@link TestFactories} is package-private, so a test
+     * #createApplicationMount}. {@link TestFactories} is package-private, so a test
      * outside this package cannot call it directly.
      *
      * @return a fresh default factory
@@ -123,7 +123,7 @@ public final class ApplicationMountTestAccess {
      * Builds a {@link JaxRsApplicationMountValidator} — {@code
      * dev.vertique.rest.jaxrs.JaxRsApplicationMountValidator} is package-private — and returns it
      * typed as {@link MountCompositionValidator}, for tests in the {@code application} test package
-     * that construct a validator directly, bypassing {@code RestModule} (TP-010, TP-020, E4).
+     * that construct a validator directly, bypassing {@code RestModule}.
      *
      * @param view       the application view the validator reads its declared registrations from
      * @param config     the JAX-RS routing configuration, carrying the configured

@@ -34,7 +34,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Proves that a <em>zero-config</em> JAX-RS route binds and renders a body whose components are
- * {@code Optional} and {@code java.time} values (T011/TP-002, FR-012/FR-015).
+ * {@code Optional} and {@code java.time} values.
  *
  * <p>The route is mounted through {@link ValidationMountComponent}, so the default
  * {@code web-validation} gate is active, and the mount is built with an empty configuration: no
@@ -61,8 +61,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p><strong>Why a {@link WebClient} and not a raw {@code HttpClient}.</strong> A raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue
- * #167). Both assertions here are byte-exact assertions on the response body, so a silently emptied
+ * under load {@code body()} can succeed with zero bytes while the status code is correct. Both assertions here are byte-exact assertions on the response body, so a silently emptied
  * body would report a profile defect that did not happen. A {@link WebClient} aggregates the body
  * into its {@code HttpResponse} before completing the send.
  */

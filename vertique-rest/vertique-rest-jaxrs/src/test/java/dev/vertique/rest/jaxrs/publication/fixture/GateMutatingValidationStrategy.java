@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code "x-gate": true} to every {@link JsonObject} reachable from the received
  * {@link OperationSchemas} — the body schema, its nested objects and arrays, and every declared
  * parameter's schema — keeps a reference to the (now-mutated) schemas it received, and always
- * installs a pass-through gate (T006 TP-004: a capture taken before this call must show no trace of
+ * installs a pass-through gate (a capture taken before this call must show no trace of
  * this mutation, and this strategy's own retained objects must show no trace of a later decoration
  * applied only to the capture).
  */

@@ -9,7 +9,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
- * TP-018's manual module, contributing {@link MembershipAopProxyResource} — the shape sibling
+ * The manual module, contributing {@link MembershipAopProxyResource} — the shape sibling
  * framework modules use. Included only in {@code MembershipComponents.AopProxyMatchComponent}, so
  * it is the sole manual candidate when {@link MembershipBaseResource} is listed.
  */

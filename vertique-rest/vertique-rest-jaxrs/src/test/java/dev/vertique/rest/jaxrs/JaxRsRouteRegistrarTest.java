@@ -204,7 +204,7 @@ class JaxRsRouteRegistrarTest {
         }
     }
 
-    /** Interface whose default route is inherited by two resources (issue #630). */
+    /** Interface whose default route is inherited by two resources. */
     interface SharedDefaultApi {
         @GET
         @Operation(operationId = "sharedDefault")
@@ -219,7 +219,7 @@ class JaxRsRouteRegistrarTest {
     @Path("/shared-b")
     static class SharedDefaultResourceB implements SharedDefaultApi {}
 
-    /** Generic contract whose default binds a type-variable path parameter (issue #630). */
+    /** Generic contract whose default binds a type-variable path parameter. */
     interface GenericDefaultApi<I> {
         @DELETE
         @Path("/{id}")
@@ -1026,7 +1026,7 @@ class JaxRsRouteRegistrarTest {
         assertNull(getMethod.validationGroups());
     }
 
-    // --- @RequiresAction discovery + startup validation (slice 11) ---
+    // --- @RequiresAction discovery + startup validation ---
 
     @Path("/action")
     static class RequiresActionResource {
@@ -1065,7 +1065,7 @@ class JaxRsRouteRegistrarTest {
         CapturingContributor capturing = new CapturingContributor();
 
         // authEnabled=true: the engine AND the REST enforcement pipeline are both present, the
-        // realistic case for an enforceable @RequiresAction route (fail-closed C1).
+        // realistic case for an enforceable @RequiresAction route (fail-closed).
         RegistrarTestSupport.registerAll(
                 registrar,
                 Set.of(new RequiresActionResource()),

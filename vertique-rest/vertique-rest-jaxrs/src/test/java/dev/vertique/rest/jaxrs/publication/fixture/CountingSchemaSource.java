@@ -15,12 +15,11 @@ import java.util.function.BiFunction;
 /**
  * Test {@link OperationSchemaSource} that counts every {@link #schemasFor} call, retains the exact
  * {@link OperationSchemas} instance it returned per operation id, and delegates the actual schema
- * construction to a caller-supplied function of the descriptor and the 1-based call number (T006
- * TP-003, TP-004).
+ * construction to a caller-supplied function of the descriptor and the 1-based call number.
  *
  * <p>Retaining the returned instance lets a test mutate the very {@link io.vertx.core.json.JsonObject}
  * or {@link io.vertx.core.json.JsonArray} objects this source handed to the registrar, after the
- * mount has been built, to prove a capture taken earlier is a detached copy (TP-004).
+ * mount has been built, to prove a capture taken earlier is a detached copy.
  */
 public final class CountingSchemaSource implements OperationSchemaSource {
 

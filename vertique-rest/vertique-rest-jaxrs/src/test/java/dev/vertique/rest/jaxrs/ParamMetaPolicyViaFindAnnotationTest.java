@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression guard for NFR-015-06: parameter-level input-policy resolution must be
+ * Regression guard: parameter-level input-policy resolution must be
  * <strong>meta-annotation-aware</strong>. The bean-field bridge that feeds a {@code @BeanParam} field's
  * {@link ResourceMethodMeta.ParamMeta} into the shared invocation-policy resolver sources that
  * parameter's annotation array from the composed
@@ -183,8 +183,7 @@ class ParamMetaPolicyViaFindAnnotationTest {
             // The parameter carries @CanonicalizedInput, NOT @Canonicalize directly. A direct/literal-only
             // lookup would miss it; the meta-aware lookup walks the composed annotation and finds it.
             Canonicalize canon = resolve(pm, Canonicalize.class);
-            assertNotNull(
-                    canon, "@Canonicalize composed via a custom @CanonicalizedInput alias must resolve (NFR-015-06)");
+            assertNotNull(canon, "@Canonicalize composed via a custom @CanonicalizedInput alias must resolve");
             assertEquals(
                     List.<Class<? extends Canonicalizer>>of(CanonA.class),
                     List.of(canon.value()),
@@ -197,7 +196,7 @@ class ParamMetaPolicyViaFindAnnotationTest {
             ResourceMethodMeta.ParamMeta pm = scanQ(ComposedPolicyResource.class);
 
             Sanitize sanit = resolve(pm, Sanitize.class);
-            assertNotNull(sanit, "@Sanitize composed via a custom @SanitizedInput alias must resolve (NFR-015-06)");
+            assertNotNull(sanit, "@Sanitize composed via a custom @SanitizedInput alias must resolve");
             assertEquals(
                     List.<Class<? extends Sanitizer>>of(SanitA.class),
                     List.of(sanit.value()),

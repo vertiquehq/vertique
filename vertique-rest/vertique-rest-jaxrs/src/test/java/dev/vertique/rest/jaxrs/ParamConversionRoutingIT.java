@@ -41,15 +41,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * ({@link UUID}/{@link Instant}/{@link BigDecimal}/enum/collection-of-{@code UUID}) are converted to
  * their declared Java types before reaching the resource method.
  *
- * <p><b>RED rationale (behavior-RED, compiles against current code):</b> today
- * {@code DefaultBoundRequest}/{@code ParameterExtractor} only coerce scalars via
- * {@code ScalarCoercion}; a {@code UUID}/{@code Instant}/{@code BigDecimal}/enum value reaches
- * {@code Method.invoke} as a raw {@link String}, which throws {@link IllegalArgumentException}
- * (mapped to 400 by {@code RestModule.defaultExceptionMapper()}). So the resource never executes and
- * the success cases below — which assert {@code 200} with the parsed typed value echoed — fail until
- * the {@code ParamConversionResolver} is wired into the inbound binding path. The malformed-value
- * cases assert {@code 400}; today the same opaque {@code IllegalArgumentException} happens to surface
- * as 400, so the load-bearing RED signal is the success-case typed echo, not the 400s.
+ * <p>The success cases assert {@code 200} with the parsed typed value echoed: a
+ * {@code UUID}/{@code Instant}/{@code BigDecimal}/enum value reaches the resource method converted by
+ * the {@code ParamConversionResolver} wired into the inbound binding path, not as a raw
+ * {@link String}. The malformed-value cases assert {@code 400}; the typed echo of the success cases
+ * is what proves the conversion ran.
  *
  * <p>This class mirrors {@link AnnotationDrivenRoutingIT} exactly (Vert.x {@link VertxExtension},
  * {@code listen(0)}, a per-test client, and {@code status|body} projections) for determinism and uses
@@ -57,7 +53,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
  * Every case here asserts on a {@code status|body} projection whose body carries the typed echo that is
  * the load-bearing signal, so a silently emptied body would fail the conversion assertion for a reason
  * unrelated to param conversion. A {@link WebClient} aggregates the body into its {@code HttpResponse}
@@ -190,7 +186,7 @@ public class ParamConversionRoutingIT {
         }
     }
 
-    // --- Success cases (behavior-RED: typed echo proves conversion ran) ---
+    // --- Success cases (typed echo proves conversion ran) ---
 
     @Test
     @DisplayName("A valid @PathParam UUID converts to a UUID and the resource returns 200")

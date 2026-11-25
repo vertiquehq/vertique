@@ -17,10 +17,10 @@ import jakarta.inject.Provider;
 import java.util.Set;
 
 /**
- * Hand-written module in the exact C-GEN shape for compilation unit {@code unita}: a
+ * Hand-written module in the generated-module shape for compilation unit {@code unita}: a
  * resources-only unit contributing {@link CatalogResource}, {@link ExtraResource}, and
  * {@link DisabledResource}. Every resource binding first checks {@code applications.isEmpty()}
- * (D001: with any application registration present, {@code @JaxRsResources} contributes nothing —
+ * (with any application registration present, {@code @JaxRsResources} contributes nothing —
  * explicit mode routes only through selected applications), and every resource also gets a
  * {@link GeneratedJaxRsResourceEntry} so {@code JaxRsApplicationComposer} can select it from an
  * application's declared resources.

@@ -7,7 +7,7 @@ import dev.vertique.rest.core.lifecycle.RouterLifecycleHook;
 import io.vertx.ext.web.Router;
 
 /**
- * T006 TP-001's {@link RouterLifecycleHook}: forwards every {@code afterRouterCreated} call to a
+ * {@link RouterLifecycleHook} that forwards every {@code afterRouterCreated} call to a
  * shared {@link PublicationEventRecorder}, opening that mount's pending event group.
  */
 public final class PublicationEventRecordingHook implements RouterLifecycleHook {

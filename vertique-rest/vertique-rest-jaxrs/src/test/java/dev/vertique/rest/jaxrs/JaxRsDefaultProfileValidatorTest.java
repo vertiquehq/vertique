@@ -28,10 +28,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 2.2 RED tests for {@link JaxRsDefaultProfileValidator} — the JAX-RS per-boundary fail-fast
+ * Tests for {@link JaxRsDefaultProfileValidator} — the JAX-RS per-boundary fail-fast
  * seam for {@code jaxrs.jsonProfile}.
  *
- * <p>Mirrors slice 2.1's {@code JsonDefaultProfileValidatorTest}: a real Dagger component installs
+ * <p>Mirrors {@code JsonDefaultProfileValidatorTest}: a real Dagger component installs
  * {@link JsonRuntimeModule} (for the {@link JsonMapperProfileRegistry}) plus a test module supplying
  * {@code @VertxConfig JsonObject}, a minimal {@link ConfigParser}, the {@link JaxRsConfig} carrying
  * {@code jaxrs.jsonProfile}, and the {@link JaxRsDefaultProfileValidator} {@code @IntoSet}
@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * <ul>
  *   <li>an unregistered {@code jaxrs.jsonProfile} id throws {@link JsonProfileConfigurationException}
  *       when the validator set is forced — even with zero routes registered (the validator is inert
- *       of any route state, FR-JSON-050);
+ *       of any route state);
  *   <li>shadowing: a bad {@code jaxrs.jsonProfile} still fails fast even though a per-method/class
  *       {@code @JsonProfile} could shadow it at a route — the validator validates the configured
  *       default independently;

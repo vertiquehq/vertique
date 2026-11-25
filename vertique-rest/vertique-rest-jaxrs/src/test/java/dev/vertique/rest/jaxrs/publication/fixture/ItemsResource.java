@@ -17,7 +17,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T006 TP-002's fixture resource: a plain listing, a plain path-param lookup, a
+ * Fixture resource: a plain listing, a plain path-param lookup, a
  * regex-constrained path-param lookup, a {@code HEAD} sibling of the plain lookup, a restricted
  * write declaring both {@code @RolesAllowed} and a scoped {@code @SecurityRequirement}, and an
  * action-gated read.

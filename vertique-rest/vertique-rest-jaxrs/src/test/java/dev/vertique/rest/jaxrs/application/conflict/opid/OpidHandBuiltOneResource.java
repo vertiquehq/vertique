@@ -9,11 +9,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (e) fixture: the sole resource of {@link OpidHandBuiltOneMountModule}'s
+ * Operation-id conflict case (e) fixture: the sole resource of {@link OpidHandBuiltOneMountModule}'s
  * hand-built mount, built directly through {@code JaxRsRouterMount.Factory#create}. Its
  * {@link #list()} method's default operationId collides, cross-mount, with
  * {@link OpidHandBuiltTwoResource#list()}'s; with {@link OpidApis.OpidInactiveApi}'s registration
- * declared (even though inactive), the cross-mount rule applies (AC-014.1).
+ * declared (even though inactive), the cross-mount rule applies.
  */
 @Path("/opid-handbuilt-one")
 public class OpidHandBuiltOneResource {

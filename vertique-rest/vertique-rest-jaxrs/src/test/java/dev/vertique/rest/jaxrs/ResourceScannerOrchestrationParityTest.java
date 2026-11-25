@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Locks down the runtime orchestration that the build-time CG-009 validators are expected to
+ * Locks down the runtime orchestration that the build-time validators are expected to
  * mirror. Together with {@code RuntimeParityTest} in {@code vertique-codegen-jaxrs} (which
  * verifies the APT validators agree with {@code AnnotationSecurityPolicyResolver} directly),
  * this test closes the parity loop end-to-end:

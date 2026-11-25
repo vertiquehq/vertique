@@ -74,19 +74,20 @@ import org.junit.jupiter.params.provider.MethodSource;
  * sentinel strip, and that distinct operations sharing an operationId across mounts get distinct
  * schemas (no operationId-keyed cache collision).
  *
- * <p>It additionally carries this task's profiled-synthesis proof family: that the single
- * two-argument generation seam is invoked once per body under every profile (TP-002), that the
- * generated corpora are pinned (TP-003), that the {@code vertique-strict} override lands on the
- * right positions with the right bounds (TP-004), and that at most one generator is built per
- * profile instance, including under concurrent router builds (TP-009).
+ * <p>It additionally carries the profiled-synthesis proof family: that the single two-argument
+ * generation seam is invoked once per body under every profile, that the generated corpora are
+ * pinned, that the {@code vertique-strict} override lands on the right positions with the right
+ * bounds, and that at most one generator is built per profile instance, including under
+ * concurrent router builds.
  *
- * <p><strong>The corpus proofs pin bytes; they do not discriminate.</strong> At this task's baseline
- * the pre-change documents and both built-in profiles' documents are byte-identical for all fifteen
- * corpus fixtures — verified by generating all three corpora and diffing them both ways. So
+ * <p><strong>The corpus proofs pin bytes; they do not discriminate.</strong> The documents
+ * produced before profiled synthesis existed and both built-in profiles' documents are
+ * byte-identical for all fifteen corpus fixtures, verified by generating all three corpora and
+ * diffing them both ways. So
  * {@link #systemDocumentsMatchTheSystemCorpus} and {@link #vertiqueDocumentsMatchTheVertiqueCorpus}
  * are <em>pinning</em> proofs: they lock the bytes those two profiles produce so that a later
  * generator or option drift is caught, and they are expected to pass whether or not profiled
- * synthesis is wired correctly. Only the golden files' existence is new. The discriminating unit
+ * synthesis is wired correctly. The discriminating unit
  * proof for profiled synthesis is
  * {@link #strictOverrideAppliesToRootNestedAndElementButNotMapKey} and its two siblings, whose
  * strict positions change shape only when the effective profile actually reaches the generator.
@@ -486,11 +487,11 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("A non-generator failure discloses neither its text nor its cause")
     void nonGeneratorFailureDisclosesNoTextAndNoCause() {
-        // CO-002 / FR-008. FR-008's raw-cause allowance covers the generator's own bounded exception
+        // The raw-cause allowance covers the generator's own bounded exception
         // only. Any OTHER runtime exception reaching the synthesis catch is third-party text: a decode
         // failure's message embeds the document it choked on. So such an exception contributes only its
         // class's simple name, is never attached as a cause, and can never push the assembled message
-        // past FR-JSON-075's bound.
+        // past the message bound.
         RuntimeException decodeFailure = new DecodeException(
                 "Failed to decode: " + LEAKED_DOCUMENT, new IllegalStateException("underlying " + LEAK_MARKER));
         AnnotationSchemaSource source = new LeakyDecodeFailureSource(decodeFailure);
@@ -559,7 +560,7 @@ class AnnotationSchemaSourceTest {
         }
     }
 
-    /** The bound FR-JSON-075 sets on the whole assembled message, in UTF-16 code units. */
+    /** The bound on the whole assembled message, in UTF-16 code units. */
     private static final int MAX_MESSAGE_CODE_UNITS = 512;
 
     /** A distinctive literal, asserted absent from the message and from the whole disclosure chain. */
@@ -686,18 +687,18 @@ class AnnotationSchemaSourceTest {
         assertCanonicallyOrdered(body, "$");
     }
 
-    // --- Profiled proof helpers (TP-002, TP-003, TP-004, TP-009) ---
+    // --- Profiled proof helpers ---
 
     /** The reserved built-in profile ids the profiled proofs drive, in one fixed order. */
     private static final List<String> BUILT_IN_PROFILE_IDS = List.of("system", "vertique", "vertique-strict");
 
-    /** Number of repetitions of the concurrent router-build race (TP-009). */
+    /** Number of repetitions of the concurrent router-build race. */
     private static final int CONCURRENT_RUNS = 50;
 
-    /** Number of concurrent router builds driven per repetition (TP-009). */
+    /** Number of concurrent router builds driven per repetition. */
     private static final int CONCURRENT_BUILDERS = 2;
 
-    /** Number of body operations each concurrent router build synthesizes (TP-009). */
+    /** Number of body operations each concurrent router build synthesizes. */
     private static final int OPERATIONS_PER_BUILD = 10;
 
     /** Reads canonical JSON text (a golden document, a declared fragment) back into a node. */
@@ -724,7 +725,7 @@ class AnnotationSchemaSourceTest {
 
     /**
      * Builds a profile instance from an explicit id, mapper, and override list — the fresh-instance
-     * case FR-011 bounds generator retention against.
+     * case that bounds generator retention.
      */
     private static JsonMapperProfile profileWithId(
             String id, ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides) {
@@ -890,7 +891,7 @@ class AnnotationSchemaSourceTest {
         }
     }
 
-    // --- TP-002: the single seam is invoked once per body under every profile ---
+    // --- the single seam is invoked once per body under every profile ---
 
     @Test
     @DisplayName("The two-argument seam is invoked exactly once per body synthesis, under every profile")
@@ -915,7 +916,7 @@ class AnnotationSchemaSourceTest {
                 "the one-argument generateBodySchema(Type) seam must no longer be declared");
     }
 
-    // --- TP-003: the corpora are pinned (see the class javadoc on what these do and do not prove) ---
+    // --- the corpora are pinned (see the class javadoc on what these do and do not prove) ---
 
     @ParameterizedTest
     @MethodSource("corpusFixtures")
@@ -933,9 +934,9 @@ class AnnotationSchemaSourceTest {
 
     @ParameterizedTest
     @MethodSource("corpusFixtures")
-    @DisplayName("The legacy corpus still equals a direct pre-change generator run")
-    void legacyCorpusIsUnchangedFromTheT001Baseline(CorpusFixture fixture) {
-        // The pre-change baseline every corpus delta is measured against. It is generated straight
+    @DisplayName("The legacy corpus still equals a direct generator run")
+    void legacyCorpusEqualsADirectGeneratorRun(CorpusFixture fixture) {
+        // The reference every corpus delta is measured against. It is generated straight
         // from withVictoolsDefaults(), not through the schema source, so it stays comparable after the
         // source's own generation path becomes profiled. The trailing line feed is the corpus's
         // declared on-disk form.
@@ -946,7 +947,7 @@ class AnnotationSchemaSourceTest {
                         + " must still equal a direct withVictoolsDefaults() run");
     }
 
-    // --- TP-004: override positions, fragment bounds, and multi-profile isolation ---
+    // --- override positions, fragment bounds, and multi-profile isolation ---
 
     @Test
     @DisplayName("The strict override applies at root, nested, and element positions but not at a map key")
@@ -969,7 +970,7 @@ class AnnotationSchemaSourceTest {
                 fragment,
                 "element");
 
-        // The map-key half of AC-003.1. A Map<BigDecimal, String> property emits no constraint member
+        // The map-key half of the override positions. A Map<BigDecimal, String> property emits no constraint member
         // at all — no propertyNames, under strict and non-strict alike — so the only assertion that can
         // be made is that the fragment is absent from the whole document. A pointer into a
         // propertyNames member would assert against a node that exists under no profile, and would
@@ -1020,7 +1021,7 @@ class AnnotationSchemaSourceTest {
         assertNotEquals(
                 vertique, strict, "the strict document must differ from the vertique document at the BigDecimal");
 
-        // AC-011.2: a shared cache across profiles would hand the second and third call the first
+        // A shared cache across profiles would hand the second and third call the first
         // call's document; a per-operation cache would hand the second call the first call's instance.
         JsonObject firstBody = bodySchema(source, descriptor, profileOf(registry, "vertique-strict"));
         JsonObject secondBody = bodySchema(source, descriptor, profileOf(registry, "vertique-strict"));
@@ -1042,7 +1043,7 @@ class AnnotationSchemaSourceTest {
                 .getJsonObject("amount");
     }
 
-    // --- TP-009: one generator per profile instance ---
+    // --- one generator per profile instance ---
 
     @Test
     @DisplayName("Ten operations across three profiles build exactly three generators")

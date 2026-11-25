@@ -15,19 +15,18 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-005 — proves {@link JaxRsRouteRegistrar#classifyExplicitPolicy(SecurityPolicy, List,
- * boolean)}'s C-POLICY classification directly, with constructed inputs and no component, mount,
- * or registrar involved (RL-7).
+ * Proves the explicit-policy classification of {@link JaxRsRouteRegistrar#classifyExplicitPolicy(SecurityPolicy,
+ * List, boolean)} directly, with constructed inputs and no component, mount, or registrar involved.
  *
  * <p>An operation restricts callers when its effective policy is {@code DenyAll},
  * {@code AuthenticatedOnly}, or {@code Constrained}; when {@code securityRequirementSets()} is
  * non-empty and contains no empty (anonymous) set; or when it has a resolved required action. It is
  * declared public when it does not restrict callers and its effective policy is {@code PermitAll} —
- * a restricting declaration takes precedence over {@code @PermitAll} (row 5, RL-8). Any other
+ * a restricting declaration takes precedence over {@code @PermitAll} (the "PermitAll, one-scheme set" row). Any other
  * operation is implicit.
  *
  * <p>The annotation scanner cannot itself produce an empty {@link SecurityRequirementSet} today
- * ({@code SecuritySchemeAnnotationScanner.java:55-65, 142-162}); row 3 (the defensive rule) exists
+ * ({@code SecuritySchemeAnnotationScanner.java:55-65, 142-162}); the empty-set row (the defensive rule) exists
  * only because {@link SecurityRequirementSet}'s canonical constructor accepts one.
  */
 class ExplicitPolicyClassificationTest {
@@ -45,7 +44,7 @@ class ExplicitPolicyClassificationTest {
         assertEquals(row.expected(), actual, row.name());
     }
 
-    // --- Rows, in the contract's order (TP-005 "Given"/"Then") ---
+    // --- Classification rows ---
 
     static Stream<Row> rows() {
         return Stream.of(
@@ -105,7 +104,7 @@ class ExplicitPolicyClassificationTest {
                         JaxRsRouteRegistrar.ExplicitPolicy.RESTRICTS_CALLERS));
     }
 
-    /** One TP-005 row: its name, the classifier's three inputs, and the expected classification. */
+    /** One classification row: its name, the classifier's three inputs, and the expected classification. */
     private record Row(
             String name,
             SecurityPolicy policy,

@@ -175,8 +175,8 @@ class ApplicationOperationIdScopeTest {
     }
 
     private static Row onlyHandBuiltMountsKeepTheGateClosed() {
-        // R-009: second's location is UNPARSEABLE_LOCATION, under a strategy whose flag is true, so
-        // this row proves E6 — the parse runs only when the gate is open, not merely whenever the
+        // second's location is UNPARSEABLE_LOCATION, under a strategy whose flag is true, so
+        // this row proves the parse runs only when the gate is open, not merely whenever the
         // flag is reported: with no application mount and an empty view, the gate stays closed, and
         // an ungated parse would turn this otherwise-clean row red.
         JaxRsRouterMount first = handBuiltMount("/api/one/*", "shared.yaml", new OwnerAResource());
@@ -262,7 +262,7 @@ class ApplicationOperationIdScopeTest {
     }
 
     private static Row nullLocationSkippedAndHandBuiltLocationNamedByPath() {
-        // PIT G1: a null location is skipped without throwing, and a hand-built mount at an
+        // A null location is skipped without throwing, and a hand-built mount at an
         // unparseable location is named by its mount path, never by the location value — no
         // application mount is validated once a violation is reported.
         JaxRsRouterMount application = appMount("/api/one/*", null, "appOne", AppOne.class, new DistinctResourceA());
@@ -277,7 +277,7 @@ class ApplicationOperationIdScopeTest {
     }
 
     private static Row configuredIdWithOnlyAnotherStrategyRegistered() {
-        // PIT G1: no registered strategy carries the configured id ("web-validation"); the only
+        // No registered strategy carries the configured id ("web-validation"); the only
         // registered strategy ("openapi-contract", flag true) must not be consulted merely because it
         // is the sole entry in the Set — unregisteredStrategyIdOverTwoApplicationMounts cannot show this
         // clause because it registers no strategy at all and both its locations parse cleanly.

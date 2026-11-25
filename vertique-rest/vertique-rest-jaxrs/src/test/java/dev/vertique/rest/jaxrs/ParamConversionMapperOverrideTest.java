@@ -39,16 +39,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link ParamConversionException} overrides the default {@code 400} response body/status when an
  * inbound parameter fails conversion.
  *
- * <p><b>RED rationale (compile-RED, then behavior-RED once it compiles):</b> this test needs two
- * not-yet-existing pieces — a {@code TestFactories.builder().exceptionMapperRegistry(...)} hook so the
- * mount uses a registry carrying the app mapper, and an inbound binding path that actually throws
- * {@link ParamConversionException} on a malformed value. It is written against the <em>intended</em>
- * wiring so it compile-fails today; once slice 1.3 lands the {@code exceptionMapperRegistry} hook and
- * threads conversion through the resolver, it becomes a behavior assertion (custom 422 returned).
+ * <p>The mount is built with {@code TestFactories.builder().exceptionMapperRegistry(...)} so it uses a
+ * registry carrying the app mapper. A malformed value then makes the inbound binding path throw
+ * {@link ParamConversionException}, and the custom 422 is returned.
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
  * A {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
@@ -99,7 +96,7 @@ public class ParamConversionMapperOverrideTest {
      * App mapper overriding the default {@code 400} with a recognizable {@code 422}, contributed the
      * normal way as an {@link ExceptionMapper} of the framework {@link ParamConversionException}. It
      * also captures the exception it receives so the test can assert the conversion context
-     * (parameter name / source / target type) reached the mapper intact (FR-015-08a).
+     * (parameter name / source / target type) reached the mapper intact.
      */
     public static final class AppParamConversionMapper implements ExceptionMapper<ParamConversionException> {
         private final AtomicReference<ParamConversionException> received;
@@ -131,7 +128,7 @@ public class ParamConversionMapperOverrideTest {
         ExceptionMapperRegistry registry =
                 new ExceptionMapperRegistry(defaultMapper, Set.of(new AppParamConversionMapper(received)));
 
-        // INTENDED-but-not-yet-existing hook: TestFactories must let the mount use a custom registry.
+        // TestFactories must let the mount use a custom registry.
         JaxRsRouterMount.Factory factory =
                 TestFactories.builder().exceptionMapperRegistry(registry).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new UuidResource()));

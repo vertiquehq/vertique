@@ -254,7 +254,7 @@ class FormParamCollectionBindTest {
 
     /**
      * Builds a FORM {@link ResourceMethodMeta.ParamMeta}. {@code genericType} is always {@code null}:
-     * per §4's frozen contract, {@code genericType} stays BODY-only and FORM never populates it.
+     * {@code genericType} stays BODY-only and FORM never populates it.
      *
      * @param name          the parameter name
      * @param type          the declared parameter type (collection interface or array)

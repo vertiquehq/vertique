@@ -15,21 +15,19 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger components pinning the rest-024 branch-start zero-declaration composition.
+ * Dagger components pinning the legacy zero-declaration composition.
  *
  * <p>{@link ResourceAndManualComponent} includes the legacy-shaped
  * {@link GeneratedJaxRsResourcesModule} (no registration-set parameter, no catalog entries — the
- * shape a module produced by an older processor takes, D002) plus {@link ManualResourceModule}'s
+ * shape a module produced by an older processor takes) plus {@link ManualResourceModule}'s
  * hand-written contribution — the shape sibling framework modules use. {@link EmptyComponent}
- * includes neither, pinning the empty-resource-set path (TP-003).
+ * includes neither, pinning the empty-resource-set path.
  *
  * <p>Precedent: {@code RestSanitizationComponentTest} compiles
  * {@code @Component(modules = RestModule.class)} directly in this test source set without any
- * extra wiring. The OQ-001 prototype proved this exact
- * {@code @BindsInstance @VertxConfig JsonObject} factory shape, the unsecured
+ * extra wiring. The {@code @BindsInstance @VertxConfig JsonObject} factory shape, the unsecured
  * {@code SecurityPolicyValidator} stand-in, and the minimal {@code ConfigParser} compile and
- * resolve a full {@code HttpVerticle} graph on {@code 104b8c2f} (evidence/oq001-proof.md,
- * evidence/oq001-prototype.patch).
+ * resolve a full {@code HttpVerticle} graph.
  */
 public final class LegacyComponents {
 
@@ -57,7 +55,7 @@ public final class LegacyComponents {
         /**
          * Creates a new {@link HttpVerticle}. Unscoped: every call composes {@code Set<RouterMount>}
          * (and therefore {@code @JaxRsResources}) again, matching one composition per verticle
-         * instance (plan pre-flight finding 1).
+         * instance.
          *
          * @return a new verticle instance
          */
@@ -89,7 +87,7 @@ public final class LegacyComponents {
         }
     }
 
-    /** Neither the legacy resource module nor the manual module: pins the empty-set path (TP-003). */
+    /** Neither the legacy resource module nor the manual module: pins the empty-set path. */
     @Singleton
     @Component(modules = {RestModule.class, LegacySupportModule.class})
     public interface EmptyComponent extends Provisions {

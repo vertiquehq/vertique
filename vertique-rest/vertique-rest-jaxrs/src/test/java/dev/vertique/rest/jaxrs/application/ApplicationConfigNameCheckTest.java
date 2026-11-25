@@ -23,7 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-011 (AC-029.2): a {@code jaxrs.applications.<name>} entry whose name matches no declared
+ * A {@code jaxrs.applications.<name>} entry whose name matches no declared
  * registration, active or not, fails startup naming {@code jaxrs.applications.<name>} — never its
  * value — before any resource resolves, on both the explicit and the zero-declaration branch of
  * {@code RestModule.jaxRsRouterMount} (the view is requested on both, so a configured name also

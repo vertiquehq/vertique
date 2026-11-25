@@ -20,9 +20,9 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * Dagger components for {@link JaxRsApplicationMountConflictIT} (TP-004): six named nested
- * compositions, one per lettered case (a) to (f), each pairing an application (T002's
- * {@code unitb} fixtures, reused unchanged, or T004's {@code conflict.paths.RootApi} for
+ * Dagger components for {@link JaxRsApplicationMountConflictIT}: six named nested
+ * compositions, one per lettered case (a) to (f), each pairing an application (the
+ * {@code unitb} fixtures, reused unchanged, or {@code conflict.paths.RootApi} for
  * case (f)) or no application at all (case (c)) with one or two hand-built
  * {@code conflict.handbuilt} JAX-RS mounts, plus {@link ConflictSpyModule}'s two counting spies in
  * every composition. Every component's factory takes the deployment configuration as a
@@ -33,7 +33,7 @@ public final class ConflictDeploymentComponents {
 
     private ConflictDeploymentComponents() {}
 
-    /** Provisions every TP-004 composition exposes: a fresh {@link HttpVerticle} per call. */
+    /** Provisions every composition here exposes: a fresh {@link HttpVerticle} per call. */
     public interface Provisions {
 
         /**
@@ -141,7 +141,7 @@ public final class ConflictDeploymentComponents {
     /**
      * Case (d): {@code unitb.PublicApi} at {@code /api/public} beside a hand-built
      * {@code /:tenant/*} pattern-path mount ({@link TenantPatternMountModule}) — conflicts with
-     * every application under C-CONFLICT's pattern-path rule, regardless of any literal prefix
+     * every application under the pattern-path conflict rule, regardless of any literal prefix
      * relation.
      */
     @Singleton

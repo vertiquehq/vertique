@@ -16,14 +16,14 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger components for {@link JaxRsApplicationMountConflictIT} (TP-006): two named nested
+ * Dagger components for {@link JaxRsApplicationMountConflictIT} two named nested
  * compositions proving the rest-jaxrs validator's validated mark and {@code createRouter}'s
  * refusal of an unvalidated application mount. Every component exposes {@code Set<RouterMount>},
  * {@code Set<MountCompositionValidator>}, and a fresh {@link HttpVerticle} built through Dagger's
  * package-private six-argument {@code @Inject} constructor (so its own composition validators
  * run). Neither multibinding, nor {@code HttpVerticle} itself, is {@code @Singleton}-scoped
  * (matching {@link DeploymentComponents}'s "unscoped" contract), so every accessor call composes a
- * fresh {@code Set<RouterMount>} with new, unmarked mount instances — the property TP-006 case (c)
+ * fresh {@code Set<RouterMount>} with new, unmarked mount instances — the property case (c)
  * relies on for its second, independent resolution.
  *
  * <p>Every component's factory takes the deployment configuration as a
@@ -34,7 +34,7 @@ public final class ValidatedMarkComponents {
 
     private ValidatedMarkComponents() {}
 
-    /** Provisions every TP-006 composition exposes. */
+    /** Provisions every composition exposes. */
     public interface Provisions {
 
         /**
@@ -65,7 +65,7 @@ public final class ValidatedMarkComponents {
     /**
      * Cases (a) and (c): {@code unita}'s catalog and {@code unitb}'s
      * {@link dev.vertique.rest.jaxrs.application.unitb.PublicApi PublicApi}, with no conflicting
-     * mount, activated by {@code unitb.publicApplication.active}. Case (d) (R-004) instead activates
+     * mount, activated by {@code unitb.publicApplication.active}. Case (d) instead activates
      * {@link dev.vertique.rest.jaxrs.application.unitb.DisabledOnlyApi DisabledOnlyApi}, whose sole
      * listed class is a catalog entry disabled by default, so its mount has zero resources: the
      * {@code createRouter} refusal this case proves must run before the empty-mount early return,

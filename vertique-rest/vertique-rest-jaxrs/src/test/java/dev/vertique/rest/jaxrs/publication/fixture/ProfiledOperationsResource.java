@@ -11,7 +11,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T006 TP-003's fixture resource: two path-parameterized reads, one resolving the configured
+ * Fixture resource: two path-parameterized reads, one resolving the configured
  * default request-body JSON profile and the other overriding it with a method-level
  * {@link JsonProfile}.
  */

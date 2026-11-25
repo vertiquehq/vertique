@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for FR-025 (slice 14): no reference to the tech-preview OpenAPI
+ * Mechanical completeness check: no reference to the tech-preview OpenAPI
  * packages {@code io.vertx.openapi.} or {@code io.vertx.ext.web.openapi.router.} may remain in the
  * rest-jaxrs production source tree. The default request-validation path now binds to GA
  * {@code vertx-json-schema} via the opt-in {@code vertique-rest-validation} strategy, so rest-jaxrs

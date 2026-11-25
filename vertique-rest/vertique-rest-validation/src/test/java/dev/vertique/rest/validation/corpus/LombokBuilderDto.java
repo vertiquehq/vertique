@@ -10,8 +10,8 @@ import lombok.extern.jackson.Jacksonized;
 /**
  * Corpus fixture for a builder type filled through its builder, whose getters the real Lombok
  * annotation processor generates. {@code @Getter} is load-bearing: the same class without it is
- * invisible to introspection and stays {@code {"type":"object"}} even after this task's change, the
- * gap {@code spec.md} § Known description gaps records as BG1.
+ * invisible to introspection and stays {@code {"type":"object"}} even with profiled generation, a
+ * known description gap.
  *
  * <p>Frozen shape — this DTO is a subject of a byte-exact golden comparison. Adding, removing, or
  * renaming a property changes every corpus document that contains it.

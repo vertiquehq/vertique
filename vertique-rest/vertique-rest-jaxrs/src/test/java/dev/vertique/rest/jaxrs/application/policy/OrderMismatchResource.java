@@ -10,9 +10,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T005 TP-002 case (f) (G2-10): an entirely unannotated JAX-RS resource — like {@link
+ * Case (f): an entirely unannotated JAX-RS resource — like {@link
  * UnannotatedResource} — whose two operations' registration order ({@code RoutePathSpecificity},
- * most-specific-first) differs from their full-path lexical sort order, so the FR-013 warning's
+ * most-specific-first) differs from their full-path lexical sort order, so the implicit-policy warning's
  * {@code .sorted(...)} by full path is the only thing that can produce the expected message: {@link
  * #early()}'s one-segment path ({@code /aaa}) sorts lexically before {@link #late()}'s two-segment
  * path ({@code /zzz/yyy}), but {@code RoutePathSpecificity} registers the two-segment path FIRST

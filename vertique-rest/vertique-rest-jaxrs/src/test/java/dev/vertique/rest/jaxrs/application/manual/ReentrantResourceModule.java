@@ -9,7 +9,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
- * G-06's hand-written module contributing {@link ReentrantResource} one instance at a time via
+ * Hand-written module contributing {@link ReentrantResource} one instance at a time via
  * {@code @IntoSet} — the manual shape sibling framework modules use, never a generated module.
  * Included only in its own nested component(s), so its re-entrant dependency never interferes with
  * any other proof.

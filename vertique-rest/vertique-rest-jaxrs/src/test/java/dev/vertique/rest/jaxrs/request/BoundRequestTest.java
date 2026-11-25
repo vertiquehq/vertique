@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link DefaultBoundRequest}, the binding facade over a Vert.x
  * {@link RoutingContext}.
  *
- * <p>Verifies the FR-024 binding model: case-insensitive header lookup, path-param coercion
+ * <p>Verifies the binding model: case-insensitive header lookup, path-param coercion
  * to the declared scalar type, scalar-first vs collection-all multiplicity driven by the matching
  * {@link ParamDescriptor}, and the never-null body contract.
  */
@@ -329,12 +329,12 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("An octet-stream body whose bytes are valid JSON binds as a Buffer, not a JsonObject (W3)")
+    @DisplayName("An octet-stream body whose bytes are valid JSON binds as a Buffer, not a JsonObject")
     void boundRequestExplicitOctetStreamJsonShapedBytesBindAsBuffer() {
         // The bytes "{}" parse as a JSON object, but the EXPLICIT application/octet-stream content type
-        // means the client declared the body as binary. Before the W3 fix the binder probed the JSON
-        // shape first and bound a JsonObject, leaving a byte[]/Buffer body param bound to null
-        // (BinaryRequestBodyDecoder only adapts Buffer). The body must bind as the raw Buffer.
+        // means the client declared the body as binary. Probing the JSON shape first would bind a
+        // JsonObject and leave a byte[]/Buffer body param bound to null (BinaryRequestBodyDecoder
+        // only adapts Buffer). The body must bind as the raw Buffer.
         Buffer raw = Buffer.buffer("{}");
         RoutingContext ctx = bodyContext("application/octet-stream", raw);
 
@@ -347,7 +347,7 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("An octet-stream body whose bytes are a JSON array binds as a Buffer, not a JsonArray (W3)")
+    @DisplayName("An octet-stream body whose bytes are a JSON array binds as a Buffer, not a JsonArray")
     void boundRequestExplicitOctetStreamJsonArrayBytesBindAsBuffer() {
         Buffer raw = Buffer.buffer("[1,2]");
         RoutingContext ctx = bodyContext("application/octet-stream", raw);
@@ -443,7 +443,7 @@ class BoundRequestTest {
         assertTrue(array.contains("b"));
     }
 
-    // --- Profile-mapper scalar body tests (FR-JSON-024A / review finding W-B) ---
+    // --- Profile-mapper scalar body tests ---
 
     /**
      * Builds a profile {@link ObjectMapper} with Vert.x JSON support and
@@ -506,15 +506,15 @@ class BoundRequestTest {
 
     @Test
     @DisplayName("A scalar JSON float body is parsed by the profile mapper, returning BigDecimal (not Double)"
-            + " — proves scalar routes through profile mapper (W-B fix)")
+            + " — proves scalar routes through profile mapper")
     void profiledScalarBody_floatReturnsBigDecimal_provingProfileMapperUsed() {
         // given: a profile mapper with USE_BIG_DECIMAL_FOR_FLOATS enabled (returns BigDecimal for
         // floats), and a scalar body "1.5".
-        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper (after fix).
+        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper.
         // then: the raw bound value is a BigDecimal (not Double) — proving the profile mapper, not
         // Json.decodeValue (which returns Double for "1.5"), performed the parse.
-        // Before the fix, Json.decodeValue("1.5") returns a Double; the raw get() value is a
-        // Double — the BigDecimal assertion is RED before the fix.
+        // Json.decodeValue("1.5") would return a Double, so the BigDecimal assertion fails if the
+        // profile mapper is bypassed.
         ObjectMapper profileMapper = bigDecimalProfileMapper();
         Buffer rawBody = Buffer.buffer("1.5");
         RoutingContext ctx = profiledBodyContext(rawBody, profileMapper);
@@ -542,7 +542,7 @@ class BoundRequestTest {
         // when: DefaultBoundRequest.bindBody uses the Vert.x path (Json.decodeValue), which runs the
         // process codec — here still its raw delegate, since this unit test boots no application.
         // then: the raw bound value is a Double — proving the unstashed path is unchanged.
-        // This guards the non-regression: the fix must NOT affect the unstashed scalar path.
+        // This guards the unstashed scalar path: profile-mapper routing must not affect it.
         Buffer rawBody = Buffer.buffer("1.5");
         RoutingContext ctx = bodyContext("application/json", rawBody);
 
@@ -557,11 +557,11 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("A scalar JSON body with trailing content is rejected (400) by the profile mapper (W-B)")
+    @DisplayName("A scalar JSON body with trailing content is rejected (400) by the profile mapper")
     void profiledScalarBody_trailingTokens_rejectedAs400() {
         // given: a profile mapper with FAIL_ON_TRAILING_TOKENS (the profile-mapper strict feature),
         // and a scalar body "true false" — a boolean followed by a trailing token.
-        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper (after fix).
+        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper.
         // then: a ValidationException (HTTP 400) is thrown — the profile's strict feature applies
         // to scalars uniformly. This proves the strict parse is not limited to object/array bodies.
         ObjectMapper profileMapper = trailingTokenProfileMapper();
@@ -578,7 +578,7 @@ class BoundRequestTest {
     @DisplayName("A clean scalar number body binds successfully through the profile mapper")
     void profiledScalarBody_cleanNumber_bindsSuccessfully() {
         // given: a profile mapper with FAIL_ON_TRAILING_TOKENS and a clean scalar body "42".
-        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper (after fix).
+        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper.
         // then: the body binds as Integer 42 — normal scalars still work through the profile mapper.
         ObjectMapper profileMapper = trailingTokenProfileMapper();
         Buffer rawBody = Buffer.buffer("42");
@@ -595,7 +595,7 @@ class BoundRequestTest {
     @DisplayName("A clean scalar string body binds successfully through the profile mapper")
     void profiledScalarBody_cleanString_bindsSuccessfully() {
         // given: a profile mapper with FAIL_ON_TRAILING_TOKENS and a clean scalar body '"hello"'.
-        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper (after fix).
+        // when: DefaultBoundRequest.bindBody routes the scalar through the profile mapper.
         // then: the body binds as String "hello" — normal string scalars still work.
         ObjectMapper profileMapper = trailingTokenProfileMapper();
         Buffer rawBody = Buffer.buffer("\"hello\"");

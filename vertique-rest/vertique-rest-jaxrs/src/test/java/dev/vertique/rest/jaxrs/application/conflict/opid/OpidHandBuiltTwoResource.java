@@ -9,7 +9,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (e) fixture: the sole resource of {@link OpidHandBuiltTwoMountModule}'s
+ * Operation-id conflict case (e) fixture: the sole resource of {@link OpidHandBuiltTwoMountModule}'s
  * hand-built mount, built directly through {@code JaxRsRouterMount.Factory#create}. Its
  * {@link #list()} method's default operationId collides, cross-mount, with
  * {@link OpidHandBuiltOneResource#list()}'s.

@@ -9,7 +9,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
- * TP-005 case 13's second of two separate manual modules for {@link DuplicateManualResource}; see
+ * Second of two separate manual modules for {@link DuplicateManualResource}; see
  * {@link DuplicateManualResourceModuleA}.
  */
 @Module

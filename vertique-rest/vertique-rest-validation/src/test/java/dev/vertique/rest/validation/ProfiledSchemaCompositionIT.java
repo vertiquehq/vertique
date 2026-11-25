@@ -64,8 +64,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * End-to-end proofs for how a profile's schema-type override <em>composes</em> with the annotations a
- * body property already carries (TP-005) and for an application-supplied profile whose override
- * needs no binding of its own (TP-006).
+ * body property already carries and for an application-supplied profile whose override
+ * needs no binding of its own.
  *
  * <p>Three compositions are covered:
  *
@@ -74,7 +74,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       profile fragment rather than replacing it, so both bounds apply.</li>
  *   <li><strong>Redirect.</strong> {@code @Schema(implementation = String.class)} over a type the
  *       effective profile overrides is a misconfiguration that fails the mount, while the same
- *       redirect over a type the effective profile does not override still applies (D003).</li>
+ *       redirect over a type the effective profile does not override still applies.</li>
  *   <li><strong>Custom profile.</strong> An application profile contributed through the fixture's
  *       {@code RestTestContributions.jsonMapperProfiles} builder carries its own override into the
  *       gate with no schema registry, extra binding, or configuration key.</li>
@@ -86,11 +86,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue
- * #167).
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
  */
 @ExtendWith(VertxExtension.class)
-// 60s rather than testing.md's 20s default: each method builds its own Dagger graph and router, and
+// 60s rather than the default 20s: each method builds its own Dagger graph and router, and
 // the redirect method builds two mounts.
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ProfiledSchemaCompositionIT {
@@ -148,10 +147,10 @@ public class ProfiledSchemaCompositionIT {
         servers.clear();
     }
 
-    // --- TP-005: property metadata narrows the profile fragment ---
+    // --- property metadata narrows the profile fragment ---
 
     /**
-     * TP-005 (AC-006.1). Swagger property metadata on a {@code BigDecimal} the {@code vertique-strict}
+     * Swagger property metadata on a {@code BigDecimal} the {@code vertique-strict}
      * profile overrides narrows the profile fragment: the accepted value must satisfy the profile's
      * string form <em>and</em> the property's own {@code pattern} and {@code maxLength}.
      *
@@ -185,7 +184,7 @@ public class ProfiledSchemaCompositionIT {
     }
 
     /**
-     * TP-005 (AC-006.2, D003). {@code @Schema(implementation = String.class)} over a {@code BigDecimal}
+     * {@code @Schema(implementation = String.class)} over a {@code BigDecimal}
      * fails the mount under {@code vertique-strict}, whose profile overrides {@code BigDecimal}: the
      * redirect would silently drop the override's bounds, so it is a configuration error rather than a
      * quietly weaker schema. Under the {@code vertique} floor, which declares no {@code BigDecimal}
@@ -227,10 +226,10 @@ public class ProfiledSchemaCompositionIT {
         assertEquals(1, vertiqueResource.invocations.get(), "only the accepted body may reach the resource");
     }
 
-    // --- TP-006: a custom application profile ---
+    // --- a custom application profile ---
 
     /**
-     * TP-006 (AC-011.1). A {@code money} profile contributed through the fixture's
+     * A {@code money} profile contributed through the fixture's
      * {@code RestTestContributions.jsonMapperProfiles} builder — a mapper that deserializes
      * {@link Money} from a JSON string plus one {@code INPUT} schema-type override declaring that same
      * string shape — reaches the gate with no schema registry, no extra Dagger binding, and no

@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Test {@link RequestValidationStrategy} selected by {@link #ID} that stores a deep copy of every
  * {@link OperationSchemas} it receives in {@link #gateFor}, keyed by operation id, and always
- * installs a pass-through gate (T006 TP-003, TP-005).
+ * installs a pass-through gate.
  */
 public final class RecordingValidationStrategy implements RequestValidationStrategy {
 

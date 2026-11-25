@@ -22,7 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the registrar's <strong>fail-closed</strong> security gate (finding C1): an operation
+ * Verifies the registrar's <strong>fail-closed</strong> security gate: an operation
  * that declares a {@code @SecurityRequirement} whose scheme has no collected
  * {@link io.vertx.ext.web.handler.AuthenticationHandler} must fail startup rather than mount with no
  * authentication (a fail-OPEN route). A public operation (no requirement) still mounts with no

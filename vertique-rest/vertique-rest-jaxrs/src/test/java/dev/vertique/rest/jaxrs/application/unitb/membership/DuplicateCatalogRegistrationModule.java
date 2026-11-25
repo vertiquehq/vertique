@@ -13,13 +13,13 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * T023 L22 restoration (TP-003 case 14, the step 1 duplicate-catalog-entry check): registers
- * {@link MembershipCaseApis.DuplicateCatalogApi}, unconditionally active (the C-GEN
+ * Duplicate-catalog-entry check: registers
+ * {@link MembershipCaseApis.DuplicateCatalogApi}, unconditionally active (the generated-module
  * {@code <conditions>} literal {@code true}, matching a fixture without
  * {@code @ConditionalOnProperty}). Paired, in its own dedicated Dagger component, with the two
  * separate catalog-entry modules for {@link DuplicateCatalogResource}
  * ({@code DuplicateCatalogEntryModuleA} and {@code DuplicateCatalogEntryModuleB}); the composer's
- * step 1 duplicate check runs over the whole component's catalog before any registration's
+ * duplicate check runs over the whole component's catalog before any registration's
  * membership is evaluated, so this fixture never shares a component with any other row.
  */
 @Module

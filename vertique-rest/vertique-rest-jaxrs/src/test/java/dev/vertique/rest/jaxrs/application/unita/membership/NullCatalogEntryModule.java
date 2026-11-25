@@ -9,16 +9,16 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
 
 /**
- * G-07 (b)'s hand-written catalog entry — deliberately <strong>not</strong> C-GEN-shaped (contrast
- * {@link Case22HandWrittenEntryModule}'s provider, which returns an unrelated instance): a bare
- * {@code GeneratedJaxRsResourceEntry.of(Case22Resource.class, true, () -> null)}, a hand-written
+ * Hand-written catalog entry — deliberately <strong>not</strong> generated-module-shaped (contrast
+ * {@link HandWrittenCatalogEntryModule}'s provider, which returns an unrelated instance): a bare
+ * {@code GeneratedJaxRsResourceEntry.of(HandWrittenEntryResource.class, true, () -> null)}, a hand-written
  * entry whose provider fails to construct an instance.
  */
 @Module
 public final class NullCatalogEntryModule {
 
     /**
-     * Catalogs {@link Case22Resource} (reused purely for its type and path), but the provider
+     * Catalogs {@link HandWrittenEntryResource} (reused purely for its type and path), but the provider
      * always returns {@code null}.
      *
      * @return the catalog entry, always enabled
@@ -26,7 +26,7 @@ public final class NullCatalogEntryModule {
     @Provides
     @IntoSet
     static GeneratedJaxRsResourceEntry nullCatalogEntry() {
-        return GeneratedJaxRsResourceEntry.of(Case22Resource.class, true, NullCatalogEntryModule::alwaysNull);
+        return GeneratedJaxRsResourceEntry.of(HandWrittenEntryResource.class, true, NullCatalogEntryModule::alwaysNull);
     }
 
     /**

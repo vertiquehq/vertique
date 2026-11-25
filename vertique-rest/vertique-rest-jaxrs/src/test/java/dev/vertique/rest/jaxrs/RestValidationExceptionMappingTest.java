@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FR-012 parity guarantee that a {@link RestValidationException} — the exception the
+ * Verifies the parity guarantee that a {@link RestValidationException} — the exception the
  * web-validation gate fails the request with — is mapped by the framework's default exception mapper
  * to a 400 {@code application/problem+json} response whose body carries the structured field errors.
  *

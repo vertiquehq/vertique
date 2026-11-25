@@ -23,7 +23,7 @@ import jakarta.inject.Singleton;
  * {@link dev.vertique.rest.jaxrs.application.unitb.ManagementApi ManagementApi} registrations'
  * activation flags for every given, so no IT-only registration module is needed for those two.
  * Every component's factory takes the application configuration as a
- * {@code @BindsInstance @VertxConfig JsonObject}, matching {@link CompositionComponents} and T001's
+ * {@code @BindsInstance @VertxConfig JsonObject}, matching {@link CompositionComponents} and
  * {@code LegacyComponents}.
  */
 public final class DeploymentComponents {
@@ -35,7 +35,7 @@ public final class DeploymentComponents {
 
         /**
          * Creates a new {@link HttpVerticle}. Unscoped: every call composes {@code Set<RouterMount>}
-         * again, matching one composition per verticle instance (plan pre-flight finding 1), so
+         * again, matching one composition per verticle instance, so
          * {@code new DeploymentOptions().setInstances(n)} triggers {@code n} independent compositions.
          *
          * @return a new verticle instance
@@ -79,7 +79,7 @@ public final class DeploymentComponents {
     }
 
     /**
-     * The same fixture set as {@link StandardComponent}, so TP-012's manual contribution exists as a
+     * The same fixture set as {@link StandardComponent}, so the manual contribution exists as a
      * candidate the unselected report can name.
      */
     @Singleton
@@ -109,7 +109,7 @@ public final class DeploymentComponents {
     }
 
     /**
-     * TP-007's fixture set: applications {@code a}, {@code b}, and {@code c}
+     * The contract-strategy fixture set: applications {@code a}, {@code b}, and {@code c}
      * ({@link ContractRegistrationModule}), each with one operation of a distinct id, each resource
      * manually bound ({@link ContractResourcesModule}), deployed under the recording
      * {@link OpenApiContractPassThroughStrategy} ({@link ContractStrategyModule}).

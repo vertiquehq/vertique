@@ -12,8 +12,8 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Single-proof (TP-003) {@code @Singleton}-scoped JAX-RS resource fixture, contributed by its own
- * C-GEN-shaped module ({@code unita.scoped}'s {@link GeneratedJaxRsResourcesModule}), kept out of
+ * Single-proof {@code @Singleton}-scoped JAX-RS resource fixture, contributed by its own
+ * generated-shape module ({@code unita.scoped}'s {@link GeneratedJaxRsResourcesModule}), kept out of
  * {@code unita}'s own module so that every other proof's expected resource set is unaffected. Its
  * scope proves that the composer resolves each selected catalog entry's {@code Provider} through
  * the surrounding Dagger component, so a {@code @Singleton}-scoped entry is constructed once across

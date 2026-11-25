@@ -25,9 +25,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * T005 TP-002/TP-004 fixture module: the security runtime the {@code policy} resources unit's
- * (c), (d), and (e) variants need to register without a startup violation, so any FR-013
- * classification observed by {@code ExplicitSecurityPolicyTest} reflects C-POLICY alone, never a
+ * Fixture module: the security runtime the {@code policy} resources unit's
+ * (c), (d), and (e) variants need to register without a startup violation, so any implicit-policy
+ * classification observed by {@code ExplicitSecurityPolicyTest} reflects the policy rules alone, never a
  * missing collaborator.
  *
  * <ul>
@@ -99,7 +99,7 @@ public final class PolicySecurityModule {
 
     /**
      * A presence-only {@link Authorizer}: {@code resolveRequiredAction} checks only that this
-     * binding is present at startup, so its decision methods are never called by TP-002 or TP-004.
+     * binding is present at startup, so its decision methods are never called by the policy tests.
      *
      * @return the authorizer
      */
@@ -146,13 +146,13 @@ public final class PolicySecurityModule {
         @Override
         public Future<AuthorizationDecision> authorize(AuthorizationRequest request) {
             throw new UnsupportedOperationException(
-                    "PresenceOnlyAuthorizer is a presence-only fixture; TP-002/TP-004 never invoke it");
+                    "PresenceOnlyAuthorizer is a presence-only fixture; the policy tests never invoke it");
         }
 
         @Override
         public Future<AuthorizationDecision> authorize(SecurityContext ctx, ActionRef action, ResourceRef resource) {
             throw new UnsupportedOperationException(
-                    "PresenceOnlyAuthorizer is a presence-only fixture; TP-002/TP-004 never invoke it");
+                    "PresenceOnlyAuthorizer is a presence-only fixture; the policy tests never invoke it");
         }
     }
 }

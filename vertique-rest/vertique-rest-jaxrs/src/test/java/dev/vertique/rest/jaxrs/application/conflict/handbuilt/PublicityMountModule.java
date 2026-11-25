@@ -11,10 +11,10 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
+ * Conflict fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}. Used by case (b), the control: {@code unitb.PublicApi} at
  * {@code /api/public} beside this hand-built {@code /api/publicity/*} mount, which does not
- * conflict, since neither mount path's prefix contains the other's (C-CONFLICT: {@code /api/public}
+ * conflict, since neither mount path's prefix contains the other's ({@code /api/public}
  * and {@code /api/publicity} do not conflict).
  */
 @Module

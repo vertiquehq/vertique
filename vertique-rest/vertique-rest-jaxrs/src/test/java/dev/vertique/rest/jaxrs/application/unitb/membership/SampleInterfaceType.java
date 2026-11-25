@@ -4,9 +4,9 @@
 package dev.vertique.rest.jaxrs.application.unitb.membership;
 
 /**
- * TP-005 case 10's listed-only type: a plain interface. Listed by
+ * Listed-only type: a plain interface. Listed by
  * {@link MembershipViolationRegistrations#interfaceCaseRegistration} but never Dagger-bound;
- * C-COMPOSE step 6.3 rejects it as not a concrete root resource before any catalog or manual match
+ * the composer rejects it as not a concrete root resource before any catalog or manual match
  * is attempted.
  */
 public interface SampleInterfaceType {}

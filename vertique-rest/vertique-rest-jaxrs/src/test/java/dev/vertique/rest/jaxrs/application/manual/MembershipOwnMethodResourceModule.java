@@ -9,7 +9,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
- * TP-005 case 15's manual module, contributing {@link MembershipOwnMethodResource}. Included only
+ * The manual module, contributing {@link MembershipOwnMethodResource}. Included only
  * in {@code MembershipComponents.SubclassOwnMethodComponent}, so it is the sole manual candidate
  * when {@link MembershipBaseResource} is listed.
  */

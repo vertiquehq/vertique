@@ -38,12 +38,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * G2-05 (P02 review finding sec F-2): {@link JaxRsApplicationMountValidator} must reject an
+ * {@link JaxRsApplicationMountValidator} must reject an
  * application-mount pair conflict, and must scan cross-mount operationIds (here, two distinct owners
  * whose mounts share one contract location under a contract-driven strategy), even when the mounts it
  * is handed were merged from more than one composition into a single {@code Set<RouterMount>} — a
  * shape {@link JaxRsApplicationComposer} step 1b never sees, because step 1b runs per composition,
- * before that composition's own mounts are ever built. TP-020 (CX-001) extends this to a repeated
+ * before that composition's own mounts are ever built. A further case extends this to a repeated
  * application name across merged compositions.
  *
  * <p>The first two tests build their two {@link JaxRsRouterMount} application mounts directly
@@ -70,7 +70,7 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         // "/api/*" before "/api/mgmt/*") proves the report does not merely echo input order.
         List<String> violations = validator.validate(List.of(adminMount, apiMount));
 
-        // R-002: named '<name>' (<declaring interface FQN>), matching the composer's step-1b message
+        // Named '<name>' (<declaring interface FQN>), matching the composer's step-1b message
         // format (JaxRsApplicationComposer.appContext).
         assertEquals(
                 List.of("Application 'api' (" + ApiApplication.class.getName() + ") at '/api/*' conflicts with"
@@ -101,7 +101,7 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         assertTrue(violation.contains("'/api/two/*'"), violation);
     }
 
-    // --- TP-020 ---
+    // --- An application name repeated across merged compositions ---
 
     @Test
     @DisplayName("An application name repeated across mounts merged from two separate compositions fails, "
@@ -237,9 +237,9 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         }
     }
 
-    // --- Fixtures (TP-020's hand-built control) ---
+    // --- Fixtures (the hand-built control) ---
 
-    /** TP-020 control 2's first hand-built resource, an operationId distinct from every other fixture here. */
+    /** The control's first hand-built resource, an operationId distinct from every other fixture here. */
     @Path("/control-one")
     public static class ControlResourceOne {
 
@@ -255,7 +255,7 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         }
     }
 
-    /** TP-020 control 2's second hand-built resource, an operationId distinct from every other fixture here. */
+    /** The control's second hand-built resource, an operationId distinct from every other fixture here. */
     @Path("/control-two")
     public static class ControlResourceTwo {
 
@@ -271,12 +271,12 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         }
     }
 
-    // --- TP-020's support module and Dagger components ---
+    // --- Support module and Dagger components ---
 
     /**
      * The collaborators {@code JaxRsRouterMount.Factory} and the view's provider require but the
-     * real security and config modules supply, mirrored from {@code application.ApplicationTestSupportModule}
-     * (T002, E3): the real {@link DefaultConfigParser}, since the view's provider calls {@link
+     * real security and config modules supply, mirrored from {@code application.ApplicationTestSupportModule}:
+     * the real {@link DefaultConfigParser}, since the view's provider calls {@link
      * ConfigParser#parseKeyedObject}, and the unsecured {@link SecurityPolicyValidator} stand-in.
      */
     @Module
@@ -296,7 +296,7 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         }
     }
 
-    /** Provisions every TP-020 component exposes. */
+    /** Provisions every component here exposes. */
     interface Provisions {
 
         /**
@@ -364,7 +364,7 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         }
     }
 
-    /** TP-020's control: the second unit renamed to {@code api-two}, so it no longer collides. */
+    /** The control: the second unit renamed to {@code api-two}, so it no longer collides. */
     @Singleton
     @Component(
             modules = {

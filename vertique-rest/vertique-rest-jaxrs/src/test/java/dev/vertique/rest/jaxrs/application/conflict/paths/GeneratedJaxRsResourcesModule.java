@@ -13,10 +13,10 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * Hand-written registration module for TP-016's {@code conflict.paths} compilation unit: every
+ * Hand-written registration module for the {@code conflict.paths} compilation unit: every
  * conflict fixture, each gated on its own activation flag exactly as {@link PathConflictApis}
  * declares it. {@link JaxRsApplicationMountConflictTest}'s rows activate exactly the pair each case
- * names. Includes {@link PathConflictResourcesModule} (T023 L28), so every component that wires
+ * names. Includes {@link PathConflictResourcesModule}, so every component that wires
  * this registration module also gets a manual match for every listed resource class, without this
  * package's own Dagger components ({@code ConflictCompositionComponents.ConflictPathsComponent},
  * {@code ConflictDeploymentComponents.RootApplicationConflictComponent}) needing their module list

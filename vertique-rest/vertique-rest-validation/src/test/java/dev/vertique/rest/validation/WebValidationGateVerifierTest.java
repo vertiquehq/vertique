@@ -328,7 +328,7 @@ class WebValidationGateVerifierTest {
     }
 
     /**
-     * Issue #230 — a verifier future that never resolves must not hang the request chain. The gate
+     * A verifier future that never resolves must not hang the request chain. The gate
      * races each verifier against {@code jaxrs.fileContentVerifierDeadlineMs}; when the deadline
      * elapses first the request fails closed as infrastructure (500), within a test await bound
      * comfortably larger than the configured deadline.

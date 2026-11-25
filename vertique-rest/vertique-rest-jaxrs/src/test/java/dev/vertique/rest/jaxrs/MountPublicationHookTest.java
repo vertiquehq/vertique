@@ -78,12 +78,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit proofs for T006's internal publication seam: {@code JaxRsRouterMount.createRouter} building
+ * Unit proofs for the internal publication seam: {@code JaxRsRouterMount.createRouter} building
  * exactly one {@code MountPublication} per non-empty mount and handing it to every bound
  * {@code MountPublicationHook}, entirely through a bare {@code TestFactories}-built
  * {@code Factory} — no Dagger composition and no running {@code HttpVerticle}.
  *
- * <p>TP-002 and TP-003 additionally bind a loopback {@code HttpServer} to prove, respectively, that a
+ * <p>The registered-route-values proof and the single-source-resolution proof additionally bind a loopback {@code HttpServer} to prove, respectively, that a
  * regex-constrained route actually distinguishes a matching request from a non-matching one, and that
  * the schema source is consulted only once per operation at router build, never again per request.
  * Every other proof here inspects {@code createRouter}'s return value and the recording fixtures
@@ -109,7 +109,7 @@ class MountPublicationHookTest {
         serverClose.onComplete(ctx.succeedingThenComplete());
     }
 
-    // --- TP-002 ---
+    // --- Registered route values and security facts are recorded ---
 
     @Test
     @DisplayName("Publications record route values as registered and the effective security facts")
@@ -160,7 +160,7 @@ class MountPublicationHookTest {
                         List.of("items:write"),
                         create.securityRequirementSets().get(0).schemes().get(0).scopes());
 
-                // S6-007: the exact operation count, and requiresAction == false for every
+                // The exact operation count, and requiresAction == false for every
                 // non-action operation, not just "list".
                 assertEquals(6, byId.size(), "exactly the six declared operations must be published");
                 assertTrue(byId.get("adminView").requiresAction());
@@ -194,7 +194,7 @@ class MountPublicationHookTest {
         }));
     }
 
-    // --- TP-003 ---
+    // --- One source resolution feeds the gate and the snapshot ---
 
     @Test
     @DisplayName("One source resolution feeds both the gate and the snapshot")
@@ -295,7 +295,7 @@ class MountPublicationHookTest {
         }));
     }
 
-    // --- TP-004 ---
+    // --- Captured schemas are detached ---
 
     @Test
     @DisplayName("Captured schemas are detached from the source and the gate")
@@ -375,7 +375,7 @@ class MountPublicationHookTest {
                 Collections.disjoint(copyIdentities, gateIdentities),
                 "no JsonObject/JsonArray/backing-collection reachable from the copy is the gate's");
 
-        // S6-001: the identity walk must also cover the captured parameter schemas, not just the
+        // The identity walk must also cover the captured parameter schemas, not just the
         // body — GateMutatingValidationStrategy mutates every declared parameter's schema too.
         JsonObject capturedId = captured.parameters().get(new InputKey(ParamLocation.PATH, "id"));
         JsonObject capturedQ = captured.parameters().get(new InputKey(ParamLocation.QUERY, "q"));
@@ -420,7 +420,7 @@ class MountPublicationHookTest {
         assertNull(capturedWithoutBody.bodyProvenance());
     }
 
-    // --- TP-005 ---
+    // --- Detail is captured only for mounts a sink wants ---
 
     @Test
     @DisplayName("Detail is captured only for mounts a sink wants")
@@ -464,7 +464,7 @@ class MountPublicationHookTest {
         MountPublication pubManual = hook.onlyReceivedFor("/*");
         MountPublication pubC = hook.onlyReceivedFor("/api/c/*");
 
-        // S6-007: a non-empty check plus a per-element assertion, not allMatch over a list that
+        // A non-empty check plus a per-element assertion, not allMatch over a list that
         // could vacuously be empty.
         assertEveryOperationHasDetail(pubA, true);
         assertNoOperationHasDetail(pubB);
@@ -503,7 +503,7 @@ class MountPublicationHookTest {
         MountPublication eViaHookWantsNothing = hookWantsNothing.onlyReceivedFor("/api/e/*");
         assertNoOperationHasDetail(eViaHookWantsNothing);
 
-        // S6-003: a row where the hook that wants detail comes FIRST, proving every hook is still
+        // A row where the hook that wants detail comes FIRST, proving every hook is still
         // asked wantsDetail (no short-circuit) once an earlier hook already wants detail.
         RecordingPublicationHook hookWantsDFirst =
                 new RecordingPublicationHook(applicationName -> "d".equals(applicationName));
@@ -537,7 +537,7 @@ class MountPublicationHookTest {
 
     /**
      * Asserts every operation of {@code publication} carries a non-{@code null} {@code detail}, after
-     * first asserting {@code publication} has at least one operation (S6-007: a non-empty check plus
+     * first asserting {@code publication} has at least one operation (a non-empty check plus
      * a per-element assertion, since {@code allMatch} over an empty list is vacuously {@code true}).
      *
      * @param publication the publication to check
@@ -574,7 +574,7 @@ class MountPublicationHookTest {
 
     /**
      * Asserts every operation of {@code publication} carries a {@code null} {@code detail}, after
-     * first asserting {@code publication} has at least one operation (S6-007: a non-empty check plus
+     * first asserting {@code publication} has at least one operation (a non-empty check plus
      * a per-element assertion, since {@code allMatch} over an empty list is vacuously {@code true}).
      *
      * @param publication the publication to check
@@ -591,7 +591,7 @@ class MountPublicationHookTest {
         }
     }
 
-    // --- TP-008 ---
+    // --- createRouter awaits every sink's future ---
 
     @Test
     @DisplayName("createRouter completes only when every sink's future has")
@@ -677,8 +677,8 @@ class MountPublicationHookTest {
 
     /**
      * Collects the identity of every {@link JsonObject}/{@link JsonArray} reachable from {@code root}
-     * (including {@code root} itself) and each such container's backing {@code Map}/{@code List}
-     * (E14): the returned set uses reference identity for both membership and, via
+     * (including {@code root} itself) and each such container's backing {@code Map}/{@code List}.
+     * The returned set uses reference identity for both membership and, via
      * {@link Collections#disjoint}, comparison.
      *
      * @param root the root object to walk
@@ -740,7 +740,7 @@ class MountPublicationHookTest {
 
     /**
      * {@link Authorizer} whose decision methods are never exercised: only its presence matters to
-     * {@code resolveRequiredAction}'s fail-closed presence checks (TP-002 registers, but never
+     * {@code resolveRequiredAction}'s fail-closed presence checks (the test registers, but never
      * dispatches, its {@code @RequiresAction} operation).
      */
     private static final class PresenceOnlyAuthorizer implements Authorizer {

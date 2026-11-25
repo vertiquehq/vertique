@@ -10,10 +10,10 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 case 13's resource: contributed manually twice, by two separate modules
+ * Resource contributed manually twice, by two separate modules
  * ({@link DuplicateManualResourceModuleA} and {@link DuplicateManualResourceModuleB}), so when
  * listed it has two manual matches (both trivially {@code sameSurface}-true, since both instances
- * are exactly this class), tripping C-COMPOSE step 6.7's ambiguity check. No catalog entry exists
+ * are exactly this class), tripping the composer's ambiguity check. No catalog entry exists
  * for this class.
  */
 @Path("/duplicate-manual")

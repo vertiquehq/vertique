@@ -30,7 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-013 and TP-014: proves {@code ApplicationAnnotationAllowList}'s runtime re-check — the
+ * Proves {@code ApplicationAnnotationAllowList}'s runtime re-check — the
  * allow list the annotation processor applies at compile time, re-checked by reflection over every
  * hand-written registration's declaring interface and superinterfaces, active or inactive, before
  * any resource is resolved (a registration the processor did not produce still fails startup).
@@ -43,17 +43,17 @@ class ApplicationAnnotationBackstopTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(ApplicationAnnotationBackstopTest.class);
 
-    /** R-007: TP-013's {@code @OpenAPIDefinition} row's reason fragment. */
+    /** The reason fragment of the {@code @OpenAPIDefinition} allow-list row. */
     private static final String ONLY_INFO_ELEMENT_FRAGMENT = "only its info and security elements";
 
-    /** R-007: TP-014's every row's reason fragment. */
+    /** The reason fragment of every honored-only row. */
     private static final String HONORED_ONLY_ON_DECLARING_INTERFACE_FRAGMENT =
             "honored only on the declaring interface";
 
-    /** G-007: the failure header every composer violation exception carries. */
+    /** The failure header every composer violation exception carries. */
     private static final String INVALID_COMPOSITION_HEADER = "Invalid JAX-RS application composition:";
 
-    /** PIT G3: the reason fragment for a disallowed annotation refused the same way on any type in scope. */
+    /** The reason fragment for a disallowed annotation refused the same way on any type in scope. */
     private static final String NOT_ALLOWED_FRAGMENT =
             "which is not allowed: application declarations carry no resource semantics";
 
@@ -63,7 +63,7 @@ class ApplicationAnnotationBackstopTest {
     }
 
     /**
-     * TP-013 — An annotation outside FR-025's allow list fails startup, wherever it sits.
+     * An annotation outside the allow list fails startup, wherever it sits.
      *
      * <p>Given: hand-written registrations, one per row: {@code @RolesAllowed} on the declaring
      * interface; {@code @Path} on the declaring interface; {@code @Singleton} on the declaring
@@ -84,17 +84,17 @@ class ApplicationAnnotationBackstopTest {
     @MethodSource("allowListCases")
     @DisplayName("An annotation outside the allow list fails startup, wherever it sits")
     void annotationOutsideTheAllowListFailsStartup(BackstopCase testCase) {
-        runCase(testCase, "TP-013");
+        runCase(testCase, "allow-list");
     }
 
     /**
-     * TP-014 — A runtime-retained honored-only annotation on a superinterface fails startup.
+     * A runtime-retained honored-only annotation on a superinterface fails startup.
      *
      * <p>Given: hand-written registrations whose declaring interface carries only
      * {@code @RestApplication} and extends a superinterface carrying, one per row,
      * {@code @RestApplication(name = "other", ...)}, the test-source {@code @ApiDocs}, or an
      * info-only {@code @OpenAPIDefinition}; and the controls whose superinterface carries only
-     * {@code @Deprecated}, or (PIT G4) only {@code java.lang.annotation} types via an
+     * {@code @Deprecated}, or only {@code java.lang.annotation} types via an
      * annotation-type superinterface.
      *
      * <p>When: each component's {@code Set<RouterMount>} is resolved.
@@ -107,7 +107,7 @@ class ApplicationAnnotationBackstopTest {
     @MethodSource("honoredOnlyOnSuperinterfaceCases")
     @DisplayName("A runtime-retained honored-only annotation on a superinterface fails startup")
     void honoredOnlyAnnotationOnASuperinterfaceFailsStartup(BackstopCase testCase) {
-        runCase(testCase, "TP-014");
+        runCase(testCase, "honored-only");
     }
 
     private void runCase(BackstopCase testCase, String label) {
@@ -146,10 +146,10 @@ class ApplicationAnnotationBackstopTest {
     }
 
     /**
-     * TP-013's 11 rows: 7 failing (4 on the declaring interface, 2 on a superinterface, 1 inactive
+     * The 11 allow-list rows: 7 failing (4 on the declaring interface, 2 on a superinterface, 1 inactive
      * repeat) and 4 composing controls.
      *
-     * @return the 11 cases, in contract order
+     * @return the 11 cases, in declaration order
      */
     private static Stream<BackstopCase> allowListCases() {
         String rolesAllowed = RolesAllowed.class.getName();
@@ -271,11 +271,11 @@ class ApplicationAnnotationBackstopTest {
     }
 
     /**
-     * TP-014's 5 rows: 3 failing (a superinterface carrying an annotation honored only on the
-     * declaring interface) and 2 composing controls (a {@code java.lang} type and, PIT G4, a
+     * The 5 honored-only rows: 3 failing (a superinterface carrying an annotation honored only on the
+     * declaring interface) and 2 composing controls (a {@code java.lang} type and, a
      * {@code java.lang.annotation} type reached through an annotation-type superinterface).
      *
-     * @return the 5 cases, in contract order
+     * @return the 5 cases, in declaration order
      */
     private static Stream<BackstopCase> honoredOnlyOnSuperinterfaceCases() {
         return Stream.of(
@@ -332,7 +332,7 @@ class ApplicationAnnotationBackstopTest {
     }
 
     /**
-     * One TP-013/TP-014 row.
+     * One row.
      *
      * @param name             the case's display name
      * @param declaringType    the declaring interface to register

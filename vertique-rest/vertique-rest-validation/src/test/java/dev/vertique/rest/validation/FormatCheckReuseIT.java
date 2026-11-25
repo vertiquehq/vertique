@@ -50,72 +50,63 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-005. Over a real HTTP round trip through the {@code
- * web-validation} gate, on a {@link MountFixtures#validatorBackedMount validator-backed mount}: a body
- * whose DTO carries Hibernate Validator's {@code @URL} (rendered {@code format: uri} plus the composed
- * {@code @Pattern}'s {@code allOf} entries by T004's {@code MetadataConstraintSource} supplement)
- * accepts a 3,000-character well-formed value and rejects a malformed one as a format violation,
- * never a stack overflow, and rejects a 4,097-character well-formed value as T004's per-string {@code
- * patternInputLength} bound: {@code @URL} composes {@code @Pattern}, so the field is bounded and
- * counted by design and AC-020.3's bounded-amendment clause governs it (coordinator ruling E21); a
- * body whose DTO
- * carries {@code @Schema(format = "url")} judges a slow-for-the-engine value ({@link #SLOW_URL}) and a
- * link-local address within a bounded request timeout, preserving the engine's private-range filtering
- * (C-FORMAT's {@code url} rule).
+ * Over a real HTTP round trip through the {@code web-validation} gate, on a {@link
+ * MountFixtures#validatorBackedMount validator-backed mount}: a body whose DTO carries Hibernate
+ * Validator's {@code @URL} (rendered {@code format: uri} plus the composed {@code @Pattern}'s {@code
+ * allOf} entries by the {@code MetadataConstraintSource} supplement) accepts a 3,000-character
+ * well-formed value and rejects a malformed one as a format violation, never a stack overflow, and
+ * rejects a 4,097-character well-formed value as the per-string {@code patternInputLength} bound:
+ * {@code @URL} composes {@code @Pattern}, so the field is bounded and counted by design. A body
+ * whose DTO carries {@code @Schema(format = "url")} judges a slow-for-the-engine value ({@link
+ * #SLOW_URL}) and a link-local address within a bounded request timeout, preserving the engine's
+ * private-range filtering for the {@code url} format.
  *
- * <p><strong>Expected initial result (behavior-change, red at T004's head, {@code 76e42141}).</strong>
- * The unmodified engine's {@code uri} expression overflows the stack near 3,000 characters (S-001), so
- * the 3,000-character {@code link} row is expected red there (this class records the observed response
- * rather than asserting a specific failure shape, since an overflow's exact HTTP symptom is not itself
- * part of the contract). The 4,097-character {@code link} row's corrected oracle (coordinator ruling
- * E21: T004's per-string {@code patternInputLength} bound, since {@code @URL} composes {@code
- * @Pattern}) already holds at this head in isolation, but this class's overall expected initial result
- * stays red here regardless, because {@link #SLOW_URL} aborts the method with a timeout before the
- * final {@code assertAll} runs. {@link #SLOW_URL} is constructed so the unmodified {@code
- * url} expression takes far longer than the request timeout to decide it (about 82 s measured on a 1
- * MB-stack thread, L02), so that row is expected red by timeout there — its own Maven invocation, since
- * the server's event loop keeps computing after the client gives up (T004's {@code
- * PatternInputBoundIT} cleanup note). The short invalid {@code link} value and the link-local {@code
- * site} address are already rejected at T004's head (the engine still decides {@code uri}/{@code url}
- * for short values), so those rows, and the ones they act as oracles for, characterize rather than
- * change at that baseline.
+ * <p>Without format-check reuse, the engine's {@code uri} expression overflows the stack near 3,000
+ * characters, so the 3,000-character {@code link} row would fail (this class records the observed
+ * response rather than asserting a specific failure shape, since an overflow's exact HTTP symptom is
+ * not itself part of the contract). {@link #SLOW_URL} is constructed so that the engine's {@code
+ * url} expression takes far longer than the request timeout to decide it (about 82 s measured on a
+ * 1 MB-stack thread), so that row would fail by timeout, and the server's event loop keeps computing
+ * after the client gives up (see the cleanup note in {@code PatternInputBoundIT}). The short invalid
+ * {@code link} value and the link-local {@code site} address are rejected either way (the engine
+ * still decides {@code uri}/{@code url} for short values), so those rows, and the ones they act as
+ * oracles for, characterize behavior rather than change it.
  *
- * <p>The {@code post}/{@code start} helpers and the {@link Reply} record are copied from T004's {@code
- * PatternInputBoundIT} ({@code start} at line 558, {@code post} at line 574 there, both private) rather
- * than shared, per the coordinator's ruling E5: T004's tests are not edited, and the new tests never
- * reference T004's private members.
+ * <p>The {@code post}/{@code start} helpers and the {@link Reply} record are copied from {@code
+ * PatternInputBoundIT} (both private there) rather than shared, so the two test classes stay
+ * independent and never reference each other's private members.
  *
  * <p>Requests are issued through a {@link WebClient}, which aggregates the response body before its
- * future completes (issue #167).
+ * future completes.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class FormatCheckReuseIT {
 
     /**
-     * {@code LONG_URI} (the contract's recurring value): 3,000 characters, a valid absolute URI and URL,
-     * near which the engine's {@code uri} expression overflows a 1 MB stack (S-001).
+     * {@code LONG_URI}: 3,000 characters, a valid absolute URI and URL,
+     * near which the engine's {@code uri} expression overflows a 1 MB stack.
      */
     private static final String LONG_URI = "https://example.com/" + "a".repeat(2980);
 
     /**
-     * {@code SLOW_URL} (L02): a 3,000-character single-label host the unmodified {@code url} expression
+     * {@code SLOW_URL}: a 3,000-character single-label host the engine's own {@code url} expression
      * takes about 82 s to judge on a 1 MB-stack thread (measured 81,812 ms), far longer than {@link
-     * #REQUEST_TIMEOUT_SECONDS}. C-FORMAT's recorded verdict is invalid (no dot in the host), equal to
-     * the engine's.
+     * #REQUEST_TIMEOUT_SECONDS}. The reference verdict is invalid (no dot in the host), equal to the
+     * engine's.
      */
     private static final String SLOW_URL = "http://" + "a".repeat(2993);
 
     /**
-     * E20's short invalid oracle for {@code url}, reused here as the calibration value for {@code
-     * site}'s format-violation detail: rejected by both the engine and C-FORMAT.
+     * A short invalid oracle for {@code url}, used as the calibration value for {@code site}'s
+     * format-violation detail: rejected by both the engine and the reference verdict.
      */
     private static final String SHORT_INVALID_SITE = "http://a b";
 
     /** A run of characters no response may contain: a fragment of every long value this class posts. */
     private static final String A_RUN = "a".repeat(16);
 
-    /** How long each request is awaited: bounds {@link #SLOW_URL}'s red run without hanging the client. */
+    /** How long each request is awaited: bounds {@link #SLOW_URL}'s run without hanging the client. */
     private static final long REQUEST_TIMEOUT_SECONDS = 10;
 
     private static final Duration START_TIMEOUT = Duration.ofSeconds(15);
@@ -126,7 +117,7 @@ public class FormatCheckReuseIT {
 
     /**
      * Bootstrapped with {@link ParameterMessageInterpolator}, matching {@code RestTestValidatorModule}'s
-     * construction (the design's no-EL finding): built directly here, rather than through the mount's own
+     * construction (which needs no expression language): built directly here, rather than through the mount's own
      * Dagger graph, so the Given check below can generate a schema exactly as the validator-backed mount
      * does without exposing a {@link Validator} singleton from the component.
      */
@@ -156,8 +147,8 @@ public class FormatCheckReuseIT {
     }
 
     /**
-     * Closes the {@link WebClient} and then every server the test started. A {@link #SLOW_URL} red run
-     * leaves the server's event loop busy well past this method's own bounded wait; the close simply
+     * Closes the {@link WebClient} and then every server the test started. A {@link #SLOW_URL} run
+     * without format-check reuse leaves the server's event loop busy well past this method's own bounded wait; the close simply
      * times out rather than hanging the JVM indefinitely.
      *
      * @throws Exception when a server close fails or times out
@@ -174,20 +165,20 @@ public class FormatCheckReuseIT {
         servers.clear();
     }
 
-    // --- TP-005 ---
+    // --- @URL and url values over HTTP ---
 
     /**
-     * TP-005 (AC-020.3). See the class Javadoc for the full Given/When/Then and the expected initial
-     * (red) result.
+     * Over HTTP, {@code @URL} and {@code url} values are judged without overflow or runaway time. See
+     * the class Javadoc for the full scenario.
      *
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName("TP-005: over HTTP, @URL and url values are judged without overflow or runaway time")
+    @DisplayName("over HTTP, @URL and url values are judged without overflow or runaway time")
     void uriAndUrlFormatsOverHttp() throws Exception {
         assertAll(
                 "the Given: the generated body schemas carry format: uri at link (with @URL's composed"
-                        + " @Pattern allOf entries, ruling E21) and format: url at site",
+                        + " @Pattern allOf entries) and format: url at site",
                 () -> assertEquals("uri", schemaFormatOf(LinkBody.class, "link"), "LinkBody's link member"),
                 () -> assertEquals(
                         new JsonArray()
@@ -195,7 +186,7 @@ public class FormatCheckReuseIT {
                                 .add(new JsonObject().put("pattern", ".*")),
                         schemaMemberOf(LinkBody.class, "link").getJsonArray("allOf"),
                         "LinkBody's link member must carry @URL's composed @Pattern allOf entries"
-                                + " (ruling E21): they are why T004's per-string pattern-input bound"
+                                + ": they are why the per-string pattern-input bound"
                                 + " applies to link despite format: uri being unbounded on its own"),
                 () -> assertEquals("url", schemaFormatOf(SiteBody.class, "site"), "SiteBody's site member"));
 
@@ -226,12 +217,12 @@ public class FormatCheckReuseIT {
                 siteBody("http://169.254.169.254/latest/meta-data/"),
                 REQUEST_TIMEOUT_SECONDS);
 
-        // SLOW_URL last (E11): its baseline red leaves the server's event loop busy well past this
+        // SLOW_URL last: its slow decision leaves the server's event loop busy well past this
         // request's own timeout.
         Reply slowUrl = post(port, "/url-format/site", siteBody(SLOW_URL), REQUEST_TIMEOUT_SECONDS);
 
         assertAll(
-                "AC-020.3",
+                "the format checks are judged over HTTP",
                 () -> assertEquals(
                         200,
                         longUri.status(),
@@ -253,10 +244,9 @@ public class FormatCheckReuseIT {
                         "the malformed value must never be echoed; body: " + abbreviate(spacedLongUri.body())),
                 () -> assertSingleBoundDetail(
                         overLongLink,
-                        "AC-020.3's bounded-amendment clause (coordinator ruling E21): @URL composes"
-                                + " @Pattern, so the 4,097-character value is T004's per-string"
-                                + " patternInputLength bound like any other patterned string, not"
-                                + " AC-020.3's unbounded-uri clause; body: " + abbreviate(overLongLink.body())),
+                        "@URL composes @Pattern, so the 4,097-character value is bounded by the per-string"
+                                + " patternInputLength bound like any other patterned string, not left"
+                                + " unbounded as a bare uri would be; body: " + abbreviate(overLongLink.body())),
                 () -> assertFalse(
                         overLongLink.body().contains(A_RUN),
                         "the over-long value must never be echoed; body: " + abbreviate(overLongLink.body())),
@@ -268,7 +258,7 @@ public class FormatCheckReuseIT {
                 () -> assertEquals(
                         400,
                         slowUrl.status(),
-                        "SLOW_URL's recorded C-FORMAT verdict is invalid (a single-label host), and it must be"
+                        "SLOW_URL's reference verdict is invalid (a single-label host), and it must be"
                                 + " answered within the request timeout; body: " + abbreviate(slowUrl.body())),
                 () -> assertEquals(
                         400,
@@ -288,7 +278,7 @@ public class FormatCheckReuseIT {
     /**
      * Asserts that {@code actual} and {@code oracle} each carry exactly one detail and that {@code
      * actual}'s detail equals {@code oracle}'s in {@code path}, {@code location}, {@code type}, and
-     * {@code detail} — the gate's fixed, value-free format-violation detail (T004's {@code
+     * {@code detail} — the gate's fixed, value-free format-violation detail (from {@code
      * resolveConstraintArgs}), which must not depend on which invalid value produced it.
      *
      * @param actual  the reply under test
@@ -324,9 +314,9 @@ public class FormatCheckReuseIT {
      * Asserts a 400 whose {@code errors} array holds exactly one value-free {@code
      * patternInputLength} detail bounding the body at {@code jaxrs.validationPatternMaxChars}'s
      * default (4,096 characters): {@code pointer} {@code ""}, {@code location} {@code "body"}, {@code
-     * type} {@code patternInputLength}, and {@code args} {@code {"maxChars": 4096}} — T004's
+     * type} {@code patternInputLength}, and {@code args} {@code {"maxChars": 4096}} — the
      * per-string bound detail (helper copied from {@code PatternInputBoundIT#assertSingleBoundDetail},
-     * private there, per E5).
+     * private there).
      *
      * @param reply   the reply under test
      * @param message the assertion group's message
@@ -348,7 +338,7 @@ public class FormatCheckReuseIT {
     /**
      * Returns the body schema {@link AnnotationSchemaSource} generates for {@code property} of {@code
      * dto} under the {@code vertique} floor profile, with {@link #VALIDATOR} present — the same
-     * generator the validator-backed mount wires through Dagger (T004's {@code
+     * generator the validator-backed mount wires through Dagger (including the {@code
      * MetadataConstraintSource} supplement).
      *
      * @param dto      the body type
@@ -464,7 +454,7 @@ public class FormatCheckReuseIT {
     // --- Resources and bodies ---
 
     /**
-     * TP-005: a body carrying Hibernate Validator's {@code @URL}, which T004's {@code
+     * A body carrying Hibernate Validator's {@code @URL}, which the {@code
      * MetadataConstraintSource} supplement renders as {@code format: uri}.
      */
     public static class LinkBody {
@@ -498,7 +488,7 @@ public class FormatCheckReuseIT {
         }
     }
 
-    /** TP-005: a body carrying {@code @Schema(format = "url")}. */
+    /** A body carrying {@code @Schema(format = "url")}. */
     public static class SiteBody {
 
         /** The url-formatted member. */

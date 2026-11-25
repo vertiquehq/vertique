@@ -30,11 +30,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R03 TP-001 — {@code shouldMatchRestParityOnTheSharedCorpus}, REST half.
+ * The REST half of the cross-transport parity claim {@code shouldMatchRestParityOnTheSharedCorpus}.
  *
  * <p>Runs {@link CrossTransportInputCorpus#rawInput()} through the real REST input-processing
  * boundary — {@link ParameterExtractor#extractArguments}, the exact production method the reflective
- * dispatch path calls per request (FR-024), constructed the same way {@code ParameterExtractorTest}
+ * dispatch path calls per request, constructed the same way {@code ParameterExtractorTest}
  * does — for a body parameter typed as the <strong>shared</strong> {@link
  * CrossTransportFixtureLevel1} corpus record, not a locally re-declared lookalike. Asserts the
  * resulting materialized body equals the corpus's shared {@code expectedProcessedInput()}.

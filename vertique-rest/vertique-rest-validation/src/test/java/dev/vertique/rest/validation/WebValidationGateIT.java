@@ -57,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). The repeated-header test asserts on the echoed body alone, so a silently
+ * is correct. The repeated-header test asserts on the echoed body alone, so a silently
  * emptied body would fail it for a reason unrelated to the binding rule under test. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */

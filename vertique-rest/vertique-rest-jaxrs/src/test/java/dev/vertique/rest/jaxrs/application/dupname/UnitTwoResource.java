@@ -11,7 +11,7 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-008's resource for {@link UnitTwoApi} and {@link UnitTwoRenamedApi}, counting its
+ * The resource for {@link UnitTwoApi} and {@link UnitTwoRenamedApi}, counting its
  * constructions so the test can assert no catalog entry or manual contribution is constructed
  * before a duplicate-name failure.
  */

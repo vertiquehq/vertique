@@ -51,10 +51,10 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T006's integration proofs, built from {@link PublicationComponents}: every JAX-RS mount publishes
- * exactly once (TP-001), a hook exception or failed future fails startup while a failed
- * registration never publishes (TP-006), and with no hook or no detail requested, routing and
- * schema-source calls are unchanged (TP-007, INV-1).
+ * Integration proofs for operation publication, built from {@link PublicationComponents}: every JAX-RS mount publishes
+ * exactly once, a hook exception or failed future fails startup while a failed
+ * registration never publishes, and with no hook or no detail requested, routing and
+ * schema-source calls are unchanged.
  *
  * <p>One class-scoped {@link Vertx} and {@link WebClient}; each test undeploys every deployment it
  * starts and clears the {@code vertique} local map's {@code http.port} entry before returning
@@ -107,7 +107,7 @@ public class OperationPublicationDeploymentIT {
         vertx.sharedData().getLocalMap(LOCAL_MAP_NAME).remove(HTTP_PORT_KEY);
     }
 
-    // --- TP-001 ---
+    // --- every mount publishes once ---
 
     @Test
     @DisplayName("Every JAX-RS mount publishes exactly once, naming its application when it has one")
@@ -146,7 +146,7 @@ public class OperationPublicationDeploymentIT {
             assertNoDetail(mgmtMount);
 
             // The empty mount publishes zero operations with the configured strategyId, and null
-            // identity like every non-application mount (S6-007).
+            // identity like every non-application mount.
             MountPublication emptyMount =
                     zeroHook.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH);
             assertEquals("jaxrs:" + PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH, emptyMount.mountId());
@@ -170,7 +170,7 @@ public class OperationPublicationDeploymentIT {
                     zeroRecorder.eventsFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH));
         }
 
-        // Given: the declared-applications composition, T023's ported unitb declarations, both
+        // Given: the declared-applications composition, the unitb declarations, both
         // applications active.
         JsonObject declaredConfig = baseConfig(
                 "unitb.publicApplication.active", true,
@@ -209,14 +209,14 @@ public class OperationPublicationDeploymentIT {
         }
     }
 
-    // --- TP-006 ---
+    // --- startup failures and failed registrations ---
 
     @Test
     @DisplayName("A sink exception or failed future fails startup; a failed registration never publishes")
     void hookExceptionFailsStartup() {
         JsonObject config = baseConfig();
 
-        // E12: rows (a), (b), and (c) are evaluated independently.
+        // Rows (a), (b), and (c) are evaluated independently.
         assertAll(
                 "a throwing sink, a duplicate operationId, and a failing-future sink",
                 () -> verifyThrowingPublicationHookRejectsMgmtMount(config),
@@ -239,8 +239,7 @@ public class OperationPublicationDeploymentIT {
 
     private void verifyDuplicateOperationIdNeverPublishes(JsonObject config) throws Exception {
         // Given: the same mounts, a recording hook, and a second /api/mgmt/* resource declaring a
-        // duplicate operation id (guard: green at the staged baseline and after implementation —
-        // duplicate-operationId detection predates T006).
+        // duplicate operation id (duplicate-operationId detection is independent of publication).
         PublicationComponents.DuplicateOperationComponent component = duplicateOperationComponent(config);
 
         // When: the composition is deployed.
@@ -256,7 +255,7 @@ public class OperationPublicationDeploymentIT {
 
     private void verifyFailingFutureRejectsMgmtMount(JsonObject config) throws Exception {
         // Given: the zero-declaration composition with a hook whose mountBuilt returns a failed future for
-        // /api/mgmt/*, and TP-001's counting MountCustomizer.
+        // /api/mgmt/*, and the counting MountCustomizer.
         RestConfigurationException failure = new RestConfigurationException("sink failed /api/mgmt/*");
         PublicationComponents.FailingFuturePublicationHookComponent component =
                 failingFutureHookComponent(config, failure);
@@ -273,10 +272,10 @@ public class OperationPublicationDeploymentIT {
                 .noneMatch(p -> p.equals(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH)));
     }
 
-    // --- TP-007 ---
+    // --- unchanged behaviour without a sink or detail ---
 
     /**
-     * The fixed request table TP-007 sends to every build: one success per mount that has
+     * The fixed request table sent to every build: one success per mount that has
      * operations (the default legacy mount, the hand-built {@code /api/mgmt/*} mount twice, and the
      * non-JAX-RS mount twice), one {@code 400} the mgmt resource itself returns, one {@code 404}
      * against an undeclared path, one {@code 405} against an existing path with an unsupported
@@ -360,7 +359,7 @@ public class OperationPublicationDeploymentIT {
         return new ResponseTriple(response.statusCode(), response.getHeader("Content-Type"), response.bodyAsString());
     }
 
-    /** One row of TP-007's fixed request table. */
+    /** One row of the fixed request table. */
     private record RequestSpec(String name, HttpMethod method, String path) {}
 
     /** One request's observed (status, Content-Type, body) triple. */
@@ -417,8 +416,8 @@ public class OperationPublicationDeploymentIT {
     }
 
     /**
-     * Asserts every operation of {@code publication} carries a {@code null} {@code detail} (S6-007:
-     * looped over every operation, rather than checked on one mount only).
+     * Asserts every operation of {@code publication} carries a {@code null} {@code detail} (looped over every operation,
+     * rather than checked on one mount only).
      *
      * @param publication the publication to check
      */

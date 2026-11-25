@@ -73,24 +73,24 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * Proves T004's rest-jaxrs {@code MountCompositionValidator} contribution under real,
+ * Proves the rest-jaxrs {@code MountCompositionValidator} contribution under real,
  * loopback-bound {@link dev.vertique.rest.core.router.HttpVerticle HttpVerticle} deployments:
- * TP-004, naming a hand-built JAX-RS mount that conflicts with a declared application, or one
- * that does not, or no application at all; TP-005, the cross-mount operationId rule (operationIds
+ * path conflicts, naming a hand-built JAX-RS mount that conflicts with a declared application, or one
+ * that does not, or no application at all; the cross-mount operationId rule (operationIds
  * scoped per mount, refused across two hand-built mounts or across mounts sharing one contract
- * location under a contract-driven strategy) and its shared-id warning; and TP-006,
+ * location under a contract-driven strategy) and its shared-id warning; and the validated mark,
  * {@code createRouter}'s refusal of an application mount no composition validator marked valid.
  *
- * <p>Every case is one named nested Dagger component: TP-004's from
- * {@link ConflictDeploymentComponents}, TP-005's from {@link OperationIdComponents}, TP-006's
- * from {@link ValidatedMarkComponents}. The {@link #deploy} helper bounds a synchronously
- * escaping {@link Throwable} the way {@code JaxRsApplicationDeploymentIT} does (R10), turning it
+ * <p>Every case is one named nested Dagger component: the path-conflict cases from
+ * {@link ConflictDeploymentComponents}, the operationId cases from {@link OperationIdComponents}, the validated-mark
+ * cases from {@link ValidatedMarkComponents}. The {@link #deploy} helper bounds a synchronously
+ * escaping {@link Throwable} the way {@code JaxRsApplicationDeploymentIT} does, turning it
  * into a failed {@link Future} instead of letting it propagate out of
  * {@code vertx.deployVerticle(...)}.
  *
  * <p>{@code HttpVerticle}'s existing containment-overlap warning is captured by its fully
  * qualified logger name, {@link #HTTP_VERTICLE_LOGGER_NAME}, because a captured logger is looked
- * up by name (R2), never by class reference to a class this test does not otherwise depend on.
+ * up by name, never by class reference to a class this test does not otherwise depend on.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -98,7 +98,7 @@ public class JaxRsApplicationMountConflictIT {
 
     private static final org.slf4j.Logger LOG = LoggerFactory.getLogger(JaxRsApplicationMountConflictIT.class);
 
-    /** {@code HttpVerticle}'s fully qualified logger name, captured by name per R2. */
+    /** {@code HttpVerticle}'s fully qualified logger name, captured by name. */
     private static final String HTTP_VERTICLE_LOGGER_NAME = "dev.vertique.rest.core.router.HttpVerticle";
 
     /** The mount composition validator's fully qualified logger name; the class is package-private. */
@@ -148,17 +148,17 @@ public class JaxRsApplicationMountConflictIT {
         validatorLogger.setLevel(previousValidatorLevel);
     }
 
-    // --- TP-004 ---
+    // --- path conflicts ---
 
     /**
-     * The reason fragment a genuine literal path overlap's failure must contain (G2-03): cases (a),
+     * The reason fragment a genuine literal path overlap's failure must contain: cases (a),
      * (e), and (f), where {@code JaxRsMountPaths.conflict} holds between the application's and the
      * hand-built mount's paths.
      */
     private static final String OVERLAP_CONFLICT_REASON = "their mount paths overlap";
 
     /**
-     * The reason fragment a router-pattern-only conflict's failure must contain (G2-03): case (d),
+     * The reason fragment a router-pattern-only conflict's failure must contain: case (d),
      * where the hand-built mount's path is a router pattern that conflicts with every application
      * regardless of any literal prefix relation, so the failure must not claim a literal overlap.
      */
@@ -181,7 +181,7 @@ public class JaxRsApplicationMountConflictIT {
         assertTrue(
                 outcome.succeeded(),
                 () -> testCase.name() + ": deployment must succeed: " + describe(outcome.failure()));
-        LOG.info("TP-004 {} deployed on port {}", testCase.name(), outcome.port());
+        LOG.info("path conflict {} deployed on port {}", testCase.name(), outcome.port());
 
         switch (testCase.id()) {
             case B -> assertPublicPublicityBothServe(vertx, outcome.intPort());
@@ -192,16 +192,15 @@ public class JaxRsApplicationMountConflictIT {
 
     /**
      * Asserts a conflicting case's shared failure shape: the deployment fails with the existing
-     * {@code IllegalStateException("Invalid mount configuration:...")} (C-SPI's Start sequence,
-     * step 3) naming every expected fragment, both spies stay at {@code 0}, and no
-     * {@code http.port} is published.
+     * {@code IllegalStateException("Invalid mount configuration:...")} naming
+     * every expected fragment, both spies stay at {@code 0}, and no {@code http.port} is published.
      *
      * @param testCase the failing case
      * @param vertx    the test's {@link Vertx} instance
      * @param outcome  the deployment outcome
      */
     private void assertConflictFailure(Case testCase, Vertx vertx, DeployOutcome outcome) {
-        assertConflictFailureShape("TP-004", testCase.name(), testCase.expectedFragments(), vertx, outcome);
+        assertConflictFailureShape("path conflict", testCase.name(), testCase.expectedFragments(), vertx, outcome);
     }
 
     /**
@@ -244,7 +243,7 @@ public class JaxRsApplicationMountConflictIT {
                 .filter(message -> message.contains(LegacyOuterMountModule.MOUNT_PATH)
                         && message.contains(LegacyReportsMountModule.MOUNT_PATH))
                 .toList();
-        LOG.info("TP-004 (c) captured overlap warning(s): {}", overlapWarnings);
+        LOG.info("path conflict (c) captured overlap warning(s): {}", overlapWarnings);
         assertEquals(
                 1,
                 overlapWarnings.size(),
@@ -252,10 +251,10 @@ public class JaxRsApplicationMountConflictIT {
                         + "unchanged: " + overlapWarnings);
     }
 
-    // --- TP-005 ---
+    // --- operationId conflicts ---
 
     /**
-     * The operationId every TP-005 fixture method named {@code list} carries by default (no fixture
+     * The operationId every operationId-conflict fixture method named {@code list} carries by default (no fixture
      * uses an explicit {@code @Operation}), asserted as one of the message facts a rejected case's
      * failure must name.
      */
@@ -280,7 +279,7 @@ public class JaxRsApplicationMountConflictIT {
         assertTrue(
                 outcome.succeeded(),
                 () -> testCase.name() + ": deployment must succeed: " + describe(outcome.failure()));
-        LOG.info("TP-005 {} deployed on port {}", testCase.name(), outcome.port());
+        LOG.info("operationId conflict {} deployed on port {}", testCase.name(), outcome.port());
 
         List<String> warnings = sharedIdWarnings();
         if (testCase.expectedWarningFragments().isEmpty()) {
@@ -312,9 +311,9 @@ public class JaxRsApplicationMountConflictIT {
     }
 
     /**
-     * Asserts a TP-005 conflicting case's shared failure shape: the deployment fails with the
-     * existing {@code IllegalStateException("Invalid mount configuration:...")} shape (C-SPI's
-     * Start sequence, step 3) naming every expected fragment — both operations' normalized owner
+     * Asserts an operationId-conflicting case's shared failure shape: the deployment fails with the
+     * existing {@code IllegalStateException("Invalid mount configuration:...")} shape (the start
+     * sequence's mount validation) naming every expected fragment — both operations' normalized owner
      * class and the shared method name, and both quoted mount paths — both spies stay at {@code 0},
      * and no {@code http.port} is published.
      *
@@ -323,26 +322,27 @@ public class JaxRsApplicationMountConflictIT {
      * @param outcome  the deployment outcome
      */
     private void assertOperationIdConflictFailure(OperationIdCase testCase, Vertx vertx, DeployOutcome outcome) {
-        assertConflictFailureShape("TP-005", testCase.name(), testCase.expectedFragments(), vertx, outcome);
+        assertConflictFailureShape(
+                "operationId conflict", testCase.name(), testCase.expectedFragments(), vertx, outcome);
     }
 
     /**
-     * Asserts the failure shape shared by every TP-004 and TP-005 rejected case: the deployment
+     * Asserts the failure shape shared by every path-conflict and operationId-conflict rejected case: the deployment
      * fails with the existing {@code IllegalStateException("Invalid mount configuration:...")}
-     * (C-SPI's Start sequence, step 3) naming every expected fragment, both spies stay at
+     * naming every expected fragment, both spies stay at
      * {@code 0}, and no {@code http.port} is published.
      *
-     * @param tpLabel           the test-plan label ("TP-004" or "TP-005") the failure is logged under
+     * @param groupLabel        the case-group label ("path conflict" or "operationId conflict") the failure is logged under
      * @param name              the failing case's display name
      * @param expectedFragments the message fragments the failure must contain
      * @param vertx             the test's {@link Vertx} instance
      * @param outcome           the deployment outcome
      */
     private void assertConflictFailureShape(
-            String tpLabel, String name, List<String> expectedFragments, Vertx vertx, DeployOutcome outcome) {
+            String groupLabel, String name, List<String> expectedFragments, Vertx vertx, DeployOutcome outcome) {
         assertTrue(outcome.failed(), () -> name + ": deployment must fail");
         Throwable cause = outcome.failure();
-        LOG.info("{} {} failure: {}", tpLabel, name, cause.getMessage());
+        LOG.info("{} {} failure: {}", groupLabel, name, cause.getMessage());
 
         assertInstanceOf(
                 IllegalStateException.class,
@@ -482,7 +482,7 @@ public class JaxRsApplicationMountConflictIT {
     }
 
     /**
-     * One TP-005 case: its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in
+     * One operationId-conflict case: its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in
      * {@code TEST-*.xml}), the component supplier building this case's composition, whether it must
      * fail with a cross-mount operationId collision, (for a conflicting case) the message fragments
      * the thrown {@link IllegalStateException} must contain, and (for a deploying case) the fragments
@@ -510,7 +510,7 @@ public class JaxRsApplicationMountConflictIT {
         }
     }
 
-    // --- TP-005 component-building helpers ---
+    // --- operationId-conflict component-building helpers ---
 
     private static OperationIdComponents.OneApplicationEachListResourceComponent
             oneApplicationEachListResourceComponent(JsonObject config) {
@@ -556,12 +556,12 @@ public class JaxRsApplicationMountConflictIT {
                 .create(config);
     }
 
-    // --- TP-006 ---
+    // --- validated mark ---
 
-    /** Fragment every TP-006 refusal message must contain (RL-2). */
+    /** Fragment every refusal message must contain. */
     private static final String WITHOUT_COMPOSITION_VALIDATORS_FRAGMENT = "without composition validators";
 
-    /** Fragment every TP-006 refusal message must contain (RL-2). */
+    /** Fragment every refusal message must contain. */
     private static final String FROM_DAGGER_FRAGMENT = "from Dagger";
 
     @ParameterizedTest(name = "{0}")
@@ -618,7 +618,7 @@ public class JaxRsApplicationMountConflictIT {
         for (MountCompositionValidator validator : component.mountCompositionValidators()) {
             violations.addAll(validator.validate(List.copyOf(sortedMounts)));
         }
-        LOG.info("TP-006 {} validator violations: {}", testCase.name(), violations);
+        LOG.info("validated mark {} validator violations: {}", testCase.name(), violations);
         assertFalse(
                 violations.isEmpty(),
                 () -> testCase.name()
@@ -629,7 +629,7 @@ public class JaxRsApplicationMountConflictIT {
                 RestConfigurationException.class,
                 () -> applicationMount.createRouter(vertx),
                 () -> testCase.name() + ": createRouter must refuse an application mount the validators rejected");
-        LOG.info("TP-006 {} createRouter refusal: {}", testCase.name(), ex.getMessage());
+        LOG.info("validated mark {} createRouter refusal: {}", testCase.name(), ex.getMessage());
         assertRefusalMessage(testCase.name(), ex.getMessage(), PublicApi.class);
     }
 
@@ -651,7 +651,7 @@ public class JaxRsApplicationMountConflictIT {
                 first.succeeded(),
                 () -> testCase.name() + ": composition 1 (Dagger-built HttpVerticle) must deploy: "
                         + describe(first.failure()));
-        LOG.info("TP-006 {} composition 1 deployed on port {}", testCase.name(), first.port());
+        LOG.info("validated mark {} composition 1 deployed on port {}", testCase.name(), first.port());
 
         DeployOutcome second = deploy(vertx, () -> fiveArgumentVerticle(component.routerMounts()));
         assertTrue(
@@ -677,14 +677,14 @@ public class JaxRsApplicationMountConflictIT {
         assertNotNull(
                 refusal,
                 () -> label + ": expected a RestConfigurationException in the failure chain: " + describe(failure));
-        LOG.info("TP-006 {} refusal: {}", label, refusal.getMessage());
+        LOG.info("validated mark {} refusal: {}", label, refusal.getMessage());
         assertRefusalMessage(label, refusal.getMessage(), applicationType);
     }
 
     /**
      * Asserts that {@code message} names {@code applicationType}, the cause
      * ({@link #WITHOUT_COMPOSITION_VALIDATORS_FRAGMENT}), and the remedy
-     * ({@link #FROM_DAGGER_FRAGMENT}) (RL-2).
+     * ({@link #FROM_DAGGER_FRAGMENT}).
      *
      * @param label           the case name, prefixed to every assertion message
      * @param message         the refusal's message
@@ -736,8 +736,8 @@ public class JaxRsApplicationMountConflictIT {
     /**
      * Sorts {@code mounts} into {@code HttpVerticle}'s own mounting order: phase ascending,
      * priority ascending, mount path ascending, order key ascending — the same
-     * {@link Comparator} {@code HttpVerticle.start} builds, reproduced here (RL-2 test
-     * readability) so case (b) can call the component's validators the same way
+     * {@link Comparator} {@code HttpVerticle.start} builds, reproduced here for test
+     * readability so case (b) can call the component's validators the same way
      * {@code HttpVerticle} does.
      *
      * @param mounts the mounts to sort
@@ -784,18 +784,18 @@ public class JaxRsApplicationMountConflictIT {
                 new HttpServerOptions().setHost("127.0.0.1").setPort(0), Set.of(), Set.of(), mounts, Set.of());
     }
 
-    // --- TP-006's four named cases ---
+    // --- validated-mark cases ---
 
     /**
-     * TP-006's four cases, named (a) to (d) per the contract's case list.
+     * The four cases, named (a) to (d).
      *
-     * @return the four TP-006 cases, in contract order
+     * @return the four validated-mark cases, in order
      */
     private static Stream<ValidatedMarkCase> validatedMarkCases() {
         JsonObject configA = deploymentConfig("unitb.publicApplication.active", true);
         JsonObject configB = deploymentConfig("unitb.publicApplication.active", true);
         JsonObject configC = deploymentConfig("unitb.publicApplication.active", true);
-        // R-004: (d) activates DisabledOnlyApi instead of reusing PublicApi, so its mount has zero
+        // (d) activates DisabledOnlyApi instead of reusing PublicApi, so its mount has zero
         // resources (its sole listed class, DisabledResource, is a catalog entry disabled by
         // default) — proving the refusal runs before the empty-mount early return, not merely for a
         // mount that also happens to carry resources.
@@ -828,7 +828,7 @@ public class JaxRsApplicationMountConflictIT {
                         DisabledOnlyApi.class));
     }
 
-    /** Identifies which lettered TP-006 case a {@link ValidatedMarkCase} is, for the test method's dispatch. */
+    /** Identifies which lettered validated-mark case a {@link ValidatedMarkCase} is, for the test method's dispatch. */
     private enum ValidatedMarkCaseId {
         A,
         B,
@@ -837,10 +837,10 @@ public class JaxRsApplicationMountConflictIT {
     }
 
     /**
-     * One TP-006 case: its id (used by the test method to dispatch the right assertion helper),
+     * One validated-mark case: its id (used by the test method to dispatch the right assertion helper),
      * its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in {@code TEST-*.xml}), the
      * deployment configuration its component's factory is bound to, and the declaring type its
-     * refusal (cases a and d) must name (R-004: case (d)'s differs from cases a and c's).
+     * refusal (cases a and d) must name (case (d)'s differs from cases a and c's).
      *
      * @param id              the case's letter
      * @param name            the case's display name
@@ -856,7 +856,7 @@ public class JaxRsApplicationMountConflictIT {
         }
     }
 
-    // --- TP-006 component-building helpers ---
+    // --- validated-mark component-building helpers ---
 
     private static ValidatedMarkComponents.PublicApplicationComponent publicApplicationComponent(JsonObject config) {
         return DaggerValidatedMarkComponents_PublicApplicationComponent.factory()
@@ -869,12 +869,12 @@ public class JaxRsApplicationMountConflictIT {
                 .create(config);
     }
 
-    // --- TP-004's six named cases ---
+    // --- path-conflict cases ---
 
     /**
-     * TP-004's six cases, named (a) to (f) per the contract's case list.
+     * The six cases, named (a) to (f).
      *
-     * @return the six TP-004 cases, in contract order
+     * @return the six path-conflict cases, in order
      */
     private static Stream<Case> conflictCases() {
         JsonObject configA = deploymentConfig("unitb.managementApplication.active", true);
@@ -935,7 +935,7 @@ public class JaxRsApplicationMountConflictIT {
                                 OVERLAP_CONFLICT_REASON)));
     }
 
-    /** Identifies which lettered TP-004 case a {@link Case} is, for the non-conflict cases' extra verification. */
+    /** Identifies which lettered path-conflict case a {@link Case} is, for the non-conflict cases' extra verification. */
     private enum CaseId {
         A,
         B,
@@ -946,7 +946,7 @@ public class JaxRsApplicationMountConflictIT {
     }
 
     /**
-     * One TP-004 case: its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in
+     * One path-conflict case: its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in
      * {@code TEST-*.xml}), the component supplier building this case's composition, whether it
      * must fail with a path conflict, and (for a conflicting case) the message fragments the
      * thrown {@link IllegalStateException} must contain.
@@ -1085,7 +1085,7 @@ public class JaxRsApplicationMountConflictIT {
     /**
      * Clears the published {@code http.port} shared-data entry, then deploys {@code supplier} and
      * returns the outcome: the published port on success, or the failure cause (including a
-     * synchronously escaping {@link Throwable}, per R10) on failure.
+     * synchronously escaping {@link Throwable}, as the deploy helper does) on failure.
      *
      * @param vertx    the test's {@link Vertx} instance
      * @param supplier creates a fresh {@link Verticle} instance
@@ -1113,7 +1113,7 @@ public class JaxRsApplicationMountConflictIT {
 
     /**
      * Bounds {@code vertx.deployVerticle(supplier, options)} against a synchronously escaping
-     * {@link Throwable} (R10): Vert.x catches only {@link Exception} around the supplier it
+     * {@link Throwable}: Vert.x catches only {@link Exception} around the supplier it
      * invokes while constructing verticle instances, so an unwrapped {@link Error} would otherwise
      * propagate out of this call instead of failing the returned {@link Future}.
      *

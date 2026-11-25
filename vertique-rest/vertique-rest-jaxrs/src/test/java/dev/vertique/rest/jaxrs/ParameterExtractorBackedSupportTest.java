@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * the corresponding delegation actually fires with the expected arguments and the result is
  * returned unchanged.
  *
- * <p>After slice 4 the generated-runtime SPI is fully neutral: {@code extractScalarParam} and
+ * <p>The generated-runtime SPI is fully neutral: {@code extractScalarParam} and
  * {@code materializeBean} take a {@link BoundRequest} (not a Vert.x {@code ValidatedRequest}), and
  * {@code deserializeBody} reads the bound request from the routing-context stash under
  * {@link BoundRequest#KEY_META_DATA_BOUND_REQUEST}.
@@ -380,7 +380,7 @@ class ParameterExtractorBackedSupportTest {
     /**
      * Verifies that {@link ParameterExtractorBackedSupport#resolveContext} throws
      * {@link RestContextUnavailableException} when no resolver in the chain handles the requested
-     * type (FR-REST-174).
+     * type.
      */
     @Test
     @DisplayName("resolveContext throws RestContextUnavailableException when no resolver matches")

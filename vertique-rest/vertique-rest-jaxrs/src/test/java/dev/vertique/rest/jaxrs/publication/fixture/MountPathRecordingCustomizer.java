@@ -10,8 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * T006 TP-006's counting {@link MountCustomizer} (in the spirit of TP-001's
- * {@link PublicationEventRecordingCustomizer}, kept standalone here since TP-006's compositions
+ * Counting {@link MountCustomizer} (in the spirit of
+ * {@link PublicationEventRecordingCustomizer}, kept standalone here since these compositions
  * never wire a {@link PublicationEventRecorder}-notifying sink or hook): records every mount path
  * {@code customize} was called for, in call order, so a test can prove a rejected or failed mount's
  * customizer never ran.

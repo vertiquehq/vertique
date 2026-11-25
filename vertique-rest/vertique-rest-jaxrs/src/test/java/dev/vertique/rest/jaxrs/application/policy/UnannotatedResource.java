@@ -10,9 +10,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T005 TP-002 case (a): an entirely unannotated JAX-RS resource — no {@code @PermitAll}, no
+ * Case (a): an entirely unannotated JAX-RS resource — no {@code @PermitAll}, no
  * {@code @SecurityRequirement}, no {@code @RequiresAction} — with two operations, so both are
- * implicit under C-POLICY (effective policy {@code None}, no security requirement sets, no
+ * implicit under the policy classification (effective policy {@code None}, no security requirement sets, no
  * resolved required action). {@link #mgmtItems()} and {@link #mgmtStatus()} are named after the
  * contract's example method names; their operationIds default to those method names, since neither
  * carries a Swagger {@code @Operation} annotation.

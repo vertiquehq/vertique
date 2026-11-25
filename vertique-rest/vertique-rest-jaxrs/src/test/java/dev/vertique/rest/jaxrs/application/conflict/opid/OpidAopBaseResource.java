@@ -9,7 +9,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (f) fixture: {@link OpidApis.OpidAopApi} lists this class as its resource,
+ * Operation-id conflict case (f) fixture: {@link OpidApis.OpidAopApi} lists this class as its resource,
  * but its only bound {@code @JaxRsResources} instance is
  * {@link OpidAopProxyResource}, the AOP-proxy-shaped direct subclass that overrides
  * {@link #list()} keeping this class's resource surface ({@code sameSurface}). Beside it,

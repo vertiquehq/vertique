@@ -10,7 +10,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-006's sole manual resource for {@link ViewAppD}. Never constructed: {@code d} is always
+ * Sole manual resource for {@link ViewAppD}. Never constructed: {@code d} is always
  * inactive in this proof, so it never mounts.
  */
 @Path("/view/d")

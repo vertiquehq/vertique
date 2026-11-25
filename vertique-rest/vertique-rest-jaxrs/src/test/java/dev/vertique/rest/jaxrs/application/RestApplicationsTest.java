@@ -31,13 +31,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves TP-006: {@link RestApplications} decides each declared application's identity, mount
+ * Proves that {@link RestApplications} decides each declared application's identity, mount
  * path, and effective OpenAPI contract location once per component — from the highest-precedence
  * source available (configuration, then the declaration's own annotation, then the global
  * default) — and resolves to the same instance on every subsequent resolution.
  *
  * <p>Application {@code c}'s path {@code "/"} conflicts with the active {@code a} and {@code b}
- * under rest-024's kept path-conflict rule (L00 ruling E1), so only the view — never {@code
+ * under the path-conflict rule, so only the view — never {@code
  * Set<RouterMount>} — is resolved on {@link ViewComponent1}, which declares all four applications.
  * The per-mount contract-location assertion instead runs on {@link ViewComponent2} ({@code a},
  * {@code b}, {@code d}) and {@link ViewComponent3} ({@code c}, {@code d}), neither of which
@@ -141,7 +141,7 @@ class RestApplicationsTest {
     /**
      * Declares all four applications {@code a}, {@code b}, {@code c}, and {@code d}. {@code c}'s
      * root path conflicts with {@code a} and {@code b}, so only {@link #restApplications()} is
-     * resolved on this component (L00 ruling E1).
+     * resolved on this component.
      */
     @Singleton
     @Component(

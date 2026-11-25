@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * T006 TP-001's recording {@link MountPublicationHook}: never wants detail, always succeeds,
+ * Recording {@link MountPublicationHook}: never wants detail, always succeeds,
  * records every {@link MountPublication} it receives, and forwards each {@code mountBuilt} call to
  * a shared {@link PublicationEventRecorder} so the per-mount event order
  * ({@code afterRouterCreated} → {@code mountBuilt} → {@code customize}) can be verified.

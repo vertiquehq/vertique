@@ -48,8 +48,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Dagger wiring tests proving that {@code RestModule}'s {@code @BindsOptionalOf} declaration for
- * the neutral {@link InputObjectProcessor} is satisfied by {@code SanitizationModule} (AC-INP-010,
- * REST-only): with the module installed the optional resolves present; without it, empty.
+ * the neutral {@link InputObjectProcessor} is satisfied by {@code SanitizationModule} (REST-only): with the module installed the optional resolves present; without it, empty.
  *
  * <p>The wired engine is then driven through the REST body path with a {@code @JsonProperty}-renamed
  * DTO, proving the composed stack — REST's Jackson projection plus the engine's per-field metadata

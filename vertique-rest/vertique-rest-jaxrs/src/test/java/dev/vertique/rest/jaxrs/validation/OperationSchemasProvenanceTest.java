@@ -17,7 +17,7 @@ import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 
 /**
- * Proves {@code OperationSchemas}' INTERNAL provenance carrier (C-CARRIER): the typed accessor
+ * Proves {@code OperationSchemas}' INTERNAL provenance carrier: the typed accessor
  * {@code bodySchemaProvenance(Class)} answers only for an instance of the requested type, the
  * two-argument {@code Builder#bodySchema(JsonObject, Object)} rejects either argument being
  * {@code null}, the existing one-argument form always leaves provenance empty (including after an

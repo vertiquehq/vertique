@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import java.util.List;
 
 /**
- * TP-006's registration and sole manual resource binding for {@link ViewAppD}: unconditionally
+ * Registration and sole manual resource binding for {@link ViewAppD}: unconditionally
  * inactive, carrying its own {@code openapiPath} {@code "d.yaml"}.
  */
 @Module

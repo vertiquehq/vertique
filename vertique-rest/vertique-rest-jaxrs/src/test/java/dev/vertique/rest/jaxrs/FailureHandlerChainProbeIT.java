@@ -25,14 +25,14 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * STEP-1 probe: confirms a per-route {@code failureHandler} that does NOT end the response and calls
+ * Probe: confirms a per-route {@code failureHandler} that does NOT end the response and calls
  * {@code ctx.next()} CHAINS to the router-level catch-all failure handler in Vert.x — the
  * pattern the production fix relies on (per-route handler stashes the route's decision, then defers
  * to the existing catch-all {@code handleFailure} to serialize the error body).
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * This probe asserts on the server-side {@code order} list rather than on the body, so the raw idiom is
  * latent rather than actively broken here — but a {@link WebClient} aggregates the response before
  * completing the send, which removes the trap for whoever next adds a body assertion. The response is

@@ -19,8 +19,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED tests for GitHub issue #162 slice 5: {@link ParamMeta}'s {@code Annotation[]}-based
- * convenience constructor must wrap {@code dev.vertique.core.codegen.ReflectiveParameterMetadata}
+ * Tests that {@link ParamMeta}'s {@code Annotation[]}-based
+ * convenience constructor wraps {@code dev.vertique.core.codegen.ReflectiveParameterMetadata}
  * (an {@link java.lang.reflect.AnnotatedElement}-based reflective view already proven by
  * {@code rest-client}'s {@code ClientInterfaceScanner}), not the jaxrs-local
  * {@code ReflectiveParameterMetadata} (a pre-captured {@code Annotation[]}-based view), so the

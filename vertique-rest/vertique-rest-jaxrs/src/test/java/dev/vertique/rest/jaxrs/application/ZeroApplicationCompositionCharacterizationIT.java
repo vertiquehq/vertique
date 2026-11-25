@@ -32,15 +32,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Characterizes today's zero-declaration composition under a real two-instance
- * {@link HttpVerticle} deployment: composition runs once per instance (plan pre-flight finding 1,
- * "composition runs once per {@code HttpVerticle} instance"), so the legacy-shaped and manual
+ * {@link HttpVerticle} deployment: composition runs once per instance (composition runs once per
+ * {@code HttpVerticle} instance), so the legacy-shaped and manual
  * resources construct once per instance, and the default mount serves the configured
- * {@code jaxrs.basePath} over loopback HTTP. This is the repository's first multi-instance
- * {@code HttpVerticle} deployment test (plan pre-flight finding 8).
+ * {@code jaxrs.basePath} over loopback HTTP. It deploys more than one
+ * {@code HttpVerticle} instance.
  *
- * <p>This suite is green at the rest-024 branch-start commit with no production change and stays
- * green at every later rest-024 task commit; later tasks never edit its assertions. A later red is
- * an FR-001 regression, not an authorized flip.
+ * <p>This suite pins the legacy zero-declaration behavior: a failure here is a regression in
+ * that behavior, not an expectation to be flipped.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

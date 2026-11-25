@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that {@link ResourceScanner} honours JAX-RS annotations declared on interfaces when the
- * concrete resource implementation carries no direct annotations of its own (closed issue #31).
+ * concrete resource implementation carries no direct annotations of its own.
  *
  * <p>The following annotation kinds are covered:
  *
@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
  *   <li>Class-level {@code @PermitAll} sourced from the interface</li>
  *   <li>Parameter {@code @PathParam} and {@code @DefaultValue} sourced from the interface</li>
  *   <li>Direct annotation on the concrete class overriding the interface annotation</li>
- *   <li>Interface-declared {@code @ValidateWith} — MEDIUM-3 regression</li>
+ *   <li>Interface-declared {@code @ValidateWith}</li>
  * </ul>
  */
 class ResourceScannerInterfaceBackedTest {
@@ -400,7 +400,7 @@ class ResourceScannerInterfaceBackedTest {
         }
     }
 
-    // --- @ValidateWith regression (MEDIUM-3) ---
+    // --- @ValidateWith regression ---
 
     /**
      * Marker interface used as a validation group in {@link ValidateWithApi}.
@@ -434,7 +434,7 @@ class ResourceScannerInterfaceBackedTest {
     }
 
     @Nested
-    @DisplayName("Interface-declared @ValidateWith — MEDIUM-3 regression")
+    @DisplayName("Interface-declared @ValidateWith regression")
     class InterfaceDeclaredValidateWith {
 
         @Test

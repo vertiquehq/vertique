@@ -12,7 +12,7 @@ import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
 
-/** TP-008's registration module for {@link UnitOneApi}, one simulated compilation unit. */
+/** The registration module for {@link UnitOneApi}, one simulated compilation unit. */
 @Module
 public final class UnitOneRegistrationModule {
 

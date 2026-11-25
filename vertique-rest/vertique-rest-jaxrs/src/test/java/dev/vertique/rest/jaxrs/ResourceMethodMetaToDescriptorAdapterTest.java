@@ -33,14 +33,14 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link ResourceMethodMetaToDescriptorAdapter}: the mapping from the internal
  * {@link ResourceMethodMeta} to the public {@link JaxRsOperationDescriptor}, with focus on
  * operationId resolution, and the descriptor's own {@code toString}, {@code equals} and
- * {@code hashCode}, which must never reach the application's resource instance (T003 TP-010).
+ * {@code hashCode}, which must never reach the application's resource instance.
  */
 class ResourceMethodMetaToDescriptorAdapterTest {
 
-    /** TP-010's expected compact rendering of the {@link HostileResource} descriptor. */
+    /** The expected compact rendering of the {@link HostileResource} descriptor. */
     private static final String HOSTILE_RENDERING = "GET /users/{id} (getUser)";
 
-    /** TP-010's expected rendering of the operation inside a completion event's {@code toString}. */
+    /** The expected rendering of the operation inside a completion event's {@code toString}. */
     private static final String EVENT_OPERATION_RENDERING = "getUser /users/{id}";
 
     /** Fixed event instants, so two events built from the same descriptor are equal. */
@@ -48,7 +48,7 @@ class ResourceMethodMetaToDescriptorAdapterTest {
 
     private static final Instant EVENT_END = Instant.parse("2026-01-01T00:00:01Z");
 
-    /** TP-010's hostile resource, created fresh (counters at zero) before every test. */
+    /** The hostile resource, created fresh (counters at zero) before every test. */
     private HostileResource hostileResource;
 
     @BeforeEach
@@ -91,7 +91,7 @@ class ResourceMethodMetaToDescriptorAdapterTest {
     }
 
     /**
-     * TP-010's fixture resource: one {@code @Operation(operationId = "getUser")} method, and a
+     * The hostile fixture resource: one {@code @Operation(operationId = "getUser")} method, and a
      * {@link #toString()}, {@link #equals(Object)} and {@link #hashCode()} that each count their calls
      * and throw {@link IllegalStateException}. Anything that logs, compares or hashes a descriptor or
      * event built on it and reaches this instance therefore both throws and leaves a nonzero counter.
@@ -150,7 +150,7 @@ class ResourceMethodMetaToDescriptorAdapterTest {
     }
 
     /**
-     * Builds TP-010's meta: {@link HostileResource#getUser()} as {@code GET /users/{id}}, operation id
+     * Builds the hostile resource's meta: {@link HostileResource#getUser()} as {@code GET /users/{id}}, operation id
      * {@code getUser}, with the method's own annotations, on the given hostile instance.
      *
      * @param resource the hostile resource instance the meta carries
@@ -232,7 +232,7 @@ class ResourceMethodMetaToDescriptorAdapterTest {
     }
 
     /**
-     * TP-010 (FR-011): a descriptor the adapter builds renders compactly, compares by identity and
+     * A descriptor the adapter builds renders compactly, compares by identity and
      * hashes by identity, and a completion event carrying it can be logged, compared and hashed, all
      * without ever reaching the application's resource instance. Two descriptors adapted from the
      * same meta are distinct: {@code d} and {@code d2}. Events {@code e1} and {@code e2} carry
@@ -300,7 +300,7 @@ class ResourceMethodMetaToDescriptorAdapterTest {
     }
 
     /**
-     * TP-010's event builder: a {@code GET /users/7} 200 completion event carrying {@code operation},
+     * The event builder: a {@code GET /users/7} 200 completion event carrying {@code operation},
      * with every other component fixed, so two events built with the same operation are equal.
      *
      * @param operation the event's operation

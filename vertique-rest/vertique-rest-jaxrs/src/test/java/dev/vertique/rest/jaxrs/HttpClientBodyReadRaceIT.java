@@ -69,7 +69,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class HttpClientBodyReadRaceIT {
 
-    /** Loopback host for both bind and dial; never a hostname (ADR-tracked loopback pinning). */
+    /** Loopback host for both bind and dial; never a hostname. */
     private static final String LOOPBACK = "127.0.0.1";
 
     /** Deliberately split across two writes plus the terminal end, so a partial read is detectable. */

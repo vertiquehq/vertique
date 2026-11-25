@@ -14,15 +14,15 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Compile-time-only Dagger component validating that the shared C-GEN-shaped fixture modules
+ * Compile-time-only Dagger component validating that the shared fixture modules, shaped like generated modules
  * ({@code unita}'s resources-only module, {@code unitb}'s applications-only module, and
- * {@link ManualResourceModule}) resolve against {@link RestModule}'s new
+ * {@link ManualResourceModule}) resolve against {@link RestModule}'s
  * {@code Set<GeneratedRestApplicationRegistration>} and {@code Set<GeneratedJaxRsResourceEntry>}
  * {@code @Multibinds} declarations, and against {@link ApplicationTestSupportModule}'s stand-ins.
  *
  * <p>This component has no test method: it is exercised only by annotation processing during
- * {@code mvn compile}/{@code test-compile}. Later lanes ({@code JaxRsApplicationCompositionTest}
- * and its sibling suites) may reuse this shape or replace it with their own components.
+ * {@code mvn compile}/{@code test-compile}. {@code JaxRsApplicationCompositionTest}
+ * and its sibling suites may reuse this shape or replace it with their own components.
  */
 @Singleton
 @Component(

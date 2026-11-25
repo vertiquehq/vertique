@@ -49,11 +49,11 @@ import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
 import dev.vertique.rest.jaxrs.application.unita.DisabledResource;
 import dev.vertique.rest.jaxrs.application.unita.ExtraResource;
 import dev.vertique.rest.jaxrs.application.unita.membership.AmbiguousResource;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case21Resource;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case21SubclassResource;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case22Resource;
-import dev.vertique.rest.jaxrs.application.unita.membership.Case22UnrelatedResource;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogResource;
+import dev.vertique.rest.jaxrs.application.unita.membership.HandWrittenEntryResource;
+import dev.vertique.rest.jaxrs.application.unita.membership.SubstitutedBindingResource;
+import dev.vertique.rest.jaxrs.application.unita.membership.SubstitutedBindingSubclassResource;
+import dev.vertique.rest.jaxrs.application.unita.membership.UnrelatedEntryResource;
 import dev.vertique.rest.jaxrs.application.unita.scoped.ScopedResource;
 import dev.vertique.rest.jaxrs.application.unitb.DiscoveryApi;
 import dev.vertique.rest.jaxrs.application.unitb.ManagementApi;
@@ -81,8 +81,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * Proves {@code JaxRsApplicationComposer}'s native-composition behavior: TP-001 to TP-005, TP-008,
- * and TP-015. The composer's logger is captured by its fully qualified name,
+ * Proves {@code JaxRsApplicationComposer}'s native-composition behavior. The composer's logger is captured by its fully qualified name,
  * {@link #COMPOSER_LOGGER_NAME}, because {@code JaxRsApplicationComposer} is package-private: this
  * test class, in the {@code application} subpackage, cannot reference it directly.
  */
@@ -94,21 +93,21 @@ class JaxRsApplicationCompositionTest {
     private static final String COMPOSER_LOGGER_NAME = "dev.vertique.rest.jaxrs.JaxRsApplicationComposer";
 
     /**
-     * TP-003's kind-check rows' declaring interfaces' package-qualified prefix, captured by name
+     * The kind-check rows' declaring interfaces' package-qualified prefix, captured by name
      * because {@code MembershipCaseApis} and its nested interfaces are package-private in a
      * different package ({@code application.unitb.membership}): this test class cannot reference
-     * them directly (R-001).
+     * them directly.
      */
     private static final String MEMBERSHIP_CASE_APIS_PREFIX =
             "dev.vertique.rest.jaxrs.application.unitb.membership.MembershipCaseApis$";
 
-    /** R-001: the failure header every composer violation exception carries. */
+    /** The failure header every composer violation exception carries. */
     private static final String INVALID_COMPOSITION_HEADER = "Invalid JAX-RS application composition:";
 
-    /** R-001: the reason fragment for the provider, feature, and dynamic-feature kind-check rows. */
+    /** The reason fragment for the provider, feature, and dynamic-feature kind-check rows. */
     private static final String PROVIDER_OR_FEATURE_REASON_FRAGMENT = "provider or feature type";
 
-    /** R-001: the reason fragment for the interface, abstract, and no-path kind-check rows. */
+    /** The reason fragment for the interface, abstract, and no-path kind-check rows. */
     private static final String NOT_CONCRETE_ROOT_RESOURCE_REASON_FRAGMENT = "not a concrete JAX-RS root resource";
 
     private Logger composerLogger;
@@ -145,7 +144,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * TP-001 — Explicit applications mount only their listed resources, named by their declaration.
+     * Explicit applications mount only their listed resources, named by their declaration.
      */
     @Test
     @DisplayName(
@@ -159,7 +158,7 @@ class JaxRsApplicationCompositionTest {
         Set<RouterMount> secondMounts = component.routerMounts();
 
         Map<String, JaxRsRouterMount> mounts = mountsByPath(firstMounts);
-        LOG.info("TP-001 mount paths: {}", mounts.keySet());
+        LOG.info("explicit mount paths: {}", mounts.keySet());
         assertEquals(Set.of("/api/public/*", "/api/mgmt/*"), mounts.keySet(), "exactly the two application mounts");
 
         assertEquals(
@@ -205,7 +204,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * TP-002 — Discovery selects everything enabled and must be sole (AC-024.5, AC-024.3).
+     * Discovery selects everything enabled and must be sole.
      */
     @Test
     @DisplayName(
@@ -216,7 +215,7 @@ class JaxRsApplicationCompositionTest {
         JsonObject soloConfig = config("unitb.discoveryApplication.active", true);
         Map<String, JaxRsRouterMount> soloMounts =
                 mountsByPath(discoverySoloComponent(soloConfig).routerMounts());
-        LOG.info("TP-002 (a) mount paths: {}", soloMounts.keySet());
+        LOG.info("discovery (a) mount paths: {}", soloMounts.keySet());
         assertEquals(Set.of(discoveryPath), soloMounts.keySet(), "exactly the discovery mount");
         assertEquals(
                 Set.of(CatalogResource.class, ExtraResource.class, BlobLikeResource.class),
@@ -238,7 +237,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * R-007, PIT G2: TP-002 rows (b)-(d)'s shared assertion. Resets the construction counters, runs
+     * Shared assertion for the discovery rows (b)-(d). Resets the construction counters, runs
      * the given (failing) configuration, and asserts the failure names {@code DiscoveryApi}'s
      * application name and declaring interface, every other declared registration
      * ({@code ManagementApi}, {@code PublicApi}), and the "sole" statement, raised before any catalog
@@ -256,7 +255,7 @@ class JaxRsApplicationCompositionTest {
                 RestConfigurationException.class,
                 () -> discoveryComponent(config).routerMounts(),
                 label);
-        LOG.info("TP-002 {} failure: {}", label, ex.getMessage());
+        LOG.info("discovery {} failure: {}", label, ex.getMessage());
         assertTrue(
                 ex.getMessage() != null && ex.getMessage().contains("'api'"),
                 () -> label + ": expected the failure to name 'api': " + ex.getMessage());
@@ -280,7 +279,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * TP-003 — An unbound listed class fails, naming the application and the class (AC-024.2).
+     * An unbound listed class fails, naming the application and the class.
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("membershipViolationCases")
@@ -288,7 +287,7 @@ class JaxRsApplicationCompositionTest {
     void membershipViolationsFailNamingApplicationAndClass(MembershipCase testCase) {
         RestConfigurationException ex =
                 assertThrows(RestConfigurationException.class, testCase.action()::get, testCase.name() + " must fail");
-        LOG.info("TP-003 {} failure: {}", testCase.name(), ex.getMessage());
+        LOG.info("membership {} failure: {}", testCase.name(), ex.getMessage());
         for (String fragment : testCase.expectedMessageFragments()) {
             assertTrue(
                     ex.getMessage() != null && ex.getMessage().contains(fragment),
@@ -388,23 +387,27 @@ class JaxRsApplicationCompositionTest {
                                 .routerMounts(),
                         List.of(SampleProviderType.class.getSimpleName(), SampleInterfaceType.class.getSimpleName())),
                 new MembershipCase(
-                        "case 13: the listed class is matched by two separate manual instances",
+                        "the listed class is matched by two separate manual instances",
                         () -> standardViolationComponent(config("membership.duplicateManual.active", true))
                                 .routerMounts(),
                         List.of(DuplicateManualResource.class.getSimpleName())),
                 new MembershipCase(
-                        "case 14: two catalog entries of one resource class (composer step 1)",
+                        "two catalog entries of one resource class (composer step 1)",
                         () -> duplicateCatalogEntryComponent(config()).routerMounts(),
                         List.of(DuplicateCatalogResource.class.getSimpleName())),
                 new MembershipCase(
-                        "case 21: the catalog entry's Dagger binding is substituted with a subclass that adds a"
+                        "the catalog entry's Dagger binding is substituted with a subclass that adds a"
                                 + " resource method",
                         () -> substitutedBindingComponent(config()).routerMounts(),
-                        List.of(Case21Resource.class.getSimpleName(), Case21SubclassResource.class.getSimpleName())),
+                        List.of(
+                                SubstitutedBindingResource.class.getSimpleName(),
+                                SubstitutedBindingSubclassResource.class.getSimpleName())),
                 new MembershipCase(
-                        "case 22: a hand-written catalog entry's provider returns an instance of an unrelated type",
+                        "a hand-written catalog entry's provider returns an instance of an unrelated type",
                         () -> handWrittenEntryComponent(config()).routerMounts(),
-                        List.of(Case22Resource.class.getSimpleName(), Case22UnrelatedResource.class.getSimpleName())));
+                        List.of(
+                                HandWrittenEntryResource.class.getSimpleName(),
+                                UnrelatedEntryResource.class.getSimpleName())));
     }
 
     private static MembershipCase membershipCase(String label, String activationKey, String expectedFragment) {
@@ -415,7 +418,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * R-001: builds one of TP-003's kind-check rows (provider, feature, dynamic-feature, interface,
+     * Builds one of the kind-check rows (provider, feature, dynamic-feature, interface,
      * abstract, or no-path), asserting not just the offending class's simple name but the failure
      * header, the application's name and declaring interface, and the kind-specific reason fragment
      * the composer emits.
@@ -455,7 +458,7 @@ class JaxRsApplicationCompositionTest {
         }
     }
 
-    /** TP-003's accepted row: an AOP-proxy-shaped manual subclass matches its listed base class. */
+    /** Accepted row: an AOP-proxy-shaped manual subclass matches its listed base class. */
     @Test
     @DisplayName(
             "An AOP-proxy-shaped manual subclass matches its listed base class; composition succeeds and mounts the subclass instance")
@@ -466,14 +469,14 @@ class JaxRsApplicationCompositionTest {
 
         Map<String, JaxRsRouterMount> byPath = mountsByPath(mounts);
         String path = "/membership/aop-accepted/*";
-        LOG.info("TP-003 (accepted, AOP) mount paths: {}", byPath.keySet());
+        LOG.info("membership (accepted, AOP) mount paths: {}", byPath.keySet());
         assertTrue(byPath.containsKey(path), () -> "expected a mount at " + path + " but found " + byPath.keySet());
         assertTrue(
                 byPath.get(path).meta().resourceTypes().contains(MembershipAopProxyResource.class),
                 "the mount must hold the manual AOP-proxy-shaped subclass instance, not the base class");
     }
 
-    /** TP-003's accepted row: a listed class whose only catalog entry is disabled mounts with no resources. */
+    /** Accepted row: a listed class whose only catalog entry is disabled mounts with no resources. */
     @Test
     @DisplayName("A listed class whose only catalog entry is disabled mounts with no resources and no fallback")
     void disabledCatalogEntryAcceptedWithNoFallback() {
@@ -492,10 +495,9 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * T023 L22 restoration (G-07 (b)): a hand-written catalog entry whose provider returns
-     * {@code null} fails naming the entry type, not {@code NullPointerException}. Retained behavior:
-     * the composer's catalog resolution (D002's lazy catalog) still guards a null-returning provider
-     * regardless of the removed application-construction and application-factory null checks.
+     * A hand-written catalog entry whose provider returns
+     * {@code null} fails naming the entry type, not {@code NullPointerException}: the composer's
+     * lazy catalog resolution guards a null-returning provider.
      */
     @Test
     @DisplayName(
@@ -507,15 +509,14 @@ class JaxRsApplicationCompositionTest {
                 RestConfigurationException.class,
                 component::routerMounts,
                 "a null-returning catalog entry provider must fail named, not throw NullPointerException");
-        LOG.info("TP-003 (null catalog entry) failure: {}", ex.getMessage());
+        LOG.info("membership (null catalog entry) failure: {}", ex.getMessage());
         assertTrue(
-                chainContains(ex, Case22Resource.class.getSimpleName()),
+                chainContains(ex, HandWrittenEntryResource.class.getSimpleName()),
                 () -> "expected the failure to name the entry type: " + ex.getMessage());
     }
 
     /**
-     * T023 L22 restoration (G-08): binary (fully qualified) names in diagnostics are retained
-     * behavior — the composer must keep naming applications and resources by fully qualified class
+     * Binary (fully qualified) names in diagnostics: the composer must keep naming applications and resources by fully qualified class
      * name, not only simple name, across the registration line, the per-mount line, the unselected-
      * resource report, and a membership-violation message.
      */
@@ -528,7 +529,7 @@ class JaxRsApplicationCompositionTest {
                 config("unitb.publicApplication.active", true, "unitb.managementApplication.active", true);
         standardComponent(activeConfig).routerMounts();
         List<String> infoLines = composerMessagesAt(Level.INFO);
-        LOG.info("G-08 (a)/(b) INFO lines: {}", infoLines);
+        LOG.info("fully qualified names (a)/(b) INFO lines: {}", infoLines);
 
         boolean registrationLineHasFullyQualifiedNames = infoLines.stream()
                 .anyMatch(message -> message.contains(
@@ -536,8 +537,7 @@ class JaxRsApplicationCompositionTest {
                         && message.contains(dev.vertique.rest.jaxrs.application.unitb.ManagementApi.class.getName()));
         assertTrue(
                 registrationLineHasFullyQualifiedNames,
-                () -> "G-08 (a): one INFO line must name every declaring interface by fully qualified name: "
-                        + infoLines);
+                () -> "(a): one INFO line must name every declaring interface by fully qualified name: " + infoLines);
 
         boolean mountLineHasFullyQualifiedNames = infoLines.stream()
                 .anyMatch(message -> message.contains("/api/public/*")
@@ -546,7 +546,7 @@ class JaxRsApplicationCompositionTest {
                         && message.contains(dev.vertique.rest.jaxrs.application.unitb.PublicApi.class.getName()));
         assertTrue(
                 mountLineHasFullyQualifiedNames,
-                () -> "G-08 (b): the per-mount INFO line must name the application and its resources by fully"
+                () -> "(b): the per-mount INFO line must name the application and its resources by fully"
                         + " qualified name: " + infoLines);
 
         composerAppender.list.clear();
@@ -557,11 +557,11 @@ class JaxRsApplicationCompositionTest {
         List<String> unselectedWarnings = composerMessagesAt(Level.WARN).stream()
                 .filter(message -> message.contains("not selected by any Application"))
                 .toList();
-        LOG.info("G-08 (c) unselected warnings: {}", unselectedWarnings);
+        LOG.info("fully qualified names (c) unselected warnings: {}", unselectedWarnings);
         assertEquals(1, unselectedWarnings.size(), "exactly one unselected-resource warning");
         assertTrue(
                 unselectedWarnings.get(0).contains(ExtraResource.class.getName()),
-                () -> "G-08 (c): the unselected-resource warning must name the resource by fully qualified name: "
+                () -> "(c): the unselected-resource warning must name the resource by fully qualified name: "
                         + unselectedWarnings.get(0));
 
         // (d): a membership-violation message names the declaring interface and the offending type by
@@ -569,14 +569,13 @@ class JaxRsApplicationCompositionTest {
         RestConfigurationException ex = assertThrows(RestConfigurationException.class, () -> standardViolationComponent(
                         config("membership.provider.active", true))
                 .routerMounts());
-        LOG.info("G-08 (d) failure: {}", ex.getMessage());
+        LOG.info("fully qualified names (d) failure: {}", ex.getMessage());
         assertTrue(
                 chainContains(ex, PROVIDER_CASE_API_FULLY_QUALIFIED_NAME),
-                () -> "G-08 (d): the message must name the declaring interface by fully qualified name: "
-                        + ex.getMessage());
+                () -> "(d): the message must name the declaring interface by fully qualified name: " + ex.getMessage());
         assertTrue(
                 chainContains(ex, SampleProviderType.class.getName()),
-                () -> "G-08 (d): the message must name the offending type by fully qualified name: " + ex.getMessage());
+                () -> "(d): the message must name the offending type by fully qualified name: " + ex.getMessage());
     }
 
     /**
@@ -589,7 +588,7 @@ class JaxRsApplicationCompositionTest {
             "dev.vertique.rest.jaxrs.application.unitb.membership.MembershipCaseApis$ProviderCaseApi";
 
     /**
-     * TP-004 — Inactive declarations mount, publish, and fail nothing (AC-025.3, AC-026.2).
+     * Inactive declarations mount, publish, and fail nothing.
      */
     @Test
     @DisplayName("Inactive declarations mount nothing, construct nothing, and fail nothing")
@@ -600,7 +599,7 @@ class JaxRsApplicationCompositionTest {
         Set<RouterMount> firstMounts =
                 assertDoesNotThrow(first::routerMounts, "an inactive mgmt entry must be accepted");
         Map<String, JaxRsRouterMount> firstByPath = mountsByPath(firstMounts);
-        LOG.info("TP-004 (first) mount paths: {}", firstByPath.keySet());
+        LOG.info("inactive (first) mount paths: {}", firstByPath.keySet());
         assertEquals(Set.of("/api/public/*"), firstByPath.keySet(), "only the active application mounts");
         assertEquals(0, ExtraResource.CONSTRUCTIONS.get(), "mgmt's listed resource is never constructed");
 
@@ -624,8 +623,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * TP-005 — Zero registrations keep the legacy default mount and its content (AC-026.1); the
-     * fourth existing (unchanged) assertion of the pre-port suite.
+     * Zero registrations keep the legacy default mount and its content.
      */
     @Test
     @DisplayName(
@@ -652,7 +650,7 @@ class JaxRsApplicationCompositionTest {
     }
 
     /**
-     * TP-008 — A repeated name fails when the view is built, naming both declarations (AC-022.2).
+     * A repeated name fails when the view is built, naming both declarations.
      */
     @Test
     @DisplayName(
@@ -682,7 +680,7 @@ class JaxRsApplicationCompositionTest {
                 DaggerDuplicateNameComponents_DuplicateNameComponent.factory().create(config);
         RestConfigurationException ex = assertThrows(
                 RestConfigurationException.class, component::routerMounts, label + ": duplicate name must fail");
-        LOG.info("TP-008 {} failure: {}", label, ex.getMessage());
+        LOG.info("duplicate name {} failure: {}", label, ex.getMessage());
         assertTrue(chainContains(ex, "api"), () -> label + ": expected the failure to name 'api': " + ex.getMessage());
         assertTrue(
                 chainContains(ex, dev.vertique.rest.jaxrs.application.dupname.UnitOneApi.class.getName()),
@@ -694,11 +692,11 @@ class JaxRsApplicationCompositionTest {
         assertEquals(0, UnitTwoResource.CONSTRUCTIONS.get(), label + ": no resource constructed before the failure");
     }
 
-    // --- TP-015: the Set<RouterMount> re-entry guard still names a re-entering resource (existing, ported) ---
+    // --- the Set<RouterMount> re-entry guard names a re-entering resource ---
 
     @Test
     @DisplayName(
-            "G-06 (a): a manual resource depending on Set<RouterMount> in zero-declaration mode fails naming the re-entrant composition, never StackOverflowError, and a later composition on the same thread still succeeds")
+            "A manual resource depending on Set<RouterMount> in zero-declaration mode fails naming the re-entrant composition, never StackOverflowError, and a later composition on the same thread still succeeds")
     void zeroDeclarationResourceReentryFailsNamed() {
         ReentrantResourceZeroDeclarationComponent component = reentrantResourceZeroDeclarationComponent(config());
 
@@ -707,7 +705,7 @@ class JaxRsApplicationCompositionTest {
                 component::routerMounts,
                 "a manual resource depending on Set<RouterMount> in zero-declaration mode must fail named, not"
                         + " overflow the stack");
-        LOG.info("TP-015 (a) failure: {}", ex.getMessage());
+        LOG.info("re-entry (a) failure: {}", ex.getMessage());
         assertTrue(
                 chainContains(ex, "re-entered") || chainContains(ex, "Set<RouterMount>"),
                 () -> "expected the failure to name the re-entrant composition: " + ex.getMessage());
@@ -720,7 +718,7 @@ class JaxRsApplicationCompositionTest {
 
     @Test
     @DisplayName(
-            "G-06 (b): the same manual resource, listed by an active application, fails naming the re-entrant composition in explicit mode too, never StackOverflowError")
+            "The same manual resource, listed by an active application, fails naming the re-entrant composition in explicit mode too, never StackOverflowError")
     void explicitModeResourceReentryFailsNamed() {
         JsonObject reentrantConfig = config();
         ReentrantResourceExplicitComponent component = reentrantResourceExplicitComponent(reentrantConfig);
@@ -730,7 +728,7 @@ class JaxRsApplicationCompositionTest {
                 component::routerMounts,
                 "an explicit-mode manual resource depending on Set<RouterMount> must fail named, not overflow the"
                         + " stack");
-        LOG.info("TP-015 (b) failure: {}", ex.getMessage());
+        LOG.info("re-entry (b) failure: {}", ex.getMessage());
         assertTrue(
                 chainContains(ex, "re-entered") || chainContains(ex, "Set<RouterMount>"),
                 () -> "expected the failure to name the re-entrant composition: " + ex.getMessage());
@@ -742,9 +740,9 @@ class JaxRsApplicationCompositionTest {
     }
 
     @Test
-    @DisplayName("W-1: a manual resource that builds and resolves a second, independent Dagger component's"
+    @DisplayName("A manual resource that builds and resolves a second, independent Dagger component's"
             + " Set<RouterMount> inside its own construction must succeed, because a nested composition of a"
-            + " different component is legitimate, unlike same-component re-entry (G-06)")
+            + " different component is legitimate, unlike same-component re-entry")
     void nestedCompositionOfDifferentComponentSucceeds() {
         NestedCompositionZeroDeclarationComponent component = nestedCompositionZeroDeclarationComponent(config());
 

@@ -23,9 +23,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice-3 migration test for {@link ParameterExtractor}'s reflective dispatch path, verifying that
+ * Test for {@link ParameterExtractor}'s reflective dispatch path, verifying that
  * the BODY parameter is now read from a {@link BoundRequest}'s {@link BoundRequest#body()}
- * ({@link RequestValue}) rather than from a Vert.x {@code ValidatedRequest} (FR-024).
+ * ({@link RequestValue}) rather than from a Vert.x {@code ValidatedRequest}.
  */
 class ParameterExtractorTest {
 

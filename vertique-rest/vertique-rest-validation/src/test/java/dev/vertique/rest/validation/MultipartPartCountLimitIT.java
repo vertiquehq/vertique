@@ -62,13 +62,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). The two acceptance tests pair the status with the resource's echoed part
+ * is correct. The two acceptance tests pair the status with the resource's echoed part
  * count, so a silently emptied body would report a binding defect that did not happen. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send, so
  * the race is closed by construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
-// 30s rather than testing.md's 20s default, deliberately: each of the seven tests below starts and
+// 30s rather than the default 20s, deliberately: each of the seven tests below starts and
 // stops its own server, and rejectedRequestLeavesNoSpooledFiles may hold up to the 10s cap of its
 // quiescence poll. Tightening this to 20s would buy nothing and would flake under CI load.
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -348,7 +348,7 @@ public class MultipartPartCountLimitIT {
     /**
      * Best-effort teardown. Deliberately never throws: orphaned uploads are what
      * {@link #rejectedRequestLeavesNoSpooledFiles()} asserts on, so teardown must not convert that
-     * finding into a misleading class-level error.
+     * result into a misleading class-level error.
      *
      * @param directory the per-test uploads directory, possibly absent
      */

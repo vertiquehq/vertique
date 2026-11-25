@@ -7,11 +7,11 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.application.unita.DisabledResource;
 
 /**
- * TP-016 (R-004) case (d)'s fixture: registered by
+ * Fixture registered by
  * {@link DisabledOnlyApplicationRegistrationModule#disabledOnlyApplicationRegistration}, listing
  * only {@link DisabledResource}, whose catalog entry stays disabled by default ({@code
  * unita.disabledResource.enabled} unset). Composing this registration mounts with zero resources
- * (TP-003's {@code disabledCatalogEntryAcceptedWithNoFallback} builds the same shape), so case (d)
+ * ({@code disabledCatalogEntryAcceptedWithNoFallback} builds the same shape), so this fixture
  * proves {@link dev.vertique.rest.jaxrs.JaxRsRouterMount#createRouter}'s unvalidated-mount refusal
  * runs before the empty-mount early return, not merely for a mount that also happens to carry
  * resources.

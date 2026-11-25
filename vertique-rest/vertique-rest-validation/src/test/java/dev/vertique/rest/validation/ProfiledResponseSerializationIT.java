@@ -41,20 +41,18 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * RED integration test for Phase 3 Slice 3.1 (FR-JSON-055/056/057): JAX-RS JSON <em>response</em>
- * serialization must become symmetric with request binding — a resource method's response should
- * serialize through the same effective profile resolved for its request (the per-method mapper the
- * request path already stashes under {@code BoundRequest.KEY_RESOLVED_BODY_MAPPER}), while a method
- * with no profile and no configured default serializes through the {@code vertique} floor — the
+ * Integration test that JAX-RS JSON <em>response</em> serialization is symmetric with request
+ * binding — a resource method's response serializes through the same effective profile resolved
+ * for its request (the per-method mapper the request path stashes under {@code
+ * BoundRequest.KEY_RESOLVED_BODY_MAPPER}), while a method with no profile and no configured default serializes through the {@code vertique} floor — the
  * effective default for every managed edge — whose opinions include omitting {@code null} fields.
  *
  * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, reached through
  * {@link MountFixtures} over {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture),
- * so the RED→green transition (now green) is genuinely driven by the production encoder's behavior —
- * not a re-implemented stub. Before slice 3.1, {@code JsonBodyEncoder.encode} called
- * {@code Json.encode(entity)} unconditionally and ignored the stash, so the <em>profiled</em> test below
- * FAILED (the opinionated profile's observable behavior never reached the wire). Slice 3.1 made the
- * encoder read the stash, turning it green.
+ * so the result is genuinely driven by the production encoder's behavior —
+ * not a re-implemented stub. An encoder that called {@code Json.encode(entity)} unconditionally and
+ * ignored the stash would fail the <em>profiled</em> test below, because the opinionated profile's
+ * observable behavior would never reach the wire.
  *
  * <p>The opinionated {@code response-profile} test profile omits {@code null} fields (a
  * {@code NON_NULL} mix-in scoped to the response entity type), a difference that survives the
@@ -66,7 +64,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p><strong>Why a {@link WebClient} and not a raw {@code HttpClient}.</strong> A raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
  * Both assertions here are about the <em>bytes of the response body</em> — whether the null field is
  * omitted, and an exact rendered body — so a silently emptied body
  * would report a profile-selection defect that did not happen. A {@link WebClient} aggregates the body

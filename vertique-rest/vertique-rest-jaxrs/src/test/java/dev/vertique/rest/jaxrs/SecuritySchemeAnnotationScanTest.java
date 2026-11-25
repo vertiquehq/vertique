@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for the reflective {@link SecuritySchemeAnnotationScanner}: effective
  * {@code @SecurityRequirement} resolution into {@link SecurityRequirementSet}s (method-level
  * overrides class-level, matching Swagger semantics), the {@code combine()} AND-group mapping, the
- * fail-closed malformed-annotation guard (C1 — neither/both of name/combine set), and the slice-5
+ * fail-closed malformed-annotation guard (neither/both of name/combine set), and the
  * scheme-handler wiring loop (one {@code configure} call per handler).
  */
 class SecuritySchemeAnnotationScanTest {
@@ -137,7 +137,7 @@ class SecuritySchemeAnnotationScanTest {
     }
 
     @Test
-    @DisplayName("A @SecurityRequirement with neither name nor combine fails startup (C1 — not silently dropped)")
+    @DisplayName("A @SecurityRequirement with neither name nor combine fails startup (not silently dropped)")
     void scanMalformedRequirementFailsClosed() throws NoSuchMethodException {
         Method method = MalformedRequirementResource.class.getMethod("get");
         List<Annotation> methodAnnotations = AnnotationResolver.resolveMethodAnnotations(method);
@@ -155,10 +155,10 @@ class SecuritySchemeAnnotationScanTest {
     @Test
     @DisplayName("Scheme handler bound via DI has configure() invoked once at the scheme-wiring loop")
     void schemeWiredFromDiCallsConfigureOnce() {
-        // Approximation flagged in the slice report: the true FR-014 "no openapi.json" end-to-end path
-        // awaits the router-engine migration (the transitional RouterBuilderSecuritySchemeRegistry
-        // still requires the scheme to exist in the contract). Here we assert the slice-5 wiring
-        // contract directly: configuring the handler invokes configure(registry) exactly once.
+        // The true "no openapi.json" end-to-end path is not exercised here (the
+        // RouterBuilderSecuritySchemeRegistry still requires the scheme to exist in the contract).
+        // Here we assert the scheme-wiring contract directly: configuring the handler invokes configure(registry)
+        // exactly once.
         AtomicInteger configureCalls = new AtomicInteger();
         SecuritySchemeHandler handler = new SecuritySchemeHandler() {
             @Override

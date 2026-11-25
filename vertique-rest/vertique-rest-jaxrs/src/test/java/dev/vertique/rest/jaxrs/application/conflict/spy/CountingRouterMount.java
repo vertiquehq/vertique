@@ -10,10 +10,10 @@ import io.vertx.ext.web.Router;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-004 (T004) spy: a plain, non-JAX-RS {@link RouterMount} whose {@link #createRouter(Vertx)}
+ * Conflict spy: a plain, non-JAX-RS {@link RouterMount} whose {@link #createRouter(Vertx)}
  * counts its own invocations in {@link #CREATIONS}. Because it is not a {@code JaxRsRouterMount},
- * the rest-jaxrs validator's path-conflict rule ignores it entirely (C-CONFLICT: "It ignores
- * non-JAX-RS mounts"), so its mount path never itself conflicts. It exists only to prove that
+ * the rest-jaxrs validator's path-conflict rule ignores it entirely (it ignores
+ * non-JAX-RS mounts), so its mount path never itself conflicts. It exists only to prove that
  * {@code HttpVerticle} never reaches ANY mount's {@code createRouter} — JAX-RS or not — once a
  * composition validator rejects the composition: a conflicting composition's start promise must
  * fail before this counter, or {@link CountingRouterLifecycleHook#CREATIONS}, ever moves off
@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class CountingRouterMount implements RouterMount {
 
-    /** Mount path this spy is registered at; deliberately outside every TP-004 conflict pair. */
+    /** Mount path this spy is registered at; deliberately outside every conflict pair. */
     public static final String MOUNT_PATH = "/spy/*";
 
     /** Number of {@link #createRouter(Vertx)} calls; reset before every case via {@link #reset()}. */

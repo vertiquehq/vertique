@@ -13,7 +13,7 @@ import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
 
-/** TP-016 (R-004) case (d)'s registration module for {@link DisabledOnlyApi}. */
+/** Registration module for {@link DisabledOnlyApi}. */
 @Module
 public final class DisabledOnlyApplicationRegistrationModule {
 

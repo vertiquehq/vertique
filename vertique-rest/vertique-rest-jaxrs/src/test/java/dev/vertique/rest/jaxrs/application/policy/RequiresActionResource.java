@@ -11,11 +11,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * T005 TP-002 case (d): protected only by a method-level {@link RequiresAction} whose action
+ * Case (d): protected only by a method-level {@link RequiresAction} whose action
  * resolves — {@link PolicySecurityModule} binds an {@code ActionRegistry} holding
  * {@link PolicySecurityModule#REQUIRED_ACTION}, an {@code Authorizer}, and the
- * {@code AuthEnforcementCapability} marker so the action gate is enforceable. Under C-POLICY a
- * resolved required action restricts callers — no FR-013 warning.
+ * {@code AuthEnforcementCapability} marker so the action gate is enforceable. Under the policy classification a
+ * resolved required action restricts callers — no implicit-policy warning.
  */
 @Path("/action")
 public class RequiresActionResource {

@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import java.util.Set;
 
 /**
- * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
+ * Conflict fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}. Used by case (c), beside {@link LegacyReportsMountModule}'s
  * {@code /api/legacy/reports/*} mount, with no application declared: this pair only exercises
  * {@code HttpVerticle}'s existing containment-overlap warning, unchanged.

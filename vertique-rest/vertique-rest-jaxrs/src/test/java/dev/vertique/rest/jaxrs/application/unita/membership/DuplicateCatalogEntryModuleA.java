@@ -12,11 +12,11 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 
 /**
- * TP-005 case 14's first of two separate catalog-entry modules for
+ * First of two separate catalog-entry modules for
  * {@link DuplicateCatalogResource}; see {@link DuplicateCatalogEntryModuleB}. Two separate
  * {@code @Provides} methods, each contributing its own entry instance, are required: the
  * generated-code contract types keep identity equality, so Dagger's set never collapses the
- * duplicate (R5).
+ * duplicate.
  */
 @Module
 public final class DuplicateCatalogEntryModuleA {

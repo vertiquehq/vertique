@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Unconditional JAX-RS resource fixture, contributed by {@code unita}'s
  * {@link GeneratedJaxRsResourcesModule#extraResourceBinding} and cataloged by
  * {@link GeneratedJaxRsResourcesModule#extraResourceEntry}. {@link #failIfConstructed} lets
- * laziness proofs (TP-003) assert this resource's lazy {@link jakarta.inject.Provider} is never
+ * laziness proofs assert this resource's lazy {@link jakarta.inject.Provider} is never
  * called when it is not selected by any active application.
  */
 @Path("/extra")

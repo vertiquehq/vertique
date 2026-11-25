@@ -12,8 +12,8 @@ import java.util.List;
 /**
  * Case (e)'s registration module for {@link OpidApis.OpidInactiveApi}, unconditionally inactive.
  * The sole module contributing to {@code Set<GeneratedRestApplicationRegistration>} in case (e)'s
- * component, so the view holds exactly one entry: a registration whose condition does not match
- * (AC-014.1). With no active application, this registration alone still makes the registration set
+ * component, so the view holds exactly one entry: a registration whose condition does not match.
+ * With no active application, this registration alone still makes the registration set
  * non-empty, so the cross-mount operationId scan runs over {@link OpidHandBuiltOneMountModule}'s
  * and {@link OpidHandBuiltTwoMountModule}'s mounts even though neither is an application mount.
  */

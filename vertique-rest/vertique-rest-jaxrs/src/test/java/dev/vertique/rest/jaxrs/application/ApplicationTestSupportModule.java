@@ -12,10 +12,10 @@ import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import jakarta.annotation.Nullable;
 
 /**
- * Support bindings every T002 application-composition component needs: the real
+ * Support bindings every application-composition component needs: the real
  * {@link DefaultConfigParser} (over the lenient default config mapper), since {@code
  * RestApplications}'s provider calls {@link ConfigParser#parseKeyedObject}, which a throwing stub
- * cannot serve (E3); and the unsecured {@link SecurityPolicyValidator} stand-in {@code
+ * cannot serve; and the unsecured {@link SecurityPolicyValidator} stand-in {@code
  * JaxRsRouterMount.Factory} requires. Mirrors {@code application.legacy.LegacySupportModule} and
  * {@code synthetic.SyntheticFixtureModule}, which carry the identical replacement.
  */

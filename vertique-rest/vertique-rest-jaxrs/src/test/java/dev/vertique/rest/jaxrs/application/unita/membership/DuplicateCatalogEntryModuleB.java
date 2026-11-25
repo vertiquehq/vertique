@@ -12,7 +12,7 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 
 /**
- * TP-005 case 14's second of two separate catalog-entry modules for
+ * Second of two separate catalog-entry modules for
  * {@link DuplicateCatalogResource}; see {@link DuplicateCatalogEntryModuleA}.
  */
 @Module

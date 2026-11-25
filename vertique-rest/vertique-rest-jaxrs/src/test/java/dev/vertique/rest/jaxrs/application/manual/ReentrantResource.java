@@ -12,13 +12,13 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.Set;
 
 /**
- * G-06 fixture: a manually contributed resource (not a declared {@code Application}) whose
- * {@code @Inject} constructor takes {@code Set<RouterMount>} directly — the mistake C-COMPOSE's
- * threading rule forbids, applied to a resource instead of an application (TP-015's
- * {@code ReentrantExplicitApi} covers the application-construction re-entry; G-06 covers a
+ * Fixture: a manually contributed resource (not a declared {@code Application}) whose
+ * {@code @Inject} constructor takes {@code Set<RouterMount>} directly — the mistake the composer's
+ * threading rule forbids, applied to a resource instead of an application ({@code
+ * ReentrantExplicitApi} covers the application-construction re-entry; this fixture covers a
  * resource resolved through {@code @JaxRsResources Provider<Set<Object>> resources} — in the
  * zero-declaration default mount's own body ({@code RestModule.jaxRsRouterMount}) or in the
- * composer's step 4 manual-resource resolution, both of which the component-scoped re-entry guard
+ * composer's manual-resource resolution, both of which the component-scoped re-entry guard
  * around the whole provider body now covers.
  * Dagger accepts the resulting cycle at compile time only because {@code jaxRsRouterMount} already
  * takes a {@code Provider<Set<Object>> resources} parameter (not a direct {@code Set<Object>}),

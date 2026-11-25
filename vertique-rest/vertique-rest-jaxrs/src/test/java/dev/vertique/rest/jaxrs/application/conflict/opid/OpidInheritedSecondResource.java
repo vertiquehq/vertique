@@ -7,7 +7,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.Path;
 
 /**
- * TP-005 (T004) case (d) fixture: a second concrete {@link OpidInheritedBaseResource} subclass
+ * Operation-id conflict case (d) fixture: a second concrete {@link OpidInheritedBaseResource} subclass
  * with its own {@code @Path}, inheriting {@link OpidInheritedBaseResource#list()} without
  * overriding it — the counterpart to {@link OpidInheritedFirstResource}. Its own class-level
  * {@code @Path} annotation likewise defeats {@code sameSurface}, so this operation's normalized

@@ -43,9 +43,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Regression tests proving the profile mapper owns the request-body FIRST PARSE even when the default
- * {@code web-validation} gate is active (FR-JSON-024/024A).
+ * {@code web-validation} gate is active.
  *
- * <p>The Critical defect these guard against: under {@link WebValidationStrategy}, the gate's
+ * <p>The defect these guard against: under {@link WebValidationStrategy}, the gate's
  * {@code validateBody} constructs and stashes the per-request {@code BoundRequest} <em>before</em> the
  * terminal invoker runs. If the resolved profile mapper is stashed only by the invoker, the gate's
  * earlier bind has already first-parsed the body through the process codec, so the profile's strict
@@ -73,7 +73,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). The unannotated-route test pairs the status with the echoed body, so a
+ * is correct. The unannotated-route test pairs the status with the echoed body, so a
  * silently emptied body would fail it for a reason unrelated to the parse path under test. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */

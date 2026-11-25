@@ -10,15 +10,15 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 case 14's resource: cataloged twice, by two separate modules
- * ({@link DuplicateCatalogEntryModuleA} and {@link DuplicateCatalogEntryModuleB}), so C-COMPOSE
- * step 1's duplicate-catalog-entry check ("two catalog entries of one class ... fail") has
+ * Resource cataloged twice, by two separate modules
+ * ({@link DuplicateCatalogEntryModuleA} and {@link DuplicateCatalogEntryModuleB}), so the composer's
+ * duplicate-catalog-entry check ("two catalog entries of one class ... fail") has
  * something to catch, before any application is constructed.
  */
 @Path("/duplicate-catalog")
 public class DuplicateCatalogResource {
 
-    /** Public {@code @Inject} constructor; never actually invoked (step 1 fails first). */
+    /** Public {@code @Inject} constructor; never actually invoked (the duplicate-entry check fails first). */
     @Inject
     public DuplicateCatalogResource() {}
 

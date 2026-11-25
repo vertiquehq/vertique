@@ -42,7 +42,7 @@ public final class OperationIdComponents {
 
     private OperationIdComponents() {}
 
-    /** Provisions every TP-005 composition exposes: a fresh {@link HttpVerticle} per call. */
+    /** Provisions every operationId-conflict composition exposes: a fresh {@link HttpVerticle} per call. */
     public interface Provisions {
 
         /**
@@ -186,7 +186,7 @@ public final class OperationIdComponents {
      * {@code Set<GeneratedRestApplicationRegistration>}), whose condition does not match (no
      * active application), plus two hand-built JAX-RS mounts at non-conflicting paths whose
      * resources each declare a method with operationId {@code "list"}. An application is declared
-     * even though none is active (AC-014.1), so the collision must fail deployment.
+     * even though none is active, so the collision must fail deployment.
      */
     @Singleton
     @Component(

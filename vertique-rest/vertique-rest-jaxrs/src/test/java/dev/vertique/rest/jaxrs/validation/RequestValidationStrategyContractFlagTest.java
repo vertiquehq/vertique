@@ -15,8 +15,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-021 (rest-jaxrs half): {@link RequestValidationStrategy#resolvesOperationsFromMountContract()}
- * is a {@code default} method of the SPI interface, defaulting to {@code false} (AR3-003), the
+ * {@link RequestValidationStrategy#resolvesOperationsFromMountContract()}
+ * is a {@code default} method of the SPI interface, defaulting to {@code false}, the
  * precedent set by {@link RequestValidationStrategy#runsFileVerifiers()}. The {@code true}-reporting
  * half, {@code OpenApiContractValidationStrategy}, is proved in {@code
  * OpenApiContractStrategyTest} (vertique-rest-openapi-validation).

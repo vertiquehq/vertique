@@ -30,13 +30,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * Proves the strict {@code jaxrs.applications} keyed-object section that {@code
  * vertique-rest-jaxrs} parses through {@link RestModule#parseJaxRsApplications(JsonObject,
- * ConfigParser)} into {@link RestApplicationConfig} (T024, FR-029, AC-029.2).
+ * ConfigParser)} into {@link RestApplicationConfig}.
  *
- * <p>TP-001 proves each key is injected into the record's name in section order, and that an
- * absent or empty section yields an empty list. TP-002 proves the raw-key check rejects a
+ * <p>The keyed-parsing rows prove each key is injected into the record's name in section order, and that an
+ * absent or empty section yields an empty list. The strict-section rows prove the raw-key check rejects a
  * non-object section, a non-object entry, and any entry key other than {@code openapiPath} before
- * parsing. TP-003 proves a blank configured {@code openapiPath} fails naming its path. TP-004
- * proves {@link JaxRsConfig} still ignores the section and exposes no applications accessor.
+ * parsing. The blank-path rows prove a blank configured {@code openapiPath} fails naming its path. The last
+ * test proves {@link JaxRsConfig} still ignores the section and exposes no applications accessor.
  *
  * <p>A key under {@code jaxrs} that equals {@code applications} ignoring case, but not exactly,
  * fails startup naming every such key, before the section checks and whatever its value. An
@@ -56,7 +56,7 @@ class JaxRsApplicationsConfigTest {
 
     private static final String SECTION_NOT_OBJECT = "'jaxrs.applications' must be a JSON object";
 
-    // --- TP-001 ---
+    // --- Keyed parsing ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("keyedApplicationsRows")
@@ -90,7 +90,7 @@ class JaxRsApplicationsConfigTest {
                         """, List.of()));
     }
 
-    // --- TP-002 ---
+    // --- Strict section checks ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("strictSectionRows")
@@ -169,7 +169,7 @@ class JaxRsApplicationsConfigTest {
                         """, parsed(new RestApplicationConfig("api", null))));
     }
 
-    // --- TP-003 ---
+    // --- Blank openapiPath ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("blankOpenapiPathRows")
@@ -276,7 +276,7 @@ class JaxRsApplicationsConfigTest {
                         parsed(new RestApplicationConfig("orders", "/orders.yaml"))));
     }
 
-    // --- TP-004 ---
+    // --- JaxRsConfig ignores the section ---
 
     @Test
     @DisplayName(

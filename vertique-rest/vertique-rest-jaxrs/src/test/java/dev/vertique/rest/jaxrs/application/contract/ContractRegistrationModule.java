@@ -10,7 +10,7 @@ import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import java.util.List;
 
 /**
- * TP-007's registration module: applications {@code a}, {@code b}, and {@code c}, each
+ * The registration module: applications {@code a}, {@code b}, and {@code c}, each
  * unconditionally active, each with one operation of a distinct id.
  */
 @Module

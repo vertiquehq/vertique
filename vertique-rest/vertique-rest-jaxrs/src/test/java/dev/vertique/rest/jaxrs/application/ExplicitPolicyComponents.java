@@ -14,14 +14,13 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger components for {@link ExplicitSecurityPolicyTest} (TP-002 and TP-004): two named
+ * Dagger components for {@link ExplicitSecurityPolicyTest}: two named
  * compositions built from the {@code policy} resources unit and {@link
  * dev.vertique.rest.jaxrs.application.policy.PolicySecurityModule PolicySecurityModule}, mirroring
- * {@link ValidatedMarkComponents}'s shape (T004) — every component exposes both
+ * {@link ValidatedMarkComponents}'s shape — every component exposes both
  * {@code Set<RouterMount>} and {@code Set<MountCompositionValidator>}, so a test can run the
  * component's own composition validators before {@code createRouter}, as {@code HttpVerticle.start}
- * does, satisfying the validated mark an application mount's {@code createRouter} otherwise refuses
- * (C-CONFLICT, T004).
+ * does, satisfying the validated mark an application mount's {@code createRouter} otherwise refuses.
  *
  * <p>Every component's factory takes the application configuration as a
  * {@code @BindsInstance @VertxConfig JsonObject}, matching {@link CompositionComponents} and
@@ -31,7 +30,7 @@ public final class ExplicitPolicyComponents {
 
     private ExplicitPolicyComponents() {}
 
-    /** Provisions every T005 composition exposes. */
+    /** Provisions every composition here exposes. */
     public interface Provisions {
 
         /**
@@ -50,9 +49,9 @@ public final class ExplicitPolicyComponents {
     }
 
     /**
-     * The application-mount composition (TP-002): {@code policy}'s resources unit,
+     * The application-mount composition: {@code policy}'s resources unit,
      * {@code policy.app}'s six variant registrations (one per {@code ManagementApis} declaring
-     * interface, T023 L22), and {@code PolicySecurityModule}. Exactly one application mount
+     * interface), and {@code PolicySecurityModule}. Exactly one application mount
      * ({@code /api/mgmt/*}) is produced; which resource variant it hosts is selected purely by
      * which single {@code policy.<variant>.enabled} gate a test enables, since that property gates
      * both the variant's registration and its catalog entry.
@@ -83,7 +82,7 @@ public final class ExplicitPolicyComponents {
     }
 
     /**
-     * The zero-declaration, legacy-default-mount composition (TP-004): {@code policy}'s resources
+     * The zero-declaration, legacy-default-mount composition: {@code policy}'s resources
      * unit and {@code PolicySecurityModule} only — no application registration module at all, so
      * {@code Set<GeneratedRestApplicationRegistration>} resolves empty and the sole resource
      * variant a test enables reaches the zero-declaration default mount ({@code /*}) instead.

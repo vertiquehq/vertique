@@ -10,11 +10,10 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 case 15's direct subclass of {@link MembershipBaseResource}: declares its own new resource
+ * The direct subclass of {@link MembershipBaseResource}: declares its own new resource
  * method, carrying a runtime-retained JAX-RS annotation ({@code @GET}), so
  * {@code sameSurface(MembershipBaseResource.class, this.getClass())} fails ("no declared ... method
- * ... carries a runtime-retained annotation"). The new method is named after this subclass
- * (§ Scope and ownership).
+ * ... carries a runtime-retained annotation"). The new method is named after this subclass.
  */
 public class MembershipOwnMethodResource extends MembershipBaseResource {
 

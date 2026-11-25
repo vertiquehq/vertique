@@ -62,7 +62,7 @@ import org.mockito.ArgumentCaptor;
 class ValidationDetailPathTest {
 
     /** A distinctive client-chosen key: its absence from the response is provable. */
-    private static final String CLIENT_KEY = "CLIENT-KEY-598-PATH-" + "q".repeat(300);
+    private static final String CLIENT_KEY = "CLIENT-KEY-PATH-" + "q".repeat(300);
 
     /** An object declaring {@code name} (at most three characters) and typed string extras. */
     private static JsonObject inner() {

@@ -13,7 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression test for closed issue #30: {@code ParameterExtractor.computeBeanFields(...)} did not
+ * Regression test: {@code ParameterExtractor.computeBeanFields(...)} did not
  * deduplicate hidden fields when walking the class hierarchy. With a {@code @BeanParam} type
  * declaring the same field name on both a subclass and its superclass, the previous behaviour
  * walked subclass-then-superclass and produced two entries; {@code extractBeanParam}'s

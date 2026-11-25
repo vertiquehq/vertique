@@ -9,25 +9,23 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (cases 15, 17 to 20, 23, 24) and TP-018's listed base resource. Carries no catalog entry:
+ * The listed base resource for the membership cases. Carries no catalog entry:
  * its only possible membership path is a manual {@code @JaxRsResources} instance whose class
  * satisfies {@code sameSurface(MembershipBaseResource.class, instance.getClass())}. Never itself
  * contributed manually — every case contributes exactly one subclass instance, in its own module,
- * so C-COMPOSE step 6.6's "the only candidate" naming applies:
+ * so composition names it as "the only candidate":
  *
  * <ul>
- *   <li>{@link MembershipAopProxyResource} — the AOP-proxy shape (TP-018, matches);
- *   <li>{@link MembershipOwnMethodResource} — adds a new annotated resource method (case 15);
- *   <li>{@link MembershipClassPathResource} — adds a class-level {@code @Path} (case 17);
- *   <li>{@link MembershipNewInterfaceResource} — implements a new {@code @GET}-declaring interface
- *       (case 18);
- *   <li>{@link MembershipGrandchildResource} — a grandchild, not a direct subclass (case 19);
- *   <li>{@link MembershipRolesAllowedResource} — an override carrying {@code @RolesAllowed} (case
- *       20);
+ *   <li>{@link MembershipAopProxyResource} — the AOP-proxy shape (matches);
+ *   <li>{@link MembershipOwnMethodResource} — adds a new annotated resource method;
+ *   <li>{@link MembershipClassPathResource} — adds a class-level {@code @Path};
+ *   <li>{@link MembershipNewInterfaceResource} — implements a new {@code @GET}-declaring interface;
+ *   <li>{@link MembershipGrandchildResource} — a grandchild, not a direct subclass;
+ *   <li>{@link MembershipRolesAllowedResource} — an override carrying {@code @RolesAllowed};
  *   <li>{@link MembershipClassLevelPermitAllResource} — a class-level {@code @PermitAll} and no
- *       other annotation (case 23, G-03);
+ *       other annotation;
  *   <li>{@link MembershipParamAnnotationOnlyResource} — an override whose only annotation sits on a
- *       parameter (case 24, G-03).
+ *       parameter.
  * </ul>
  */
 @Path("/membership-base")
@@ -38,7 +36,7 @@ public class MembershipBaseResource {
 
     /**
      * Handles {@code GET /membership-base}. Every AOP-proxy-shaped subclass overrides this method,
-     * keeping its name (PP2-004) and adding only the source-retained {@code @Override}.
+     * keeping its name and adding only the source-retained {@code @Override}.
      *
      * @return the fixed body {@code "membershipBase"}
      */
@@ -50,7 +48,7 @@ public class MembershipBaseResource {
 
     /**
      * Handles {@code GET /membership-base/filtered}, taking one unannotated parameter.
-     * {@link MembershipParamAnnotationOnlyResource} (case 24, G-03) overrides this method, adding a
+     * {@link MembershipParamAnnotationOnlyResource} overrides this method, adding a
      * runtime-retained annotation only to the override's own parameter, never to the method itself.
      *
      * @param filter an unannotated parameter on this declaration

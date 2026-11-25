@@ -22,7 +22,7 @@ import java.util.List;
  * own property so exactly one row (or, for the two-applications row, exactly two rows) is active
  * per {@code MembershipComponents.StandardViolationComponent} invocation. Mirrors what the
  * annotation processor would emit for each declaration: {@code active} is the only
- * configuration-evaluated field (E17); {@code name}, {@code path}, and {@code resources} match the
+ * configuration-evaluated field; {@code name}, {@code path}, and {@code resources} match the
  * declaring interface's own {@code @RestApplication} exactly.
  */
 @Module
@@ -309,7 +309,7 @@ public final class MembershipViolationRegistrations {
     }
 
     /**
-     * T023 L22 restoration (TP-003 case 13): {@link DuplicateManualResource} is contributed manually
+     * {@link DuplicateManualResource} is contributed manually
      * twice ({@code DuplicateManualResourceModuleA} and {@code DuplicateManualResourceModuleB}, both
      * added to {@code MembershipComponents.StandardViolationComponent}), so when listed it has two
      * manual matches, tripping the ambiguity check. No catalog entry exists for this class.
@@ -328,7 +328,7 @@ public final class MembershipViolationRegistrations {
     }
 
     /**
-     * T023 L22 restoration (G-08 (c)): lists only {@link CatalogResource}, leaving {@code unita}'s
+     * Lists only {@link CatalogResource}, leaving {@code unita}'s
      * enabled {@code ExtraResource} catalog entry unselected when this is the sole active row, so
      * the composer's unselected-resource report has something to name by fully qualified name.
      */
