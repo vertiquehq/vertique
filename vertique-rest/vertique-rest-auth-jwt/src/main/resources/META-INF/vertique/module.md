@@ -498,8 +498,8 @@ successful alternative leaves the header unset.
 | `JWT_SIGNATURE_INVALID` | Signature verification failed |
 | `JWT_AUDIENCE_INVALID` | The token's `aud` set does not overlap `jwt.validation.audience`, or the provider rejected the audience |
 | `JWT_ISSUER_INVALID` | The token's `iss` is absent or differs from `jwt.validation.issuer`, or the provider rejected the issuer |
-| `JWT_ALG_UNSUPPORTED` | The token's algorithm is not permitted |
-| `JWT_INVALID` | Any other verification failure |
+| `JWT_ALG_UNSUPPORTED` | The token's algorithm is not permitted: an unsigned token (`alg: none`, with or without a signature segment), or a token whose algorithm the provider holds no key for, such as an HS256 token sent to an RS256 provider (key confusion) |
+| `JWT_INVALID` | Any other verification failure, including a `kid` that matches no key of an algorithm the provider does hold keys for (what a key rotation looks like) |
 | `JWT_CLAIMS_INVALID` | A bound `JwtClaimsValidator` rejected the token (emitted by `JwtClaimsValidatorContributor`) |
 
 Issuer comparison is exact string equality; a token with no `iss` is rejected when an issuer is

@@ -16,6 +16,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.auth.NoSuchKeyIdException;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.authentication.TokenCredentials;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -107,7 +108,8 @@ import java.util.stream.Collectors;
  *   <li>Inspects the failure exception to derive a stable {@code reasonCode}
  *       ({@code BEARER_MISSING}, {@code BEARER_MALFORMED}, {@code JWT_EXPIRED},
  *       {@code JWT_SIGNATURE_INVALID}, {@code JWT_AUDIENCE_INVALID}, {@code JWT_ISSUER_INVALID},
- *       {@code JWT_ALG_UNSUPPORTED}, or {@code JWT_INVALID}).</li>
+ *       {@code JWT_ALG_UNSUPPORTED} for an unsigned token or one whose algorithm the provider holds
+ *       no key for, or {@code JWT_INVALID}).</li>
  *   <li>Calls {@link CredentialRejectionReporter#report} with a pre-auth
  *       {@link JwksVerificationSource} (issuer/JWKS URI from config; kid/alg empty since the JWT
  *       header is not available before verification completes).</li>
@@ -145,6 +147,20 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
      * request, so the evidence is appended exactly once.
      */
     private static final String EVIDENCE_KEY = JwtBearerSecuritySchemeHandler.class.getName() + ".jwtEvidence";
+
+    /**
+     * Suffix of {@link NoSuchKeyIdException#id()} when the provider holds no key for the token's
+     * algorithm at all; an unknown kid on an algorithm with keys ends with that kid instead. A token
+     * whose kid is literally {@code <null>} is indistinguishable and is reported as an algorithm
+     * failure, which affects only the audit reason: the request is refused with 401 either way.
+     */
+    private static final String NO_KEY_ID_SUFFIX = "#<null>";
+
+    /** Start of the provider's failure message for an unsigned token in secure mode. */
+    private static final String UNSIGNED_IN_SECURE_MODE = "JWT is in secure mode but token is not signed";
+
+    /** Start of the provider's failure message for an {@code alg: none} token that carries a signature. */
+    private static final String ALG_NONE_NOT_ALLOWED = "Algorithm \"none\" not allowed";
 
     private final String schemeName;
     private final JWTAuth jwtAuth;
@@ -593,6 +609,13 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
         if (cause instanceof SignatureException) {
             return "JWT_SIGNATURE_INVALID";
         }
+        if (cause instanceof NoSuchKeyIdException noKey && noKey.id().endsWith(NO_KEY_ID_SUFFIX)) {
+            // The provider holds no key at all for the token's algorithm, for example an HS256 token
+            // presented to an RS256 provider (key confusion) or an algorithm it was never configured
+            // with. An unknown kid on an algorithm the provider does hold keys for names that kid
+            // instead, and stays JWT_INVALID: it is what a key rotation looks like.
+            return "JWT_ALG_UNSUPPORTED";
+        }
 
         String message = cause.getMessage();
         if (message == null) {
@@ -608,7 +631,9 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
         if (message.equals("Invalid JWT issuer")) {
             return "JWT_ISSUER_INVALID";
         }
-        if (message.startsWith("Algorithm not supported/allowed")) {
+        if (message.startsWith("Algorithm not supported/allowed")
+                || message.startsWith(UNSIGNED_IN_SECURE_MODE)
+                || message.startsWith(ALG_NONE_NOT_ALLOWED)) {
             return "JWT_ALG_UNSUPPORTED";
         }
         if (message.contains("Invalid format for JWT")
