@@ -116,8 +116,8 @@ final class McpRouterMount implements RouterMount {
             log.warn(
                     "MCP tool registry at {} is empty: no tools are reachable. Likely causes: "
                             + "GeneratedMcpToolsModule is not installed in the application's Dagger component, "
-                            + "or vertique-codegen-mcp is absent from the annotation-processor path (pre-facade "
-                            + "setups that do not depend on vertique-codegen-all)",
+                            + "or the vertique-codegen-all facade, which carries vertique-codegen-mcp, is missing from "
+                            + "the annotation-processor path",
                     config.mountPath());
         }
         this.identityEstablisher = new McpIdentityEstablisher(

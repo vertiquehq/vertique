@@ -19,8 +19,8 @@ themselves; `vertique-cache-aop` is test-scope here only.
 
 Use this provider for application instances whose cache state is intentionally local to one process,
 including tests and single-instance deployments. Programmatic-only apps need no annotation module.
-Apps using `@Cacheable` / `@CacheEvict` also install `CacheAopModule` and put
-`vertique-codegen-cache` on the compiler's annotation-processor path.
+Apps using `@Cacheable` / `@CacheEvict` also install `CacheAopModule`; the
+`vertique-codegen-all` facade supplies the cache processor.
 
 ## Core Concepts
 

@@ -913,9 +913,9 @@ configuration key or tool (and, for a typed policy, the policy type where one is
 with no contributed tools at all is not one of these failures
 — composition still succeeds — but, when the mount is enabled (`mcp.enabled=true`), it is logged as
 one WARN naming the mount path and both likely causes: `GeneratedMcpToolsModule` not installed in
-the application's Dagger component, or `vertique-codegen-mcp` absent from the annotation-processor
-path in a pre-facade, off-parent setup. A disabled mount (`mcp.enabled=false`, the default) never
-installs any route and its empty registry is therefore never reachable, so this WARN does not fire
+the application's Dagger component, or the `vertique-codegen-all` facade, which carries
+`vertique-codegen-mcp`, missing from the annotation-processor path. A disabled mount
+(`mcp.enabled=false`, the default) never installs any route and its empty registry is therefore never reachable, so this WARN does not fire
 for it — an empty registry on an unconfigured, disabled MCP composition is silent, not a startup-log
 false positive for the common "MCP not turned on" case. The published registry order never depends
 on contribution order, and the

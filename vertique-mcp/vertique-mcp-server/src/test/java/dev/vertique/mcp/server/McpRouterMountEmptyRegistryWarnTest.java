@@ -47,9 +47,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * R41 — proves {@link McpRouterMount}'s empty-registry WARN: an unconditional, single WARN naming
- * both likely causes (the generated Dagger module not installed; {@code vertique-codegen-mcp} absent
- * from a pre-facade processor path) fires exactly when the composed {@link McpToolRegistry} publishes
- * no tools, and never fires for a registry that publishes at least one tool.
+ * both likely causes (the generated Dagger module not installed; the {@code vertique-codegen-all}
+ * facade, which carries {@code vertique-codegen-mcp}, missing from the processor path) fires
+ * exactly when the composed {@link McpToolRegistry} publishes no tools, and never fires for a
+ * registry that publishes at least one tool.
  *
  * <p>Builds the real {@link McpRouterMount} constructor call {@code McpServerModule#routerMount}
  * makes, mirroring {@link McpRouterMountRegistryVisibilityTest}'s fixture wiring.
