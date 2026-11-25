@@ -2115,7 +2115,7 @@ late failure is observed.
 - **Omitting `RestValidationModule` and expecting validation.** `jaxrs.validationStrategy` defaults to
   `web-validation`. Without a module contributing a strategy with that id, only the built-in `none`
   strategy is registered and router build fails with a `RestConfigurationException` that names the
-  configured id and lists the available ids; there is no fallback to `none` (a mount with no resources
+  `jaxrs.validationStrategy` setting and lists the available ids (it never echoes the configured value); there is no fallback to `none` (a mount with no resources
   selects no strategy). Add the module, or set `jaxrs.validationStrategy` to `none` to run without a
   request gate.
 - **Assuming an application decoder or encoder is a fallback.** Application implementations default to
