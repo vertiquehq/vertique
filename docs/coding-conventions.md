@@ -337,7 +337,7 @@ return values;
 
 ## Imports
 
-- No wildcard imports (review-enforced; Spotless does not expand wildcard imports)
+- No wildcard imports, in main and test sources. `spotless:check` fails on `import a.b.*;` and cannot fix it, so replace the wildcard with the explicit imports
 - Static imports for test assertion methods (`assertThat`, `assertEquals`, `mock`, `when`, etc.)
 - Import ordering is managed by the formatter — do not rearrange manually
 
