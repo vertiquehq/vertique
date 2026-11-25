@@ -14,12 +14,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice-2.1 RED tests for reflection-free {@code findAnnotation}/{@code hasAnnotation} on the
- * generated proxy's nested {@code MethodMetadataImpl} (FR-013-13).
+ * Verifies reflection-free {@code findAnnotation}/{@code hasAnnotation} on the
+ * generated proxy's nested {@code MethodMetadataImpl}.
  *
  * <p>The bean's intercepted method carries an aspect trigger ({@code @TestTimed}) <em>and</em> a
- * runtime-retained, non-aspect {@link TestMarker} marker. The slice-2.1 GREEN step must, for each
- * {@code @Retention(RUNTIME)} method annotation, generate a {@code <Ann>$AopLiteral} and have
+ * runtime-retained, non-aspect {@link TestMarker} marker. For each
+ * {@code @Retention(RUNTIME)} method annotation, the processor must generate a {@code <Ann>$AopLiteral} and have
  * {@code findAnnotation(Class)} return the matching literal by {@code annotationType()} — with no
  * call to {@code Method.getAnnotation} / {@code Class.getDeclaredMethod}. {@code @TestMarker} is the
  * forcing case: unlike an aspect trigger (whose literal already exists for the around-chain), a
@@ -30,11 +30,9 @@ import org.junit.jupiter.api.Test;
  * the source-level assertions below read the {@code Greeter$AopProxy} source (the same pattern as
  * {@link ArrayAttributeLiteralCompilesTest}).
  *
- * <p><strong>Expected RED behavior:</strong> the current {@code MetadataEmitter} emits
- * {@code findAnnotation} as a {@code return Optional.empty()} stub and {@code hasAnnotation} as a
- * {@code return false} stub, and the proxy materializes literals only for aspect triggers — so no
- * {@code TestMarker} literal is referenced from {@code findAnnotation}. Both content assertions
- * therefore fail until the literal-backed lookup lands.
+ * <p>The assertions fail if {@code findAnnotation} is a {@code return Optional.empty()} stub and
+ * {@code hasAnnotation} a {@code return false} stub, or if literals are materialized only for aspect
+ * triggers so that no {@code TestMarker} literal is referenced from {@code findAnnotation}.
  */
 class FindAnnotationReflectionFreeTest {
 
@@ -87,7 +85,7 @@ class FindAnnotationReflectionFreeTest {
 
         // The reflection-free lookup must reference the materialized TestMarker literal — either the
         // generated TestMarker$AopLiteral type or a TestMarker-typed literal constant the metadata impl
-        // returns. The current stub returns Optional.empty() and references no Marker literal.
+        // returns. A stub would return Optional.empty() and reference no Marker literal.
         boolean referencesMarkerLiteral = proxy.contains("TestMarker$AopLiteral") || proxy.contains("TestMarker.class");
         assertTrue(
                 referencesMarkerLiteral,

@@ -23,7 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Directional benchmark demonstrating the NFR-CG010-002 target: the generated execution plan
+ * Directional benchmark demonstrating the speedup target: the generated execution plan
  * path (precomputed policies + direct typed call) is ≥1.5× faster than the reflective path
  * (per-call annotation scan to derive policies + {@code Method.invoke}).
  *
@@ -121,7 +121,7 @@ class InvocationBenchmark {
 
     /**
      * Precomputed policies for every parameter — computed once at class-init time, just as
-     * the CG-010 {@code ExecutionPlanEmitter} would emit them as {@code private static final}
+     * the {@code ExecutionPlanEmitter} would emit them as {@code private static final}
      * constants in the generated plan class.
      */
     private static final EffectiveInputPolicies POLICIES_Q = EffectiveInputPolicies.NONE;
@@ -193,7 +193,7 @@ class InvocationBenchmark {
         assertTrue(
                 speedup >= 1.5,
                 String.format(
-                        "NFR-CG010-002 not met: expected ≥1.5× speedup but got %.2f× (reflective=%.1f ns/op, plan=%.1f ns/op)",
+                        "Speedup target not met: expected ≥1.5× speedup but got %.2f× (reflective=%.1f ns/op, plan=%.1f ns/op)",
                         speedup, refNsPerOp, planNsPerOp));
     }
 

@@ -30,17 +30,15 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Verifies that every declared FORM collection shape resolves to the SAME
- * {@link ResourceMethodMeta.ParamMeta} shape on the generated and the reflective dispatch paths
- * (legacy issue #155; plan finding F5, the §4 FORM invariant table, slice S5; review round 1
- * finding F11).
+ * {@link ResourceMethodMeta.ParamMeta} shape on the generated and the reflective dispatch paths.
  *
- * <p>Before this branch the two paths disagreed: {@code ResourceScanner} rewrote every
+ * <p>The two paths used to disagree: {@code ResourceScanner} rewrote every
  * collection-shaped {@code @FormParam}'s declared type to {@code List.class} while
  * {@code EffectiveJaxRsContractResolver} kept the declared type, so a declared
  * {@code @FormParam Set<String>} carried {@code type() == java.util.List} reflectively and
  * {@code type() == java.util.Set} generated. Both paths then failed at request time, and the
  * divergence was a latent {@code ClassCastException} hazard the moment extraction started returning
- * real collections — which is exactly what S5 does. This test pins the post-fix agreement across the
+ * real collections — which extraction now does. This test pins the agreement across the
  * full declared FORM shape set: {@code List<String>}, {@code Set<String>}, {@code SortedSet<String>},
  * {@code NavigableSet<String>}, {@code Collection<String>}, and {@code String[]}.
  *
@@ -141,7 +139,7 @@ class GeneratedFormParamParityTest {
             Class<?> expectedType) {}
 
     /**
-     * Builds the matrix rows: every declared FORM collection shape the §4 contract names —
+     * Builds the matrix rows: every declared FORM collection shape the contract names —
      * {@code List<String>}, {@code Set<String>}, {@code SortedSet<String>},
      * {@code NavigableSet<String>}, {@code Collection<String>}, and {@code String[]}.
      *
@@ -279,10 +277,10 @@ class GeneratedFormParamParityTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("formShapeCases")
-    @DisplayName("declared FORM collection shape — generated and reflective agree on the ParamMeta shape (#155/F5)")
+    @DisplayName("declared FORM collection shape — generated and reflective agree on the ParamMeta shape")
     void formParamCollectionShape_generatedAndReflective_agree(String label, FormShapeCase shapeCase) throws Exception {
         // Reflective side: the real, public entry point — exercises the real ResourceScanner FORM
-        // branch (whose List.class normalization S5 removed).
+        // branch (which no longer normalizes to List.class).
         ResourceMethodMeta.ParamMeta reflective = new JaxRsRouteRegistrar()
                 .scanResource(shapeCase.reflectiveResourceInstance())
                 .get(0)
@@ -312,8 +310,8 @@ class GeneratedFormParamParityTest {
         assertEquals(
                 reflective.componentType(), generated.componentType(), label + ": parity breach on componentType()");
 
-        // genericType is contractually BODY-only, so FORM must stay null on BOTH paths (§4 invariant
-        // table): the FORM collection path needs only type() + componentType() to materialize.
+        // genericType is contractually BODY-only, so FORM must stay null on BOTH paths
+        // (the FORM collection path needs only type() + componentType() to materialize).
         assertNull(reflective.genericType(), label + ": reflective genericType() must stay null for FORM");
         assertNull(generated.genericType(), label + ": generated genericType() must stay null for FORM");
     }

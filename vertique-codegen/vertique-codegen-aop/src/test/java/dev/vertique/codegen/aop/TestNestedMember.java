@@ -8,7 +8,7 @@ import java.lang.annotation.RetentionPolicy;
 
 /**
  * Test-local runtime-retained nested annotation used as a <em>member type</em> of
- * {@link TestNestedAnnotationAttr}, exercising the {@code vertique-codegen-aop} P2-W3 compile-test.
+ * {@link TestNestedAnnotationAttr}, exercising the nested-annotation compile test of {@code vertique-codegen-aop}.
  *
  * <p>A nested-annotation member is a legal annotation member type, but
  * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter} cannot materialize it into a literal in

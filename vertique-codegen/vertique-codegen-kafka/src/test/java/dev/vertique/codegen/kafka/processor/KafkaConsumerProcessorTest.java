@@ -497,10 +497,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 1: generic payload types emit erased .class ---
+    // --- generic payload types emit erased .class ---
 
     @Nested
-    @DisplayName("Fix 1 — generic payload type emits erased class literal")
+    @DisplayName("generic payload type emits erased class literal")
     class GenericPayloadErasureTests {
 
         @Test
@@ -561,10 +561,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 2: inherited @KafkaHandler methods are scanned ---
+    // --- inherited @KafkaHandler methods are scanned ---
 
     @Nested
-    @DisplayName("Fix 2 — inherited @KafkaHandler methods from super-interface are included")
+    @DisplayName("inherited @KafkaHandler methods from super-interface are included")
     class InheritedHandlerTests {
 
         @Test
@@ -599,10 +599,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 4: raw KafkaRecordHandler (unresolved V) triggers a diagnostic error ---
+    // --- raw KafkaRecordHandler (unresolved V) triggers a diagnostic error ---
 
     @Nested
-    @DisplayName("Fix 4 — raw KafkaRecordHandler (unresolved V) is rejected at compile time")
+    @DisplayName("raw KafkaRecordHandler (unresolved V) is rejected at compile time")
     class RawHandlerValidationTests {
 
         @Test
@@ -630,10 +630,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 5: @DispatchContextValue on parameter type is correctly classified ---
+    // --- @DispatchContextValue on parameter type is correctly classified ---
 
     @Nested
-    @DisplayName("Fix 5 — @DispatchContextValue on parameter type is classified as dispatch context")
+    @DisplayName("@DispatchContextValue on parameter type is classified as dispatch context")
     class DispatchContextValueTests {
 
         @Test
@@ -666,7 +666,7 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix N (parity): payload-must-be-first enforcement ---
+    // --- payload-must-be-first enforcement ---
 
     @Nested
     @DisplayName("Payload-first enforcement — context param before payload is rejected")
@@ -750,11 +750,11 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 1 (round-2): dual-annotation aggregation ---
+    // --- dual-annotation aggregation ---
 
     @Nested
     @DisplayName(
-            "Fix 1 (round-2) — dual-annotation @KafkaListener + @KafkaSource emits single companion with both HANDLER and SOURCE metas")
+            "dual-annotation @KafkaListener + @KafkaSource emits single companion with both HANDLER and SOURCE metas")
     class DualAnnotationAggregationTests {
 
         @Test
@@ -797,10 +797,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 2 (round-2): override de-duplication ---
+    // --- override de-duplication ---
 
     @Nested
-    @DisplayName("Fix 2 (round-2) — inherited @KafkaHandler override de-duplication")
+    @DisplayName("inherited @KafkaHandler override de-duplication")
     class InheritedHandlerOverrideTests {
 
         @Test
@@ -842,10 +842,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 2 (round-3): override-drops-annotation yields no route ---
+    // --- override-drops-annotation yields no route ---
 
     @Nested
-    @DisplayName("Fix 2 (round-3) — override that drops @KafkaHandler generates no route (reflective parity)")
+    @DisplayName("override that drops @KafkaHandler generates no route (reflective parity)")
     class InheritedHandlerOverrideDropTests {
 
         @Test
@@ -890,10 +890,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Fix 3 (round-2): @KafkaListener.valueType() assignability ---
+    // --- @KafkaListener.valueType() assignability ---
 
     @Nested
-    @DisplayName("Fix 3 (round-2) — @KafkaListener.valueType() assignability enforcement")
+    @DisplayName("@KafkaListener.valueType() assignability enforcement")
     class ValueTypeAssignabilityTests {
 
         @Test
@@ -986,10 +986,10 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Direct handler / router shape validation (Slice 6) ---
+    // --- Direct handler / router shape validation ---
 
     @Nested
-    @DisplayName("Slice 6 — direct-handler shape validation")
+    @DisplayName("direct-handler shape validation")
     class DirectHandlerShapeTests {
 
         @Test
@@ -1050,13 +1050,13 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- @JsonProfile annotation expansion (FR-JSON-060/062/066) ---
+    // --- @JsonProfile annotation expansion ---
 
     /**
      * Verifies that {@code KafkaListenerScanner} reads a type-level
      * {@link dev.vertique.core.json.JsonProfile @JsonProfile} on the {@code @KafkaListener} type as
      * the sole per-binding profile selector and folds it into the generated {@code _BindingMeta},
-     * applying the FR-JSON-066 method-placement reject. {@code @JsonProfile} is the only per-binding
+     * applying the method-placement reject. {@code @JsonProfile} is the only per-binding
      * profile selection annotation.
      *
      * <ul>
@@ -1199,10 +1199,10 @@ class KafkaConsumerProcessorTest {
         @DisplayName(
                 "method-level @JsonProfile on an INHERITED @KafkaHandler method emits a compile error naming the method")
         void methodLevelJsonProfileOnInheritedHandlerMethod_emitsCompileError() {
-            // FR-JSON-066 parity: the handler-read uses getAllMembers (inherited-inclusive), so the
+            // Parity: the handler-read uses getAllMembers (inherited-inclusive), so the
             // method-level reject must scan the SAME member set. A @JsonProfile on a @KafkaHandler
             // method declared on the SUPER-interface must be rejected even though the @KafkaListener
-            // type (the Child) does not declare it. getEnclosedElements() misses it → currently no error.
+            // type (the Child) does not declare it. getEnclosedElements() would miss it.
             JavaFileObject base = SourceFiles.inline("com.example.MethodProfiledBase", """
                     package com.example;
                     import dev.vertique.kafka.KafkaHandler;
@@ -1232,7 +1232,7 @@ class KafkaConsumerProcessorTest {
         }
 
         @Test
-        @DisplayName("@KafkaListener.valueJsonProfile() attribute no longer exists (Phase 3 removal)")
+        @DisplayName("@KafkaListener.valueJsonProfile() attribute no longer exists")
         void kafkaListenerValueJsonProfileAttributeMethod_noLongerExists() throws Exception {
             // Proves the legacy attribute was removed from the annotation, not merely unread: the
             // accessor method must be absent from the annotation class.
@@ -1242,16 +1242,16 @@ class KafkaConsumerProcessorTest {
         }
     }
 
-    // --- Validation tests (FR-CG006-005) ---
+    // --- Validation tests ---
 
     @Nested
-    @DisplayName("Validation — FR-CG006-005 compile-time checks")
+    @DisplayName("Validation — compile-time checks")
     class ValidationTests {
 
         // --- (a) blank topic ---
 
         @Test
-        @DisplayName("FR-005: @KafkaListener with blank topic is rejected")
+        @DisplayName("@KafkaListener with blank topic is rejected")
         void rejectsBlankTopic() {
             JavaFileObject router = SourceFiles.inline("com.example.BadRouter", """
                     package com.example;
@@ -1270,7 +1270,7 @@ class KafkaConsumerProcessorTest {
         }
 
         @Test
-        @DisplayName("FR-005: @KafkaListener with whitespace-only topic is rejected")
+        @DisplayName("@KafkaListener with whitespace-only topic is rejected")
         void rejectsWhitespaceTopic() {
             JavaFileObject handler = SourceFiles.inline("com.example.BlankHandler", """
                     package com.example;
@@ -1295,7 +1295,7 @@ class KafkaConsumerProcessorTest {
         // --- (c) two payload params ---
 
         @Test
-        @DisplayName("FR-005: @KafkaHandler with two payload params is rejected")
+        @DisplayName("@KafkaHandler with two payload params is rejected")
         void rejectsTwoPayloadParams() {
             JavaFileObject router = SourceFiles.inline("com.example.TwoPayloadRouter", """
                     package com.example;
@@ -1316,7 +1316,7 @@ class KafkaConsumerProcessorTest {
         // --- (d) non-void / non-Future<Void> return type ---
 
         @Test
-        @DisplayName("FR-005: @KafkaHandler with non-void return type is rejected")
+        @DisplayName("@KafkaHandler with non-void return type is rejected")
         void rejectsNonVoidReturnType() {
             JavaFileObject router = SourceFiles.inline("com.example.BadReturnRouter", """
                     package com.example;
@@ -1335,7 +1335,7 @@ class KafkaConsumerProcessorTest {
         }
 
         @Test
-        @DisplayName("FR-005: @KafkaHandler returning Future<String> (not Future<Void>) is rejected")
+        @DisplayName("@KafkaHandler returning Future<String> (not Future<Void>) is rejected")
         void rejectsFutureOfStringReturnType() {
             JavaFileObject router = SourceFiles.inline("com.example.BadFutureRouter", """
                     package com.example;
@@ -1453,7 +1453,7 @@ class KafkaConsumerProcessorTest {
         // --- (f) no match attribute ---
 
         @Test
-        @DisplayName("FR-005: @KafkaHandler with no matchHeader / matchProperty / defaultHandler is rejected")
+        @DisplayName("@KafkaHandler with no matchHeader / matchProperty / defaultHandler is rejected")
         void rejectsHandlerWithNoMatchAttribute() {
             JavaFileObject router = SourceFiles.inline("com.example.NoMatchRouter", """
                     package com.example;
@@ -1474,7 +1474,7 @@ class KafkaConsumerProcessorTest {
         // --- (g) two defaultHandler = true ---
 
         @Test
-        @DisplayName("FR-005: two @KafkaHandler methods with defaultHandler=true are rejected")
+        @DisplayName("two @KafkaHandler methods with defaultHandler=true are rejected")
         void rejectsTwoDefaultHandlers() {
             JavaFileObject router = SourceFiles.inline("com.example.TwoDefaultRouter", """
                     package com.example;
@@ -1498,7 +1498,7 @@ class KafkaConsumerProcessorTest {
         // --- Valid cases: Future<Void> return should be accepted ---
 
         @Test
-        @DisplayName("FR-005: @KafkaHandler returning Future<Void> is valid")
+        @DisplayName("@KafkaHandler returning Future<Void> is valid")
         void acceptsFutureVoidReturnType() {
             JavaFileObject router = SourceFiles.inline("com.example.FutureVoidRouter", """
                     package com.example;

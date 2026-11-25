@@ -12,16 +12,13 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies that a constructor-injected {@code Event<Unobserved>} with <em>no</em> matching observer
  * still gets a generated publisher and a {@code @Binds Event<Unobserved>}, so the injection resolves
- * (plan §3 frozen decision: an unobserved fired type still gets a valid no-op publisher —
+ * (an unobserved fired type still gets a valid no-op publisher —
  * {@code fire()} matches zero observers and completes immediately).
  *
  * <p>Fixture: a bean injects {@code Event<Unobserved>} through its {@code @Inject} constructor, but no
  * {@code @Observes Unobserved} observer exists anywhere in the compilation. The inventory must
  * therefore include {@code Unobserved} <em>solely</em> from the {@code Event<T>} injection scan, and
  * the generated module must still bind {@code Event<Unobserved>}.
- *
- * <p><strong>Red:</strong> the slice-3.2 scaffold {@link EventsProcessor} is a no-op, so no
- * {@code Unobserved$Event} publisher and no {@code GeneratedEventsModule} are generated.
  */
 class UnobservedEventTypeInjectsNoOpPublisherTest {
 

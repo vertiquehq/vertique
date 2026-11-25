@@ -34,12 +34,12 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * APT compilation tests for T028's handling of concrete {@code jakarta.ws.rs.core.Application}
- * subclasses (FR-021, C-APPCHECK): a subclass is never registered; it compiles with exactly one
- * warning, its binary name followed by static text (DPR3-011), unless it carries
+ * APT compilation tests for the handling of concrete {@code jakarta.ws.rs.core.Application}
+ * subclasses: a subclass is never registered; it compiles with exactly one
+ * warning, its binary name followed by static text, unless it carries
  * {@code @NoAutoWire}; and the generated {@code GeneratedJaxRsResourcesModule} holds no
  * {@code Application} registration, no construction glue, and resource bindings gated on
- * {@code Set<GeneratedRestApplicationRegistration>} (AC-021.4's compile-time half).
+ * {@code Set<GeneratedRestApplicationRegistration>}.
  *
  * <p>Each test compiles small fixtures through {@link JaxRsPipelineProcessor} via
  * {@link ProcessorTestHarness}, following {@link RestApplicationDeclarationTest}'s and
@@ -51,7 +51,7 @@ import org.opentest4j.AssertionFailedError;
  * <p>A diagnostic mentions a subclass when its message contains the subclass's simple name. Every
  * fixture gives its subclass a simple name no other type or text of the unit contains, and the
  * binary name contains the simple name, so this is stricter than matching the binary name alone:
- * rest-024's diagnostics, which name a subclass by its simple name only, count too. The
+ * path-grammar diagnostics, which name a subclass by its simple name only, count too. The
  * single-warning checks count both {@link Diagnostic.Kind#WARNING} and
  * {@link Diagnostic.Kind#MANDATORY_WARNING}, and then require the one warning to be a
  * {@link Diagnostic.Kind#MANDATORY_WARNING}.
@@ -59,7 +59,7 @@ import org.opentest4j.AssertionFailedError;
 class ApplicationSubclassWarningTest {
 
     /**
-     * The warning's static text after the subclass's binary name (C-APPCHECK, DPR3-011); the same
+     * The warning's static text after the subclass's binary name; the same
      * for every subclass, whether or not the unit declares an application.
      */
     private static final String WARNING_STATIC_TEXT = ": @ApplicationPath and getClasses() have no effect;"
@@ -135,10 +135,10 @@ class ApplicationSubclassWarningTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-001 — an Application subclass compiles with exactly one warning naming it
+    // An Application subclass compiles with exactly one warning naming it
     // -----------------------------------------------------------------------------------------
 
-    /** One TP-001 unit: the subclass's binary name and the unit's sources. */
+    /** One unit: the subclass's binary name and the unit's sources. */
     private record SubclassFixture(String subclassBinaryName, List<JavaFileObject> sources) {}
 
     private static Stream<Arguments> applicationSubclassCases() {
@@ -296,7 +296,7 @@ class ApplicationSubclassWarningTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-002 — @NoAutoWire on a subclass suppresses the warning
+    // @NoAutoWire on a subclass suppresses the warning
     // -----------------------------------------------------------------------------------------
 
     private static JavaFileObject legacyFixture(String packageName, boolean noAutoWire) {
@@ -343,7 +343,7 @@ class ApplicationSubclassWarningTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-003 — no Application registration is emitted, and resource bindings take the native set
+    // No Application registration is emitted, and resource bindings take the native set
     // -----------------------------------------------------------------------------------------
 
     private static JavaFileObject injectedLegacyFixture(String packageName) {
@@ -387,7 +387,7 @@ class ApplicationSubclassWarningTest {
         String source = sourceOf(result, moduleFqn);
         logGeneratedSource("resource beside Legacy module", source);
 
-        // Structural absence (ruling E2): the only registration type the module spells is the native one.
+        // Structural absence: the only registration type the module spells is the native one.
         assertEquals(
                 Set.of(GeneratedRestApplicationRegistration.class.getSimpleName()),
                 registrationTokens(source),
@@ -585,7 +585,7 @@ class ApplicationSubclassWarningTest {
     }
 
     /**
-     * Asserts that {@code methodName} keeps rest-024's presence-gated binding shape — a static
+     * Asserts that {@code methodName} keeps the presence-gated binding shape — a static
      * method returning {@code Set<Object>} and taking the {@code @VertxConfig JsonObject}, the
      * registration set, and the resource's {@code Provider} — with the registration set being
      * {@code Set<GeneratedRestApplicationRegistration>}.

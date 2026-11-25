@@ -93,27 +93,26 @@ class PathPlaceholdersTest {
         assertEquals(java.util.List.of("id", "name"), java.util.List.copyOf(result));
     }
 
-    // --- Fix B: regex constraint containing '/' ---
+    // --- regex constraint containing '/' ---
 
     @Test
-    @DisplayName("{id:[^/]+} — regex constraint with '/' is handled correctly (Fix B)")
+    @DisplayName("{id:[^/]+} — regex constraint with '/' is handled correctly")
     void regexConstraintWithSlash_extractsName() {
-        // Fix B: old regex \\{([^/}]+)} excluded ANY '/' inside braces, so {id:[^/]+} produced
-        // no match (the '[^/]+' literal in the constraint was rejected). The new grammar allows
-        // '/' inside the optional ':regex' suffix.
+        // The placeholder grammar allows '/' inside the optional ':regex' suffix, so
+        // {id:[^/]+} yields the name "id" even though the constraint contains '/'.
         Set<String> result = PathPlaceholders.extract("/users/{id:[^/]+}");
         assertEquals(Set.of("id"), result);
     }
 
     @Test
-    @DisplayName("{path:.*/sub} — regex constraint with '/' path-greedy pattern (Fix B)")
+    @DisplayName("{path:.*/sub} — regex constraint with '/' path-greedy pattern")
     void regexConstraintWithSlashPath_extractsName() {
         Set<String> result = PathPlaceholders.extract("/files/{path:.*/sub}");
         assertEquals(Set.of("path"), result);
     }
 
     @Test
-    @DisplayName("multiple placeholders, one with '/' in regex constraint — all extracted (Fix B)")
+    @DisplayName("multiple placeholders, one with '/' in regex constraint — all extracted")
     void multipleWithRegexSlash_allExtracted() {
         Set<String> result = PathPlaceholders.extract("/a/{id:[^/]+}/b/{name}");
         assertEquals(java.util.List.of("id", "name"), java.util.List.copyOf(result));

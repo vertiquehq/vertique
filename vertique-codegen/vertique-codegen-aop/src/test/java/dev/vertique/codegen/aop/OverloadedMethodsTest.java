@@ -14,18 +14,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug F4: {@code AopProxyEmitter} derives every per-method member name from the
- * method's <em>simple name</em> only — the nested metadata type is
- * {@code <name>_MethodMetadata}, the metadata constant is {@code <NAME>_META}, and the chain field is
- * {@code <name>$chain}. For two overloaded intercepted methods (same name, different parameters),
- * all three names collide, producing duplicate nested types and duplicate fields that do not
- * compile.
+ * Two overloaded intercepted methods yield a compilable proxy. {@code AopProxyEmitter} derives
+ * per-method member names (the nested metadata type {@code <name>_MethodMetadata}, the metadata
+ * constant {@code <NAME>_META}, and the chain field {@code <name>$chain}) so that overloads with the
+ * same simple name but different parameters do not collide into duplicate nested types and fields.
  *
- * <p>This shape uses {@code @TestTimed} (a non-array aspect) so the F1 array-literal bug does not
- * interfere — the failure here is purely the overload name collision.
+ * <p>This shape uses {@code @TestTimed} (a non-array aspect), so the failure mode is purely the
+ * overload name collision.
  *
  * <p>The test asserts no duplicate-member ("already defined") diagnostic is present and that the
- * compilation SUCCEEDS. Currently RED: the colliding metadata type / field names abort compilation.
+ * compilation succeeds.
  */
 class OverloadedMethodsTest {
 
@@ -65,7 +63,7 @@ class OverloadedMethodsTest {
         assertFalse(
                 duplicateMember,
                 "overloaded intercepted methods must get distinct metadata-type, metadata-field, and chain-field "
-                        + "names — F4 derives all three from the simple name only, so the two process(..) overloads "
+                        + "names — deriving all three from the simple name only would make the two process(..) overloads "
                         + "collide");
 
         // The proxy (with both overloads) must compile cleanly.

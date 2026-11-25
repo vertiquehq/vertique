@@ -12,14 +12,14 @@ import java.lang.annotation.Target;
 /**
  * Test-local aspect <strong>trigger</strong> annotation ({@link Aspect}-meta-annotated) carrying an
  * attribute of an <strong>unsupported</strong> kind (a {@code float} member), used by the
- * {@code vertique-codegen-aop} P2-W2 compile-test.
+ * {@code vertique-codegen-aop} compile-test.
  *
  * <p>{@code float} is one of the kinds {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter}
  * cannot render (alongside {@code char} and {@code double}). Because this annotation is itself an
  * aspect trigger, the proxy emits a per-aspect {@code <Ann>$AopLiteral} class and a per-occurrence
  * literal <em>instance</em> for it. Without an up-front precheck on the aspect's annotation type, the
  * literal emitter throws {@code UnsupportedOperationException} mid-emission (a processor crash with a
- * stack trace) instead of the clean {@code Diagnostics.error} FR-013-09c / FR-013-13 require.
+ * stack trace) instead of the clean {@code Diagnostics.error} the contract requires.
  */
 @Aspect(ordering = 1000)
 @Target(ElementType.METHOD)

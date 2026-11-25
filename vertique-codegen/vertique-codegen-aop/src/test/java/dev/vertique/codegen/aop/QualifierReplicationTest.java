@@ -11,10 +11,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the generated proxy constructor replicates the bean's super-constructor qualifier
- * annotations verbatim (FR-013-03 / spike V6) so Dagger resolves the same qualified dependency.
+ * annotations verbatim so Dagger resolves the same qualified dependency.
  *
- * <p><strong>Red:</strong> the no-op scaffold processor emits no proxy, so no qualified constructor
- * parameter exists and the assertion fails.
  */
 class QualifierReplicationTest {
 

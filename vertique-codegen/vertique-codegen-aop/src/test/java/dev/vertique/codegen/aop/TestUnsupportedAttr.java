@@ -10,12 +10,12 @@ import java.lang.annotation.Target;
 
 /**
  * Test-local, runtime-retained method annotation carrying an attribute of an <strong>unsupported</strong>
- * kind (a {@code float} member), used by {@code vertique-codegen-aop} slice-2.1 compile-tests.
+ * kind (a {@code float} member), used by {@code vertique-codegen-aop} compile-tests.
  *
  * <p>{@code float} is one of the kinds {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter}
  * does not support (alongside {@code char} and {@code double}); when the proxy must materialize this
  * annotation into a literal for the reflection-free {@code findAnnotation} surface, the unsupported
- * kind MUST be a compile <em>error</em> (FR-013-13 / FR-013-09c) — never a silent reflective
+ * kind MUST be a compile <em>error</em> — never a silent reflective
  * fallback. This fixture is not an {@link dev.vertique.aop.Aspect} trigger: it rides on a method that
  * also carries an aspect trigger so the proxy is generated and the metadata materialization is
  * reached.

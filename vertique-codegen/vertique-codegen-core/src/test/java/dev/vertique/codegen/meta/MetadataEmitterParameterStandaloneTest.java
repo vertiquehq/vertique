@@ -36,9 +36,6 @@ import org.mockito.quality.Strictness;
  * top-level per-parameter metadata class rather than the nested {@code ParameterMetadataImpl}
  * {@link MetadataEmitter#methodMetadataType} builds for the AOP proxy path.
  *
- * <p>This method does not exist yet on {@link MetadataEmitter} — this test class fails to compile
- * against the current {@code MetadataEmitter}, which is the intended RED state for this slice.
- *
  * <p>Following {@code MetadataEmitterTest}'s established convention, all {@link javax.lang.model}
  * elements are Mockito stubs (no {@code compile-testing} dependency), and assertions snapshot the
  * emitted {@link JavaFile#toString()} source text rather than compiling and loading the generated

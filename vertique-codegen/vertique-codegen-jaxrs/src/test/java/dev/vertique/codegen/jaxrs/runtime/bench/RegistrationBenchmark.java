@@ -28,7 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Directional benchmark demonstrating the NFR-CG010-001 target: generated-descriptor path
+ * Directional benchmark demonstrating the speedup target: generated-descriptor path
  * completes JAX-RS resource registration ≥2× faster than the reflective walk.
  *
  * <p>Two measurements are made over a hot JVM loop:
@@ -116,7 +116,7 @@ class RegistrationBenchmark {
         assertTrue(
                 speedup >= 2.0,
                 String.format(
-                        "NFR-CG010-001 not met: expected ≥2× speedup but got %.2f× (generated=%.1f ns/op, reflective=%.1f ns/op)",
+                        "Speedup target not met: expected ≥2× speedup but got %.2f× (generated=%.1f ns/op, reflective=%.1f ns/op)",
                         speedup, genNsPerOp, refNsPerOp));
     }
 

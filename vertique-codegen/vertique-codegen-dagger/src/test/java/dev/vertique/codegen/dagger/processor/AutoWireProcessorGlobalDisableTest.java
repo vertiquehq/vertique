@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  * generation from {@link AutoWireProcessor}, producing no generated source files for any marker.
  *
  * <p>JAX-RS {@code @Path} resource binding moved to {@code JaxRsPipelineProcessor} in
- * {@code vertique-codegen-jaxrs} (CG-010); the JAX-RS-specific {@code autoWire=false} contract
+ * {@code vertique-codegen-jaxrs}; the JAX-RS-specific {@code autoWire=false} contract
  * lives in {@code JaxRsPipelineProcessorTest}.
  */
 class AutoWireProcessorGlobalDisableTest {

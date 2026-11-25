@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The full {@code PackageResolver.resolve()} path (which uses a live {@link
  * javax.annotation.processing.ProcessingEnvironment}) is exercised indirectly via the
- * processor end-to-end tests in the consuming modules (CG-002 / CG-010).
+ * processor end-to-end tests in the consuming modules.
  */
 class PackageResolverTest {
 

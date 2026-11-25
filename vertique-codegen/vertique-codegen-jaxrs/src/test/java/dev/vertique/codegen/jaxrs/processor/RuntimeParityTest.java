@@ -127,7 +127,7 @@ class RuntimeParityTest {
      * Parity fixture — class-level empty {@code @RolesAllowed} with method-level {@code @PermitAll}.
      * Runtime: {@code hasEmptyRolesAllowed} returns {@code false} — method's {@code @PermitAll}
      * overrides the class-level {@code @RolesAllowed({})}. APT: no error (class-level ignored).
-     * This is the Critical parity break that was fixed by Fix 1.
+     * Both sides must agree that the method-level {@code @PermitAll} wins.
      */
     @Path("/parity-empty-roles-override")
     @RolesAllowed({})
@@ -182,8 +182,8 @@ class RuntimeParityTest {
     /**
      * Parity fixture — framework {@code dev.vertique.security.SecurityContext} plus a body
      * parameter. Runtime: the {@code SecurityContext} is classified as CONTEXT (not BODY), so only
-     * one body parameter is present. APT: no error. Fix A ensures the correct FQN is used so the
-     * APT mirrors this classification.
+     * one body parameter is present. APT: no error, because the APT resolves the correct
+     * framework {@code SecurityContext} FQN and so mirrors this classification.
      */
     @Path("/parity-framework-security-context")
     static class FrameworkSecurityContextResource {
@@ -201,7 +201,7 @@ class RuntimeParityTest {
     /**
      * Parity fixture — body-conflict method declared on a base class, inherited by the leaf
      * {@code @Path} class. Runtime: {@code RouteValidator.validateMethodParams} includes the
-     * declaring class name ({@code BaseBodyConflictResource}) in the error. APT Fix D ensures the
+     * declaring class name ({@code BaseBodyConflictResource}) in the error. APT uses the
      * same wording by deriving the class name from {@code method.getEnclosingElement()}.
      */
     static class BaseBodyConflictResource {
@@ -434,7 +434,7 @@ class RuntimeParityTest {
         }
     }
 
-    // --- Parity tests — empty-@RolesAllowed override path (Fix 1 parity break) ---
+    // --- Parity tests — empty-@RolesAllowed override path ---
 
     @Nested
     @DisplayName("parity: empty class-level @RolesAllowed + @PermitAll method — both accept")
@@ -562,10 +562,10 @@ class RuntimeParityTest {
         }
     }
 
-    // --- Parity tests — framework SecurityContext + body (Fix A) ---
+    // --- Parity tests — framework SecurityContext + body ---
 
     @Nested
-    @DisplayName("parity: framework SecurityContext + body — both accept (Fix A)")
+    @DisplayName("parity: framework SecurityContext + body — both accept")
     class FrameworkSecurityContextParity {
 
         @Test
@@ -603,7 +603,7 @@ class RuntimeParityTest {
                     "createWithSec(SecurityContext, body) should be accepted by runtime (SecurityContext is CONTEXT)");
             assertFalse(
                     aptRejectsMethod,
-                    "createWithSec(SecurityContext, body) should produce no APT errors after Fix A FQN correction");
+                    "createWithSec(SecurityContext, body) should produce no APT errors (SecurityContext is CONTEXT)");
             assertEquals(
                     runtimeRejects,
                     aptRejectsMethod,
@@ -611,10 +611,10 @@ class RuntimeParityTest {
         }
     }
 
-    // --- Parity tests — inherited body-conflict method (Fix D) ---
+    // --- Parity tests — inherited body-conflict method ---
 
     @Nested
-    @DisplayName("parity: inherited body-conflict method — APT error message uses declaring class (Fix D)")
+    @DisplayName("parity: inherited body-conflict method — APT error message uses declaring class")
     class InheritedBodyConflictParity {
 
         @Test
@@ -626,7 +626,7 @@ class RuntimeParityTest {
             boolean runtimeRejects = runtimeWouldReject(method, ChildBodyConflictResource.class);
 
             // APT side — ChildBodyConflictResource is the @Path root; the method is inherited.
-            // Fix D: the error message must include "BaseBodyConflictResource" (declaring class),
+            // The error message must include "BaseBodyConflictResource" (declaring class),
             // NOT "ChildBodyConflictResource" (the leaf @Path class).
             var aptResult = ProcessorTestHarness.run(
                     new JaxRsPipelineProcessor(),
@@ -658,7 +658,7 @@ class RuntimeParityTest {
             assertEquals(
                     runtimeRejects, aptRejectsMethod, "Parity breach: runtime and APT disagree on inheritedConflict()");
 
-            // Additional Fix D assertion: error message names the declaring class, not the leaf
+            // Additional assertion: error message names the declaring class, not the leaf
             boolean messageNamesDeclaringClass = aptResult.compilation().diagnostics().stream()
                     .filter(d -> d.getKind() == Diagnostic.Kind.ERROR)
                     .anyMatch(d -> {

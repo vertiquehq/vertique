@@ -15,13 +15,10 @@ import org.junit.jupiter.api.Test;
  * Verifies {@link AopProcessor} emits a reflection-free {@code {Bean}$AopProxy extends Bean} subclass
  * proxy for a bean carrying an {@link dev.vertique.aop.Aspect}-meta-annotated method.
  *
- * <p>These tests pin the FROZEN generated-proxy shape: the proxy extends the bean,
+ * <p>These tests pin the generated-proxy shape: the proxy extends the bean,
  * overrides the intercepted method, calls {@code super.<method>(...)} directly, holds a {@code static}
  * {@code MethodMetadata} constant, builds the interceptor chain in its constructor, and contains no
  * reflection ({@code Method.invoke} / {@code getDeclaredMethod} / {@code .getAnnotation(}).
- *
- * <p><strong>Red:</strong> the slice-1.2 scaffold {@link AopProcessor} is a no-op, so no proxy source
- * is generated and every assertion below fails.
  */
 class AopProxyEmitTest {
 
@@ -51,7 +48,7 @@ class AopProxyEmitTest {
     }
 
     /**
-     * A bean exercising the emitter's type resolution (the slice-0.2 watch-item): a method with a
+     * A bean exercising the emitter's type resolution: a method with a
      * primitive param, an array param, and a primitive return, plus a {@code void}-returning method.
      */
     private static JavaFileObject typeResolutionBean() {

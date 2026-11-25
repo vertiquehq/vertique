@@ -28,8 +28,8 @@ import org.junit.jupiter.api.Test;
  *       module but produce no validation error.</li>
  *   <li><strong>Interface-only round (no concrete impl):</strong> no module is emitted.</li>
  *   <li><strong>{@code -Avertique.codegen.autoWire=false}:</strong> DI module is suppressed but
- *       validation still runs (a CG-009 violation fixture still emits an error).</li>
- *   <li><strong>Existing CG-009 validations:</strong> verb conflict, security conflict,
+ *       validation still runs (a validation-violation fixture still emits an error).</li>
+ *   <li><strong>Existing validations:</strong> verb conflict, security conflict,
  *       path-placeholder mismatch, and body/form conflict are all still reported.</li>
  * </ul>
  */
@@ -236,7 +236,7 @@ class JaxRsPipelineProcessorTest {
         @Test
         @DisplayName("autoWire=false — DI module not emitted, validation still runs")
         void autoWireFalse_noModuleButValidationRuns() {
-            // Fixture has both a clean resource AND a resource with a CG-009 violation.
+            // Fixture has both a clean resource AND a resource with a validation violation.
             // With autoWire=false, the DI module must not be emitted, but the validation
             // error on the faulty resource must still appear.
             JavaFileObject cleanResource = SourceFiles.inline("dev.vertique.test.CleanResource", """
@@ -270,7 +270,7 @@ class JaxRsPipelineProcessorTest {
                         @Inject
                         public FaultyResource() {}
 
-                        // Security conflict — will trigger CG-009 validation error
+                        // Security conflict — will trigger a validation error
                         @GET
                         @PermitAll
                         @RolesAllowed("admin")
@@ -292,11 +292,11 @@ class JaxRsPipelineProcessorTest {
         }
     }
 
-    // --- CG-009 validation still works ---
+    // --- Validation still works ---
 
     @Nested
-    @DisplayName("CG-009 validations still active")
-    class Cg009Validations {
+    @DisplayName("resource validations still active")
+    class ResourceValidations {
 
         @Test
         @DisplayName("HTTP verb conflict on single method — error emitted")
@@ -511,7 +511,7 @@ class JaxRsPipelineProcessorTest {
         }
 
         @Test
-        @DisplayName("JaxRsResourceProcessor (old CG-009) does NOT appear in ServiceLoader results")
+        @DisplayName("JaxRsResourceProcessor (old processor) does NOT appear in ServiceLoader results")
         void serviceLoader_doesNotFindOldProcessor() {
             boolean found = java.util.stream.StreamSupport.stream(
                             java.util.ServiceLoader.load(
@@ -525,7 +525,7 @@ class JaxRsPipelineProcessorTest {
 
             org.junit.jupiter.api.Assertions.assertFalse(
                     found,
-                    "JaxRsResourceProcessor (old CG-009) must not be registered in META-INF/services "
+                    "JaxRsResourceProcessor (old processor) must not be registered in META-INF/services "
                             + "after being replaced by JaxRsPipelineProcessor");
         }
     }

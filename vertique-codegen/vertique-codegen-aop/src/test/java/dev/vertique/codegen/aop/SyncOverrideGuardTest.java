@@ -10,14 +10,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FR-013-05 custom-aspect sync guard is emitted into the generated proxy's
- * sync-returning overrides (Bug F5).
+ * Verifies the custom-aspect sync guard is emitted into the generated proxy's
+ * sync-returning overrides.
  *
  * <p>A sync-returning method cannot surface a deferred completion, so the generated override must
  * fail loudly when a custom aspect defers the around-chain: the source asserts the {@code isComplete()}
  * incompleteness check and the {@code throw new IllegalStateException(...)} guard are present for both
  * a value-returning and a {@code void}-returning sync method. The full runtime "a deferring aspect
- * throws" behavioral proof lives in the e2e module (plan slice 2.3); a source assertion here is
+ * throws" behavioral proof lives in the e2e module; a source assertion here is
  * sufficient to prove the guard is generated.
  */
 class SyncOverrideGuardTest {
@@ -51,7 +51,7 @@ class SyncOverrideGuardTest {
     }
 
     @Test
-    @DisplayName("sync override emits the FR-013-05 guard: !result.isComplete() → throw IllegalStateException")
+    @DisplayName("sync override emits the guard: !result.isComplete() → throw IllegalStateException")
     void syncOverrideEmitsIncompletenessGuard() {
         ProcessorTestHarness.run(new AopProcessor(), calculatorBean())
                 .assertSuccess()

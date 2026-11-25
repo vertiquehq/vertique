@@ -12,7 +12,7 @@ import java.lang.annotation.Target;
 /**
  * Test-local aspect trigger annotation used by {@code vertique-codegen-aop} compile-tests.
  *
- * <p>Stands in for the real {@code @Timed} (which arrives in slice 1.3) so these tests exercise the
+ * <p>Stands in for the real {@code @Timed} so these tests exercise the
  * processor without a forward dependency on the micrometer module. It is {@link Aspect}-meta-annotated
  * so the processor treats methods carrying it as aspect-intercepted.
  */

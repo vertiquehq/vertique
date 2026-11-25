@@ -218,12 +218,10 @@ class BodyFormValidatorTest {
         }
 
         @Test
-        @DisplayName("framework dev.vertique.security.SecurityContext does NOT count as body (Fix A)")
+        @DisplayName("framework dev.vertique.security.SecurityContext does NOT count as body")
         void frameworkSecurityContext_notBody() {
-            // Fix A: SECURITY_CONTEXT_FQN was wrong (pointed to dev.vertique.rest.core.security),
-            // so the isAssignable check resolved null and the framework SecurityContext was
-            // misclassified as BODY. This test verifies the correct FQN resolves to a non-null
-            // mirror and the parameter is correctly classified as SECURITY_CONTEXT.
+            // The framework SecurityContext FQN must resolve to a non-null mirror, so the
+            // isAssignable check classifies the parameter as SECURITY_CONTEXT rather than BODY.
             var result =
                     ProcessorTestHarness.run(new BodyFormProbe(), SourceFiles.inline("dev.vertique.test.Res", """
                             package dev.vertique.test;
@@ -245,7 +243,7 @@ class BodyFormValidatorTest {
     // --- Context subtype test ---
 
     @Nested
-    @DisplayName("context subtypes do NOT count as body — Fix 2 (isAssignable)")
+    @DisplayName("context subtypes do NOT count as body (isAssignable)")
     class ContextSubtypes {
 
         @Test
@@ -286,17 +284,17 @@ class BodyFormValidatorTest {
         }
     }
 
-    // --- Diagnostic class name parity (Fix D) ---
+    // --- Diagnostic class name parity ---
 
     @Nested
-    @DisplayName("diagnostic class name uses declaring class, not leaf @Path class (Fix D)")
+    @DisplayName("diagnostic class name uses declaring class, not leaf @Path class")
     class DiagnosticClassNameParity {
 
         @Test
         @DisplayName("method declared on BaseResource, routed via ChildResource → error message says BaseResource")
         void inheritedMethod_errorMessageUsesDeclaringClass() {
-            // Fix D: before this fix, validate(resource, method) used resource.getSimpleName()
-            // (the leaf @Path class) for the diagnostic. For an inherited method, the runtime
+            // validate(resource, method) must name the declaring class in the diagnostic, not
+            // resource.getSimpleName() (the leaf @Path class). For an inherited method, the runtime
             // RouteValidator uses method.getDeclaringClass().getSimpleName() — the declaring class.
             // The test verifies that the error message includes the declaring class name.
             var result = ProcessorTestHarness.run(

@@ -13,7 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Compile-time validation tests for the multi-impl group feature (CG-011 W4).
+ * Compile-time validation tests for the multi-impl group feature.
  *
  * <p>Verifies that {@link ServiceContractProcessor}:
  * <ul>

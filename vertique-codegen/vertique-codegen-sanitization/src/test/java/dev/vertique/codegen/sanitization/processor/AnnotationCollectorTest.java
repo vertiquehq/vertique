@@ -233,7 +233,7 @@ class AnnotationCollectorTest {
      * three shapes the same way, so the generated and reflective paths classify them identically.
      */
     @Nested
-    @DisplayName("bare type-variable fields (#241)")
+    @DisplayName("bare type-variable fields")
     class BareTypeVariableFields {
 
         /** The bound a type-variable field must classify against. */

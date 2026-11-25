@@ -4,8 +4,8 @@
 package dev.vertique.codegen.spike;
 
 /**
- * Sample annotated element fixture for the CODEGEN-013 Phase 0 slice 0.3 annotation-literal
- * feasibility spike (OQ-2).
+ * Sample annotated element fixture for the annotation-literal
+ * feasibility spike.
  *
  * <p>The class carries a single {@link SampleTrigger} with concrete non-default values for all three
  * member kinds. The spike test reflectively obtains this annotation instance ({@code

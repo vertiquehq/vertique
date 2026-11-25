@@ -12,7 +12,7 @@ import org.opentest4j.AssertionFailedError;
 
 /**
  * Verifies policy-bound validation (blank id, overlap/mode contradiction, timezone
- * resolution) and the timezone-warning behaviour required by FR-CG004-007.
+ * resolution) and the timezone-warning behaviour.
  */
 class CronJobProcessorPolicyValueTest {
 

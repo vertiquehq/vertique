@@ -10,13 +10,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the frozen observer-signature rule (plan §3: v1 observer methods MUST return {@code void}).
+ * Verifies the observer-signature rule (v1 observer methods MUST return {@code void}).
  * An observer method whose {@code @Observes} parameter is declared on a non-{@code void} method —
  * whether it returns a {@code Future} or a plain value — is a compile error, because dispatch invokes
  * the observer through a synchronous {@code Consumer<Object>} that cannot consume a return value.
- *
- * <p><strong>Red:</strong> the slice-3.2 scaffold {@link EventsProcessor} raises no diagnostic, so the
- * compilation succeeds and {@code assertFailed()} fails.
  */
 class NonVoidObserverIsCompileErrorTest {
 

@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T003 TP-003 — verifies every shared proxyability violation through a real annotation-processing
+ * Verifies every shared proxyability violation through a real annotation-processing
  * compilation, including abstract methods and per-class diagnostic memoization.
  */
 class ProxyabilityValidatorTest {

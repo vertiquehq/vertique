@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  * Tests for {@link ContextParamValidator} wired through {@link JaxRsPipelineProcessor}.
  *
  * <p>Verifies that the compile-time context-param rules mirror the runtime
- * {@code RouteValidator.addContextParamViolations} logic (FR-REST-187/188/189), including the
+ * {@code RouteValidator.addContextParamViolations} logic, including the
  * split-inherited annotation case where {@code @Context} appears on the interface method parameter
  * while a value-binding annotation appears on the concrete parameter (or vice versa).
  *
@@ -192,7 +192,7 @@ class ContextParamValidatorTest {
         void bindingAnnotationOnInjectableType_conflict() {
             // The param is classified CONTEXT *by type* (Tenant implements ContextValue) even without
             // an explicit @Context. The runtime RouteValidator rejects this as CONTEXT_PARAM_CONFLICT;
-            // the compile-time validator must agree (FR-REST-187 parity), not silently pass.
+            // the compile-time validator must agree, not silently pass.
             var result = ProcessorTestHarness.run(
                     new JaxRsPipelineProcessor(),
                     SourceFiles.inline("dev.vertique.test.Tenant", """

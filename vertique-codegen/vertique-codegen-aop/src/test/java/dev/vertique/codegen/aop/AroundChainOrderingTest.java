@@ -20,9 +20,6 @@ import org.junit.jupiter.api.Test;
  * the relative position of each aspect's annotation simple name. A higher-ordered aspect (outermost)
  * appears earlier in the {@code MethodInterceptor[]} array; equal-ordered aspects appear in
  * annotation-FQN order.
- *
- * <p><strong>Red:</strong> the no-op scaffold processor emits no proxy, so no chain expression exists
- * and both assertions fail.
  */
 class AroundChainOrderingTest {
 

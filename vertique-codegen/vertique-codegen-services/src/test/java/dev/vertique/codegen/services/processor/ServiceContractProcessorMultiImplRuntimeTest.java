@@ -21,7 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Runtime selection tests for the contract-group contributor emitter (CG-011 W4).
+ * Runtime selection tests for the contract-group contributor emitter.
  *
  * <p>Compiles a contract + impls fixture against the real framework classpath, loads the generated
  * {@code _ContractContributor} via the harness classloader, instantiates it with counting
@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Scenarios covered:
  * <ul>
- *   <li>Single-impl conditional group — condition does NOT match → empty list (FR-CG011-011).</li>
+ *   <li>Single-impl conditional group — condition does NOT match → empty list.</li>
  *   <li>Multi-impl group — exactly one conditional matches → that impl's entry returned.</li>
  *   <li>Multi-impl group — two conditionals match simultaneously → {@link ServiceRegistrationException}.</li>
  *   <li>Multi-impl group — no conditional matches, no default → {@link ServiceRegistrationException}.</li>
@@ -217,7 +217,7 @@ class ServiceContractProcessorMultiImplRuntimeTest {
     // --- Tests ---
 
     @Test
-    @DisplayName("single-impl conditional group — condition does NOT match → empty list (FR-CG011-011)")
+    @DisplayName("single-impl conditional group — condition does NOT match → empty list")
     void singleImplConditional_noMatch_returnsEmptyList() throws Exception {
         JavaFileObject[] sources = {
             CONDITIONAL_ON_PROPERTY_SOURCE,

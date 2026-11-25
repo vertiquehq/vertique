@@ -35,7 +35,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Parity proof for interface {@code default} resource methods (issue #630): the generated
+ * Parity proof for interface {@code default} resource methods: the generated
  * {@code _JaxRsDescriptor} and execution plans describe and dispatch exactly the routes the
  * reflective {@code ResourceScanner} discovers.
  *

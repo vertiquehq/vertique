@@ -17,9 +17,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies {@link DelayedJobValidator} compile-time checks for {@code @DelayedJobContract} interfaces:
- * contract shape and duplicate names (FR-CG007-004) and same-unit executor presence (FR-CG007-005).
+ * contract shape and duplicate names and same-unit executor presence.
  *
- * <p>FR-CG007-006 (executor payload mismatch) is not unit-tested with a fixture because the runtime
+ * <p>Executor payload mismatch is not unit-tested with a fixture because the runtime
  * bound {@code DelayedJobExecutor<P, C extends DelayedJobClient<P>>} makes a mismatch a {@code javac}
  * error before the processor runs; the validator retains the check as defense-in-depth.
  */
@@ -34,7 +34,7 @@ class DelayedJobValidatorTest {
             """;
 
     @Test
-    @DisplayName("FR-004: abstract class annotated @DelayedJobContract is rejected with must-be-interface message")
+    @DisplayName("abstract class annotated @DelayedJobContract is rejected with must-be-interface message")
     void rejectsAbstractClassContract() {
         JavaFileObject contract = SourceFiles.inline("com.example.DeliverJob", """
                 package com.example;
@@ -50,7 +50,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-004: contract that does not extend DelayedJobClient is rejected")
+    @DisplayName("contract that does not extend DelayedJobClient is rejected")
     void rejectsContractNotExtendingClient() {
         JavaFileObject contract = SourceFiles.inline("com.example.BadJob", """
                 package com.example;
@@ -65,7 +65,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-004: contract extending raw DelayedJobClient (unresolvable P) is rejected")
+    @DisplayName("contract extending raw DelayedJobClient (unresolvable P) is rejected")
     void rejectsUnresolvablePayload() {
         JavaFileObject contract = SourceFiles.inline("com.example.RawJob", """
                 package com.example;
@@ -82,7 +82,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-004: a contract declaring an extra abstract method is rejected")
+    @DisplayName("a contract declaring an extra abstract method is rejected")
     void rejectsContractWithExtraAbstractMethod() {
         JavaFileObject contract = SourceFiles.inline("com.example.ExtraJob", """
                 package com.example;
@@ -101,7 +101,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-004: an extra method inherited through an intermediate interface is rejected")
+    @DisplayName("an extra method inherited through an intermediate interface is rejected")
     void rejectsInheritedExtraMethod() {
         JavaFileObject base = SourceFiles.inline("com.example.BaseJob", """
                 package com.example;
@@ -124,7 +124,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-004: a default method on the contract is rejected (generated/reflective parity)")
+    @DisplayName("a default method on the contract is rejected (generated/reflective parity)")
     void rejectsDefaultMethod() {
         JavaFileObject contract = SourceFiles.inline("com.example.DefaultJob", """
                 package com.example;
@@ -143,7 +143,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-004: two contracts with the same name in one unit are rejected")
+    @DisplayName("two contracts with the same name in one unit are rejected")
     void rejectsDuplicateName() {
         JavaFileObject a = SourceFiles.inline("com.example.JobA", """
                 package com.example;
@@ -166,7 +166,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-005: no same-unit executor warns by default")
+    @DisplayName("no same-unit executor warns by default")
     void warnsWhenNoExecutorByDefault() {
         JavaFileObject contract = SourceFiles.inline("com.example.DeliverJob", DELIVER_CONTRACT);
 
@@ -179,7 +179,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-005: no same-unit executor errors under requireExecutor option")
+    @DisplayName("no same-unit executor errors under requireExecutor option")
     void errorsWhenNoExecutorUnderStrictOption() {
         JavaFileObject contract = SourceFiles.inline("com.example.DeliverJob", DELIVER_CONTRACT);
 
@@ -192,7 +192,7 @@ class DelayedJobValidatorTest {
     }
 
     @Test
-    @DisplayName("FR-005: a matching same-unit executor suppresses the warning")
+    @DisplayName("a matching same-unit executor suppresses the warning")
     void matchingExecutorSuppressesWarning() {
         JavaFileObject contract = SourceFiles.inline("com.example.DeliverJob", DELIVER_CONTRACT);
         JavaFileObject executor = SourceFiles.inline("com.example.DeliverExecutor", """

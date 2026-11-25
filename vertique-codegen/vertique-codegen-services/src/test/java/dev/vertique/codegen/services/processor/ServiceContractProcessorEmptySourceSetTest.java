@@ -9,12 +9,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Scaffold smoke test for {@link ServiceContractProcessor}.
+ * Smoke test for {@link ServiceContractProcessor}.
  *
  * <p>Verifies that the processor is properly registered and compiles without errors against an
  * empty source set (no contracts, no impls — nothing to emit).
  */
-class ServiceContractProcessorScaffoldTest {
+class ServiceContractProcessorEmptySourceSetTest {
 
     @Test
     @DisplayName("processor compiles against empty source set without errors")

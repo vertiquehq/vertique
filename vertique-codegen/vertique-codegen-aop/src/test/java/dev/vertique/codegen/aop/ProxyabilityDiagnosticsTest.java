@@ -10,7 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for proxyability diagnostics: the
+ * Verifies proxyability diagnostics: the
  * subclass-proxy AOP strategy cannot proxy certain method/class shapes, so {@link AopProcessor} MUST
  * REJECT them with a clear {@code Diagnostics.error} <em>before</em> emission — rather than emitting
  * uncompilable {@code extends Bean} / {@code @Override} source (or, for the final-class / final-method
@@ -29,16 +29,15 @@ import org.junit.jupiter.api.Test;
  *       and cannot be overridden; aspect interception requires an instance dispatch.
  *   <li><strong>type-variable {@code throws E}</strong> — a checked throw typed as a method type
  *       variable ({@code <E extends IOException> … throws E}) makes the generated sync guard emit a
- *       non-reifiable {@code instanceof E} (R3-1), which is a confusing generated-source compile error
+ *       non-reifiable {@code instanceof E}, which is a confusing generated-source compile error
  *       rather than a clear AOP diagnostic.
  * </ul>
  *
- * <p><strong>Red now</strong> (no proxyability validation exists yet — slice 2.4 GREEN adds it).
- * Every shape already produces a compile <em>failure</em> today — but with a <em>confusing,
+ * <p>Without up-front validation, every shape would still fail to compile — but with a <em>confusing,
  * generated-source</em> {@code javac} error rather than the clear up-front AOP diagnostic these tests
- * assert on. So {@code assertFailed()} passes but {@code assertErrorMessage(...)} fails: the chosen
- * substring is deliberately absent from the current confusing message and only a deliberate slice-2.4
- * diagnostic will contain it. The current confusing messages (verified 2026-06-28) are:
+ * assert on. So {@code assertFailed()} alone would pass but {@code assertErrorMessage(...)} would fail:
+ * the chosen substring is deliberately absent from the confusing {@code javac} message and only the
+ * dedicated diagnostic contains it. The confusing {@code javac} messages are:
  * <ul>
  *   <li>{@code finalClassRejected} — {@code "cannot inherit from final com.example.FinalGreeter"}
  *       ({@code FinalGreeter$AopProxy extends FinalGreeter} is emitted then fails to compile).
@@ -50,7 +49,7 @@ import org.junit.jupiter.api.Test;
  *       StaticMethodGreeter"} + {@code "method does not override or implement a method from a
  *       supertype"}.
  *   <li>{@code typeVariableThrowsRejected} — {@code "java.lang.Throwable cannot be safely cast to E"}
- *       (the non-reifiable {@code instanceof E} the sync guard emits — R3-1).
+ *       (the non-reifiable {@code instanceof E} the sync guard emits).
  * </ul>
  */
 class ProxyabilityDiagnosticsTest {
@@ -149,8 +148,8 @@ class ProxyabilityDiagnosticsTest {
     void finalClassRejected() {
         ProcessorTestHarness.run(new AopProcessor(), finalClassBean())
                 .assertFailed()
-                // "is final" mentions the modifier and is absent from the current confusing
-                // "cannot inherit from final com.example.FinalGreeter" javac error → genuinely RED.
+                // "is final" mentions the modifier and is absent from the confusing
+                // "cannot inherit from final com.example.FinalGreeter" javac error.
                 .assertErrorMessage("is final");
     }
 
@@ -159,8 +158,8 @@ class ProxyabilityDiagnosticsTest {
     void finalMethodRejected() {
         ProcessorTestHarness.run(new AopProcessor(), finalMethodBean())
                 .assertFailed()
-                // "final method" mentions the modifier and is absent from the current confusing
-                // "cannot override … / overridden method is final" javac error → genuinely RED.
+                // "final method" mentions the modifier and is absent from the confusing
+                // "cannot override … / overridden method is final" javac error.
                 .assertErrorMessage("final method");
     }
 
@@ -169,8 +168,8 @@ class ProxyabilityDiagnosticsTest {
     void privateMethodRejected() {
         ProcessorTestHarness.run(new AopProcessor(), privateMethodBean())
                 .assertFailed()
-                // "is private" mentions the modifier and is absent from the current confusing
-                // "greet() has private access in …" javac error → genuinely RED. (APT does surface
+                // "is private" mentions the modifier and is absent from the confusing
+                // "greet() has private access in …" javac error. (APT does surface
                 // private-method annotations, so the private shape compiles to a broken override.)
                 .assertErrorMessage("is private");
     }
@@ -180,8 +179,8 @@ class ProxyabilityDiagnosticsTest {
     void staticMethodRejected() {
         ProcessorTestHarness.run(new AopProcessor(), staticMethodBean())
                 .assertFailed()
-                // "static method" mentions the modifier and is absent from the current confusing
-                // "cannot override … / overridden method is static" javac error → genuinely RED.
+                // "static method" mentions the modifier and is absent from the confusing
+                // "cannot override … / overridden method is static" javac error.
                 .assertErrorMessage("static method");
     }
 

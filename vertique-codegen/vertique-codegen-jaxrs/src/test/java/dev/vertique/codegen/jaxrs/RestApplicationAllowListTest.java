@@ -40,15 +40,14 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * APT compilation tests for FR-025's compile-time allow list on {@code @RestApplication}
- * declarations (C-APPCHECK): a declaration may carry only {@code @RestApplication},
+ * APT compilation tests for the compile-time allow list on {@code @RestApplication}
+ * declarations: a declaration may carry only {@code @RestApplication},
  * {@code @ApiDocs}, {@code @OpenAPIDefinition} with only {@code info} set, {@code java.lang} and
  * {@code java.lang.annotation} types, and the source-retained {@code @ConditionalOnProperty} and
  * {@code @NoAutoWire}; any other runtime annotation on the declaration or on a superinterface,
  * transitively, fails compilation naming the declaration, the annotation, and the type carrying it;
  * and the declaration-only annotations fail on a superinterface. A {@code @NoAutoWire} declaration
- * is not checked, while {@code -Avertique.codegen.autoWire=false} still checks every declaration
- * (C-APP).
+ * is not checked, while {@code -Avertique.codegen.autoWire=false} still checks every declaration.
  *
  * <p>Each test compiles small fixtures through {@link JaxRsPipelineProcessor} via
  * {@link ProcessorTestHarness}, following {@link RestApplicationDeclarationTest}'s fixture style.
@@ -223,7 +222,7 @@ class RestApplicationAllowListTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-004 — a disallowed runtime annotation on a declaration or superinterface fails compilation
+    // A disallowed runtime annotation on a declaration or superinterface fails compilation
     // -----------------------------------------------------------------------------------------
 
     private static Arguments rejectedRow(String label, Fixture fixture, String carrierSimpleName, String annotation) {
@@ -439,7 +438,7 @@ class RestApplicationAllowListTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-005 — declaration-only annotations fail on superinterfaces; @OpenAPIDefinition is info only
+    // Declaration-only annotations fail on superinterfaces; @OpenAPIDefinition is info only
     // -----------------------------------------------------------------------------------------
 
     /** A unit where {@code Api} extends {@code Base}, which carries {@code annotation}. */
@@ -549,7 +548,7 @@ class RestApplicationAllowListTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-007 — opted-out declarations are not checked; autoWire=false still checks them
+    // Opted-out declarations are not checked; autoWire=false still checks them
     // -----------------------------------------------------------------------------------------
 
     private static JavaFileObject offFixture(String packageName, boolean noAutoWire) {

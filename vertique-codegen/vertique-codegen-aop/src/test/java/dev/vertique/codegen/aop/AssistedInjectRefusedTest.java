@@ -11,10 +11,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies a bean using {@code @AssistedInject}/{@code @Assisted} carrying an aspect method is refused
- * with a clear diagnostic — such beans cannot be subclass-proxied (FR-013-03).
- *
- * <p><strong>Red:</strong> the no-op scaffold processor raises no diagnostic, so the compilation
- * succeeds and {@code assertFailed()} fails.
+ * with a clear diagnostic — such beans cannot be subclass-proxied.
  */
 class AssistedInjectRefusedTest {
 

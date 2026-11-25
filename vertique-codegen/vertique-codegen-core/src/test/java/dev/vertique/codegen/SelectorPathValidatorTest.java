@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T003 TP-001 — verifies every shared selector grammar violation through a real annotation-processing
+ * Verifies every shared selector grammar violation through a real annotation-processing
  * compilation and proves that family prefixes change only the diagnostic prefix.
  */
 class SelectorPathValidatorTest {

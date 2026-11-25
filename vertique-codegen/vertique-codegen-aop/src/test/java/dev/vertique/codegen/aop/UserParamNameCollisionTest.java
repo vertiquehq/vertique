@@ -10,7 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Codex R3-4: generated locals collide with user parameter names in
+ * Verifies that generated locals do not collide with user parameter names in
  * {@link AopProxyEmitter#buildOverride}.
  *
  * <p>The override emits literal local names {@code Object[] args}, {@code Future<Object> result}, and
@@ -24,11 +24,10 @@ import org.junit.jupiter.api.Test;
  *   <li>a parameter named {@code result} clashes with the {@code Future<Object> result} local.
  * </ul>
  *
- * <p>The generated proxy must NOT collide, so this test asserts compilation SUCCEEDS.
- *
- * <p><strong>Red now:</strong> the emitted {@code Object[] args = {args}} / {@code Future<Object>
- * result} declarations shadow or duplicate the user parameters, so the generated proxy fails to
- * compile (duplicate-variable / incompatible-type errors) and {@code assertSuccess()} fails.
+ * <p>The generated proxy must NOT collide, so this test asserts compilation SUCCEEDS. If the emitted
+ * {@code Object[] args = {args}} / {@code Future<Object> result} declarations shadowed or duplicated
+ * the user parameters, the generated proxy would fail to compile (duplicate-variable /
+ * incompatible-type errors).
  */
 class UserParamNameCollisionTest {
 

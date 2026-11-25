@@ -35,7 +35,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001 — the frozen T002 contract matrix for {@link McpToolProcessor}.
+ * The contract matrix for {@link McpToolProcessor}.
  *
  * <p>Every row compiles one source set once with the real processor and inspects the diagnostics
  * plus the generated module/invoker source. The valid {@code WeatherTools} baseline must compile
@@ -77,7 +77,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <p>Diagnostic matching is fragment-based and case-insensitive: the contract fixes which boundary
  * and which offending symbol the message must name, not its exact wording.
  */
-@DisplayName("MCP tool processor — T002 contract matrix")
+@DisplayName("MCP tool processor — generation and validation matrix")
 class McpToolProcessorCompileTest {
 
     // --- Frozen fixture identities ---
@@ -94,11 +94,11 @@ class McpToolProcessorCompileTest {
     // --- Matrix ---
 
     /**
-     * The four named rows of the T002 contract matrix.
+     * The four named rows of the generation and validation matrix.
      *
-     * @return one row per boundary, named exactly as the proof contract lists it
+     * @return one row per boundary, named by the behaviour it proves
      */
-    static Stream<MatrixRow> t002ContractMatrix() {
+    static Stream<MatrixRow> generationAndValidationMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldGenerateDirectInvokerTypedInputCarrierAndExplicitDaggerModule",
@@ -116,9 +116,9 @@ class McpToolProcessorCompileTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t002ContractMatrix")
-    @DisplayName("enforces the T002 contract matrix")
-    void shouldEnforceT002ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("generationAndValidationMatrix")
+    @DisplayName("enforces the generation and validation matrix")
+    void shouldEnforceGenerationAndValidationMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
@@ -271,15 +271,15 @@ class McpToolProcessorCompileTest {
     }
 
     // ==================================================================================
-    // T008 — generated parameter carriers, profile, and access metadata
+    // Generated parameter carriers, profile, and access metadata
     // ==================================================================================
 
     /**
-     * The five named rows of the T008 contract matrix.
+     * The named rows of the parameter carrier, profile and access metadata matrix.
      *
-     * @return one row per boundary, named exactly as the proof contract lists it
+     * @return one row per boundary, named by the behaviour it proves
      */
-    static Stream<MatrixRow> t008ContractMatrix() {
+    static Stream<MatrixRow> parameterMetadataMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldEmitCollisionSafeCarrierComponents",
@@ -302,9 +302,9 @@ class McpToolProcessorCompileTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t008ContractMatrix")
-    @DisplayName("enforces the T008 contract matrix")
-    void shouldEnforceT008ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("parameterMetadataMatrix")
+    @DisplayName("enforces the parameter carrier, profile and access metadata matrix")
+    void shouldEnforceParameterMetadataMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
@@ -2709,9 +2709,9 @@ class McpToolProcessorCompileTest {
 
     /**
      * One named row of the matrix. {@link #toString()} is the row name so the parameterized display
-     * name is exactly the identifier the proof contract lists.
+     * name is exactly the row identifier.
      *
-     * @param rowName the frozen row identifier
+     * @param rowName the row identifier
      * @param proof   the row's inline input delta and decisive assertions
      */
     private record MatrixRow(String rowName, Executable proof) {
@@ -2766,9 +2766,9 @@ class McpToolProcessorCompileTest {
          * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolParameterMetadata}, the
          * frozen runtime record every parameterized tool's generated invoker references by name.
          *
-         * <p>{@code vertique-mcp-server} is deliberately not a dependency of this module (T006/T008:
-         * "{@code vertique-mcp-server} is not a dependency and must not become one") and must not
-         * become one even at test scope — it test-depends on this module's own output (T012), so the
+         * <p>{@code vertique-mcp-server} is deliberately not a dependency of this module
+         * and must not
+         * become one even at test scope — it test-depends on this module's own output, so the
          * reverse edge would be a reactor cycle, not merely an unwanted coupling — so this test
          * declares a stub of that exact runtime type, under its exact FQN, in the compiled source set.
          * This lets {@code compile-testing} compile generated source that references the runtime type
@@ -2875,7 +2875,7 @@ class McpToolProcessorCompileTest {
          * parameter and calls {@code precomputeFieldNameResolution(...)} once during construction and
          * {@code processInput(...)} once per {@code prepare()}. {@code vertique-input-processing} is
          * deliberately not a dependency of this module for the same reason
-         * {@code vertique-mcp-server} is not (T006/T008): the generated invoker's dependency footprint
+         * {@code vertique-mcp-server} is not: the generated invoker's dependency footprint
          * is a runtime concern of the application composing it, not of this annotation-processor
          * module, and duplicating the constraint scope here rather than only for the mcp-server edge
          * keeps this module's own dependency graph independent of what the invoker it emits will need

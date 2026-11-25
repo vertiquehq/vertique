@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
  * </ul>
  *
  * <p>The interface-, superclass-, and conflict-shaped scenarios (hierarchy precedence,
- * meta-annotations, additive+skip conflicts — the full IP-01..IP-19 matrix) are
+ * meta-annotations, additive+skip conflicts — the full invocation-policy scenario matrix) are
  * {@link JaxRsInvocationPolicyMatrixTest}'s responsibility; this test keeps its original five
  * direct-annotation scenarios, asserting the {@code EffectiveInputPolicies.NONE} / class-literal
  * snippets through the same {@link PolicyLiteralAssertions} helper {@code

@@ -182,7 +182,7 @@ class JaxRsResourceProcessorRoundtripTest {
         @DisplayName("abstract @Path class with multiple violations emits zero diagnostics")
         void abstractResource_silentlySkipped() {
             // Abstract @Path classes can never be mounted at runtime: JaxRsRouteRegistrar.scanResource
-            // only scans instantiated resource objects, and CG-002 AutoWireProcessor drops abstract
+            // only scans instantiated resource objects, and AutoWireProcessor drops abstract
             // types in AnnotationRootedCollector. The processor must skip them so build errors do
             // not surface where runtime would never act on the class.
             var result = ProcessorTestHarness.run(

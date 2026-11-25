@@ -10,7 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the single-parameter rule for {@code @Observes} observer methods (P3-W2).
+ * Verifies the single-parameter rule for {@code @Observes} observer methods.
  *
  * <p>The event-dispatch engine invokes observers through a single-argument lambda
  * {@code e -> bean.method((EventType) e)}. A method with two parameters — e.g.
@@ -19,11 +19,10 @@ import org.junit.jupiter.api.Test;
  * compile time with a {@link dev.vertique.codegen.Diagnostics#observerMustHaveSingleParameter}
  * error and skip emission for the offending method.
  *
- * <p><strong>Red failure mode:</strong> before the fix the processor emits a broken one-arg lambda
- * call and the compilation of the generated source fails (or the error is not surfaced with the
- * expected diagnostic message). After the fix, the processor emits an explicit compile error
- * containing {@code "single"} and does not attempt to generate a registration provider for the
- * invalid method.
+ * <p>Without that check the processor would emit a broken one-arg lambda call and the generated
+ * source would fail to compile. Instead the processor emits an explicit compile error containing
+ * {@code "single"} and does not attempt to generate a registration provider for the invalid
+ * method.
  */
 class MultiParamObserverIsCompileErrorTest {
 

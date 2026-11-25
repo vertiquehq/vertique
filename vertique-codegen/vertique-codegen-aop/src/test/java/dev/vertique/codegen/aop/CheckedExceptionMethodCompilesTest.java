@@ -10,19 +10,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug N2: a SYNC intercepted method declaring a checked exception produces an
- * uncompilable proxy.
+ * A SYNC intercepted method declaring a checked exception yields a compilable proxy.
  *
  * <p>For a sync method {@code String read() throws java.io.IOException}, {@code
- * AopProxyEmitter#buildOverride} emits the terminal as a lambda {@code () ->
- * Future.succeededFuture((Object) super.read())}. The lambda body invokes {@code super.read()},
- * which declares {@code throws IOException}, but the {@code Supplier}-shaped terminal cannot throw a
- * checked exception — so the generated proxy source fails to compile with an
- * "unreported exception IOException; must be caught or declared to be thrown" error.
+ * AopProxyEmitter#buildOverride} emits the terminal as a lambda whose body invokes {@code
+ * super.read()}. That call declares {@code throws IOException}, but the {@code Supplier}-shaped
+ * terminal cannot throw a checked exception, so the emitted terminal must handle it; otherwise the
+ * proxy source fails with "unreported exception IOException; must be caught or declared to be
+ * thrown".
  *
- * <p>The test asserts compilation SUCCEEDS. Currently RED: the generated terminal lambda does not
- * handle the checked exception declared by {@code super.read()}, so the proxy source does not
- * compile.
+ * <p>The test asserts compilation succeeds.
  */
 class CheckedExceptionMethodCompilesTest {
 

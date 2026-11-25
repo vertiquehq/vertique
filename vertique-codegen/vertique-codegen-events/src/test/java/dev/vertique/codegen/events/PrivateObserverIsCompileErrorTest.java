@@ -10,8 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies that {@link EventsProcessor} rejects observer methods that are not {@code public}
- * (W2 — observer visibility).
+ * Verifies that {@link EventsProcessor} rejects observer methods that are not {@code public}.
  *
  * <p>The generated {@code GeneratedEventsModule} contains a static {@code @Provides @IntoSet}
  * method whose body is {@code e -> bean.method((EventType) e)}. That lambda lives in the
@@ -23,9 +22,9 @@ import org.junit.jupiter.api.Test;
  * {@link dev.vertique.codegen.Diagnostics#observerMustBeAccessible} error and skip emission
  * for the offending method.
  *
- * <p><strong>RED</strong>: before the fix the processor silently generates the lambda without
- * checking visibility, producing an uncompilable or incorrectly empty module. After the fix,
- * the compilation fails with a diagnostic containing {@code "accessible"}.
+ * <p>The compilation fails with a diagnostic containing {@code "accessible"} instead of the
+ * processor silently generating the lambda without checking visibility, which would produce an
+ * uncompilable or incorrectly empty module.
  */
 class PrivateObserverIsCompileErrorTest {
 

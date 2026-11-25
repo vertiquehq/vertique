@@ -293,7 +293,7 @@ class PathParamAlignmentValidatorTest {
     @Test
     @DisplayName("@PathParam(\"\") on direct method param errors symmetrically with bean-scan branch")
     void blankPathParamOnDirectParam_errors() {
-        // Round-5 parity fix: the bean-scan branch (JaxRsBeanScanner) preserves blank @PathParam
+        // Parity: the bean-scan branch (JaxRsBeanScanner) preserves blank @PathParam
         // values, so the direct-param branch must do the same — both runtime ParameterExtractor
         // and rest-client ClientInterfaceScanner preserve the literal value. Without the symmetry
         // a developer hitting @PathParam("") on a direct param gets no signal until runtime, while

@@ -142,7 +142,7 @@ class ServiceClientProxyReservedIdentifierTest {
         String contractFqn = "com.example.reserved.ReservedIndexHelperChild";
         String companionFqn = contractFqn + "_ServiceClientProxy";
 
-        // Regression fixture for CG-015 round-4: the resolved-type erasure predicate.
+        // Regression fixture for the resolved-type erasure predicate.
         //
         // PURE INHERITANCE (child adds no re-declaration): the parent declares
         // _payloadIndex_(T) where T is a type variable. When the child specializes T to

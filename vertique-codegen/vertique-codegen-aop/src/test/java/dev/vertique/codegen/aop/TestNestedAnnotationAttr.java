@@ -10,14 +10,14 @@ import java.lang.annotation.Target;
 
 /**
  * Test-local, runtime-retained method annotation carrying a <strong>nested-annotation</strong> member
- * ({@link TestNestedMember}), used by the {@code vertique-codegen-aop} P2-W3 compile-test.
+ * ({@link TestNestedMember}), used by the {@code vertique-codegen-aop} compile-test.
  *
  * <p>A nested-annotation member is a legal annotation member type that
  * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter} cannot render into a literal in v1.
  * Without explicit rejection the emitter's {@code valueLiteral} matches none of the
  * String/Class/enum/primitive/array branches and falls through to {@code String.valueOf(raw)},
  * emitting the {@code AnnotationMirror}'s {@code toString()} as broken generated code. The v1 contract
- * is a clean compile <em>error</em> (FR-013-13 / FR-013-09c), never broken code.
+ * is a clean compile <em>error</em>, never broken code.
  *
  * <p>This fixture is not an {@link dev.vertique.aop.Aspect} trigger; it rides on a method that also
  * carries an aspect trigger so the proxy is generated and the method-annotation materialization is

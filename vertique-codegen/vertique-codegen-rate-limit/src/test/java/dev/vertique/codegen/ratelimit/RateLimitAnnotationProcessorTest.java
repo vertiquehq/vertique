@@ -26,7 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001/TP-002 — the compile-time annotation validation matrix for
+ * The compile-time annotation validation matrix and {@code process()} contract for
  * {@link RateLimitAnnotationProcessor}.
  *
  * <p>Every row compiles one inline fixture once with the real processor. The valid declaration must
@@ -37,14 +37,14 @@ class RateLimitAnnotationProcessorTest {
 
     private static final String PACKAGE = "com.example";
 
-    // --- TP-001: policy/cost/selector/proxyability validation matrix ---
+    // --- policy/cost/selector/proxyability validation matrix ---
 
     /**
-     * The five named rows of the T008 contract matrix.
+     * The named rows of the validation matrix.
      *
-     * @return one row per boundary, named exactly as the proof contract lists it
+     * @return one row per boundary, named by the behaviour it proves
      */
-    static Stream<MatrixRow> t008ContractMatrixRows() {
+    static Stream<MatrixRow> validationMatrixRows() {
         return Stream.of(
                 new MatrixRow(
                         "shouldCompileAValidRateLimitedDeclaration",
@@ -62,9 +62,9 @@ class RateLimitAnnotationProcessorTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t008ContractMatrixRows")
-    @DisplayName("enforces the T008 contract matrix")
-    void shouldEnforceT008ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("validationMatrixRows")
+    @DisplayName("enforces the validation matrix")
+    void shouldEnforceValidationMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
@@ -192,7 +192,7 @@ class RateLimitAnnotationProcessorTest {
     }
 
     /**
-     * P02/P03 review repair (T017, item 4): a bare-name (fluent, no {@code get}/{@code is} prefix)
+     * A bare-name (fluent, no {@code get}/{@code is} prefix)
      * zero-arg accessor is only a valid property-path segment when its declaring type is a record —
      * matching the shared runtime selector resolver's accessor rules exactly. {@code Holder} is
      * an ordinary class with a fluent {@code value()} accessor (no {@code getValue()}/{@code
@@ -235,7 +235,7 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("rate-limit key property is not an accessible record or bean accessor");
     }
 
-    // --- Supplementary: root-text-equal non-root segment (not part of the frozen TP-001 matrix) ---
+    // --- Supplementary: root-text-equal non-root segment ---
 
     /**
      * {@code key = {"0.0"}}: the root segment {@code "0"} resolves to parameter 0, and the second
@@ -312,7 +312,7 @@ class RateLimitAnnotationProcessorTest {
         ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source).assertSuccess();
     }
 
-    // --- TP-002: process() contract ---
+    // --- process() contract ---
 
     @Test
     @DisplayName("process() returns false and generates zero sources")
@@ -350,9 +350,9 @@ class RateLimitAnnotationProcessorTest {
 
     /**
      * One named row of the matrix. {@link #toString()} is the row name so the parameterized display
-     * name is exactly the identifier the proof contract lists.
+     * name is exactly the row identifier.
      *
-     * @param rowName the frozen row identifier
+     * @param rowName the row identifier
      * @param proof   the row's inline fixture and its decisive assertions
      */
     private record MatrixRow(String rowName, Executable proof) {

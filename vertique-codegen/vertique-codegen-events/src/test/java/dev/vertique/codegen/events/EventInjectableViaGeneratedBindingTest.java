@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies {@link EventsProcessor} makes {@code Event<X>} injectable for an <em>observed</em> event
  * type by generating a concrete {@code X$Event extends Event<X>} publisher and a {@code @Binds
- * Event<X>} in the generated {@code GeneratedEventsModule} (plan §3 / §3a, FR-013-11).
+ * Event<X>} in the generated {@code GeneratedEventsModule}.
  *
  * <p>Fixture: a bean injects {@code Event<OrderCreated>} through its {@code @Inject} constructor, and a
  * separate observer bean declares {@code onOrder(@Observes OrderCreated e)}. The event type therefore
@@ -20,9 +20,6 @@ import org.junit.jupiter.api.Test;
  * scan. The generated module must bind {@code Event<OrderCreated>} to the generated
  * {@code OrderCreated$Event} publisher.
  *
- * <p><strong>Red:</strong> the slice-3.2 scaffold {@link EventsProcessor} is a no-op, so neither the
- * {@code OrderCreated$Event} publisher nor the {@code GeneratedEventsModule} is generated and every
- * assertion below fails.
  */
 class EventInjectableViaGeneratedBindingTest {
 
