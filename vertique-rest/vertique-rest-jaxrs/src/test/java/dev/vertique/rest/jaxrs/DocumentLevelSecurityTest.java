@@ -319,6 +319,29 @@ class DocumentLevelSecurityTest {
         }
 
         @Test
+        @DisplayName("@PermitAll under a scoped document level fails startup naming the operation")
+        void permitAllUnderScopedDocumentFails() {
+            JaxRsRouterMount mount = applicationMount(
+                    factory(new RecordingContributor()), ScopedApi.class, new PermitAllUnmarkedResource());
+            Throwable failure = failureOf(() -> mount.createRouter(vertx));
+            assertTrue(failure instanceof RestConfigurationException, String.valueOf(failure));
+            assertTrue(failure.getMessage().contains("'login'"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("@SecurityRequirements({})"), failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("@PermitAll with the marker under a scoped document level stays anonymous")
+        void permitAllWithMarkerUnderScopedDocumentStaysAnonymous() {
+            JaxRsRouterMount mount = applicationMount(
+                    factory(new RecordingContributor()), ScopedApi.class, new PermitAllMarkedResource());
+            Router root = Router.router(vertx);
+            root.route(mount.mountPath()).subRouter(await(mount.createRouter(vertx)));
+            listen(root);
+
+            assertEquals(200, get("/api/login", null));
+        }
+
+        @Test
         @DisplayName("requireExplicitPolicy accepts an operation covered only by the document level")
         void documentLevelCountsAsExplicit() {
             JaxRsRouterMount.Factory strict = TestFactories.builder()
@@ -615,6 +638,18 @@ class DocumentLevelSecurityTest {
         @Operation(operationId = "login")
         @jakarta.annotation.security.PermitAll
         @SecurityRequirements({})
+        public String login() {
+            return "ok";
+        }
+    }
+
+    @Path("")
+    public static class PermitAllUnmarkedResource {
+        @GET
+        @Path("/login")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "login")
+        @jakarta.annotation.security.PermitAll
         public String login() {
             return "ok";
         }

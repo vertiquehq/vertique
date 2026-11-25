@@ -157,6 +157,21 @@ class DefaultSecurityPolicyValidatorTest {
     }
 
     @Test
+    @DisplayName("@PermitAll with a scoped requirement fails startup naming the operation")
+    void permitAllWithScopedRequirementFailsStartup() {
+        SecuritySchemeHandler handler = mock(SecuritySchemeHandler.class);
+        when(handler.schemeName()).thenReturn("bearerAuth");
+        validator = new DefaultSecurityPolicyValidator(Set.of(handler));
+
+        RestOperationDescriptor descriptor = descriptor(
+                new SecurityPolicy.PermitAll(), List.of(new SecurityRequirement("bearerAuth", List.of("write"))));
+
+        RestConfigurationException failure = assertThrows(
+                RestConfigurationException.class, () -> validator.validate(descriptor, descriptor.securityPolicy()));
+        assertTrue(failure.getMessage().contains("@PermitAll"), failure.getMessage());
+    }
+
+    @Test
     @DisplayName("@RolesAllowed with a matching handler and declared requirement produces no violation")
     void rolesAllowedWithHandlerAndRequirementReturnsNoViolation() {
         SecuritySchemeHandler handler = mock(SecuritySchemeHandler.class);

@@ -1805,10 +1805,11 @@ sets. The document's own shape is checked once per mount: a multi-scheme (`combi
 scopes on one of several alternatives, fails startup naming the application and its declaring
 interface.
 
-- **`@PermitAll` under document-level security** fails startup with the security module's
-  `CONFLICTING_SEMANTICS` violation, as `@PermitAll` with a declared requirement always has. Add
-  `@SecurityRequirements({})` to keep the operation anonymous (login and health routes), or remove
-  `@PermitAll`.
+- **`@PermitAll` under document-level security** fails startup, as `@PermitAll` with a declared
+  requirement always has: a document level that carries scopes fails with a `RestConfigurationException`
+  naming the operation, and a scopeless one with the security module's `CONFLICTING_SEMANTICS`
+  violation. Add `@SecurityRequirements({})` to keep the operation anonymous (login and health
+  routes), or remove `@PermitAll`.
 - **The marker must be declared on the resource itself.** Annotation resolution merges the resource's
   superclasses and interfaces, so a marker found only on a superclass, an interface or an inherited
   method fails startup naming the operation, rather than opening every resource that inherits it.

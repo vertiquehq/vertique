@@ -22,7 +22,8 @@ import java.util.List;
  *
  * <p><strong>Supported shape only (SH-2 guarantees).</strong> The fold engages only for a single
  * single-scheme set whose scope list is non-empty. Multi-scheme sets, scoped-OR (more than one set with
- * any scoped set), and the both-scopes case ({@code @Authorized(scopes)} together with set scopes) are
+ * any scoped set), the both-scopes case ({@code @Authorized(scopes)} together with set scopes), and
+ * {@code @PermitAll} with a scoped set are
  * rejected at startup by {@link #enforceSupportedShape}, so this helper never folds them and never has
  * to merge two scope sources. Consequently the base policy never already carries required scopes, and
  * the fold only ever <em>adds</em> the set's scopes.
@@ -45,7 +46,7 @@ public final class EffectiveSecurityPolicy {
      * truth for the matrix: the rest-jaxrs route registrar calls it for every operation and the
      * rest-security {@code DefaultSecurityPolicyValidator} delegates to it.
      *
-     * <p>Three deferred cases are rejected, in order, each with a message naming the operationId, the
+     * <p>Four unsupported cases are rejected, in order, each with a message naming the operationId, the
      * unsupported case, and the workaround:
      *
      * <ol>
@@ -57,13 +58,19 @@ public final class EffectiveSecurityPolicy {
      *       (via {@code @Authorized}) <em>and</em> any set carries scopes; the two scope sources cannot
      *       be merged unambiguously. Roles via {@code @RolesAllowed}/{@code @Authorized} alongside
      *       {@code @SecurityRequirement} scopes is permitted (distinct authority kinds).</li>
+     *   <li><strong>{@code @PermitAll} with scopes</strong> — the base policy is {@link
+     *       SecurityPolicy.PermitAll} <em>and</em> a set carries scopes. {@code @PermitAll} skips
+     *       authorization, so the scopes would never be checked. The requirement may be declared on the
+     *       operation or class, or inherited from the application's document-level security; an empty
+     *       {@code @SecurityRequirements({})} marker on the operation or its class makes the operation
+     *       public instead. A scopeless requirement with {@code @PermitAll} is not rejected here.</li>
      * </ol>
      *
      * @param operationId the operationId named in the diagnostic; must not be {@code null}
      * @param sets        the operation's effective security requirement sets (the OR alternatives);
      *                    must not be {@code null}
      * @param policy      the operation's resolved base security policy; must not be {@code null}
-     * @throws RestConfigurationException if the shape is one of the three deferred cases
+     * @throws RestConfigurationException if the shape is one of the four unsupported cases
      */
     public static void enforceSupportedShape(
             String operationId, List<SecurityRequirementSet> sets, SecurityPolicy policy) {
@@ -94,6 +101,17 @@ public final class EffectiveSecurityPolicy {
                     "Operation '%s' declares scopes via both @Authorized and @SecurityRequirement, which "
                             + "is not yet supported. Declare scopes via @Authorized OR @SecurityRequirement, "
                             + "not both.",
+                    operationId));
+        }
+
+        // Case 4: @PermitAll skips authorization, so a scoped requirement's scopes would go unenforced.
+        if (anySetHasScopes && policy instanceof SecurityPolicy.PermitAll) {
+            throw new RestConfigurationException(String.format(
+                    "Operation '%s' declares @PermitAll together with a scoped security requirement, so its "
+                            + "scopes would not be enforced. Remove @PermitAll, or declare "
+                            + "@SecurityRequirements({}) on the operation or its resource class to make the "
+                            + "operation public. If the requirement comes from the application's "
+                            + "@OpenAPIDefinition(security), the empty marker opts the operation out of it.",
                     operationId));
         }
     }
@@ -131,8 +149,8 @@ public final class EffectiveSecurityPolicy {
      *       <strong>unchanged</strong>: fold never silently replaces or loosens the base's own scopes.
      *       The upstream gate makes this unreachable, but fold is safe in isolation;</li>
      *   <li>{@link SecurityPolicy.PermitAll} / {@link SecurityPolicy.DenyAll} → returned unchanged (a
-     *       scoped set cannot co-occur with a blanket policy past SH-2 validation; defensively left
-     *       alone rather than overriding the operator's blanket intent).</li>
+     *       scoped set cannot co-occur with {@code @PermitAll} past the shape gate, and {@code @DenyAll}
+     *       denies regardless; left alone rather than overriding the operator's blanket intent).</li>
      * </ul>
      *
      * <p>For a scopeless set, no set, or anything other than the single scoped single-scheme shape, the
@@ -160,8 +178,8 @@ public final class EffectiveSecurityPolicy {
             // unchanged. The upstream gate makes this branch unreachable, but fold stays safe in isolation.
             case SecurityPolicy.Constrained c ->
                 c.requiredScopes().isEmpty() ? new SecurityPolicy.Constrained(c.requiredRoles(), scopes, true) : policy;
-            // A blanket PermitAll/DenyAll cannot co-occur with a scoped requirement past SH-2 validation;
-            // leave the operator's blanket intent untouched rather than silently overriding it.
+            // PermitAll with a scoped requirement is rejected upstream by enforceSupportedShape, and DenyAll
+            // denies regardless; leave the operator's blanket intent untouched rather than overriding it.
             case SecurityPolicy.PermitAll ignored -> policy;
             case SecurityPolicy.DenyAll ignored -> policy;
         };

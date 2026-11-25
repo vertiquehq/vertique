@@ -228,7 +228,9 @@ contributor.
 `RestOperationDescriptor.effectiveSecurityPolicy()` is the always-on fail-closed security gate: it
 calls `EffectiveSecurityPolicy.enforceSupportedShape(...)` before folding, so simply reading the
 effective policy throws `RestConfigurationException` for an unsupported declaration shape whether or
-not the optional validator from `vertique-rest-security` is wired.
+not the optional validator from `vertique-rest-security` is wired. The unsupported shapes are a
+multi-scheme set, scopes on one of several alternatives, scopes declared through both
+`@Authorized` and a security requirement, and `@PermitAll` with a scoped requirement.
 
 `RestOperationDescriptor` is Stable and grows only through `default` methods, so an implementation
 written against an earlier version (such as a test descriptor) keeps compiling and linking.

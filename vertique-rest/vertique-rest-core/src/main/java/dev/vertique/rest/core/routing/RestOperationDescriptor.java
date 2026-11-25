@@ -138,12 +138,12 @@ public interface RestOperationDescriptor {
      * recomputes: the route registrar and the security-policy validator read <em>one</em> consistent
      * effective policy. Because this method runs {@code enforceSupportedShape} first, simply
      * <em>accessing</em> the effective policy is the always-on fail-closed gate — it throws for a
-     * multi-scheme set, a scoped-OR, or the both-scopes shape independently of whether the optional
+     * multi-scheme set, a scoped-OR, the both-scopes shape, or @PermitAll with scopes independently of whether the optional
      * {@code DefaultSecurityPolicyValidator} is wired.
      *
      * @return the operation's effective security policy with set scopes folded in; never {@code null}
      * @throws RestConfigurationException if the operation declares a security shape whose V1
-     *     enforcement is deferred (multi-scheme set, scoped-OR, or both-scopes); see
+     *     enforcement is deferred (multi-scheme set, scoped-OR, both-scopes, or @PermitAll with scopes); see
      *     {@link EffectiveSecurityPolicy#enforceSupportedShape}
      */
     default SecurityPolicy effectiveSecurityPolicy() {
