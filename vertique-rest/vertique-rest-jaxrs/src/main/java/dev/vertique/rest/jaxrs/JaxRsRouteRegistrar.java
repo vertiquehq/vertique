@@ -94,9 +94,11 @@ import lombok.extern.slf4j.Slf4j;
  * A plain Vert.x {@link Router} evaluates routes of equal {@code order} in <em>add order</em> and runs
  * the first match, so a path-parameter route added before a more-specific static route would shadow it
  * (e.g. {@code GET /hello/{name}} would match {@code /hello/secured}, bypassing the secured route's
- * authentication handler). Sorting by path specificity before the registration loop registers the
- * more-specific path first so it wins Vert.x match precedence — restoring the static-before-parameter
- * ordering the pre-rewrite OpenAPI router supplied automatically.
+ * authentication handler). Routes are created in the JAX-RS precedence order (more literal characters,
+ * then more variables, then more constrained variables) so the more specific path wins Vert.x match
+ * precedence. A constraint with a top-level alternation ({@code {p:a|b/admin}}) is ranked per
+ * alternative: the operation's full template registers at its least specific alternative's rank and one
+ * more route registers per more specific alternative, every route carrying the same handler instances.
  *
  * <p>For each discovered operation the per-route handler chain is, in order:
  * <ol>
@@ -442,20 +444,42 @@ public class JaxRsRouteRegistrar {
             allMethods.addAll(scanner.scanResource(resource, securityViolations));
         }
 
-        // Phase 2 — register routes MOST-SPECIFIC-FIRST. Vert.x evaluates routes of equal order in add
-        // order and runs the first match, so a path-parameter route added before a more-specific static
-        // route would SHADOW it (e.g. GET /hello/{name} would match /hello/secured, bypassing the
-        // secured route's authentication handler). Sorting by RoutePathSpecificity here registers the
-        // more-specific path first so it wins Vert.x match precedence — restoring the static-before-
-        // parameter ordering the pre-rewrite OpenAPI router supplied automatically. The sort is a stable
-        // total order (see RoutePathSpecificity) and is independent of HTTP method: method-disjoint
-        // routes do not shadow one another, but a single global specificity sort is sufficient and
-        // simplest. Everything inside the loop — duplicate-operationId detection, param validation,
-        // security-policy validation, @RequiresAction resolution, and the handler add-order — is
+        // Phase 2 — create the Vert.x routes MOST-SPECIFIC-FIRST, then attach each operation's handler
+        // chain. Vert.x evaluates routes of equal order in add order and runs the first match, so a route
+        // added before a more specific one would SHADOW it (e.g. GET /hello/{name} would match
+        // /hello/secured, bypassing the secured route's authentication handler). Routes are therefore
+        // created in the JAX-RS precedence order (see RoutePathSpecificity): more literal characters
+        // first, then more variables, then more constrained variables, then the segment and name
+        // tie-breaks. Templates that tie on all of these have equal rank and no guaranteed order.
+        //
+        // A constraint with a top-level alternation ({p:a|b/admin}) matches shapes that rank
+        // differently, so the operation registers its FULL template at its least specific alternative's
+        // rank and one more route per strictly more specific alternative, each at that alternative's own
+        // rank. Every route of an operation carries the same handler instances (OperationRoutes), so the
+        // chain is built once per operation and the route that matched does not change what runs. A
+        // template without an alternation has exactly one route.
+        //
+        // All routes are created before any handler is attached, so each sits at its own rank in add
+        // order. The per-operation loop below (duplicate-operationId detection, param validation,
+        // security-policy validation, @RequiresAction resolution, and the handler add-order) is
         // unchanged from the per-resource form.
-        List<ResourceMethodMeta> registrationOrder = new ArrayList<>(allMethods);
-        registrationOrder.sort(
-                Comparator.comparing(ResourceMethodMeta::path, RoutePathSpecificity.MOST_SPECIFIC_FIRST));
+        List<RouteEntry> entries = routeEntries(allMethods);
+        Map<ResourceMethodMeta, List<Route>> routesByMeta = new IdentityHashMap<>();
+        List<ResourceMethodMeta> registrationOrder = new ArrayList<>();
+        for (RouteEntry entry : entries) {
+            ResourceMethodMeta meta = entry.meta();
+            List<Route> routes = routesByMeta.get(meta);
+            if (routes == null) {
+                routes = new ArrayList<>();
+                routesByMeta.put(meta, routes);
+                registrationOrder.add(meta); // operations run in the order of their first entry
+            }
+            // A method the loop below will reject creates no route: its template may not even compile.
+            if (RouteValidator.validateMethodParams(meta).isEmpty()
+                    && RouteValidator.validatePathTemplate(meta).isEmpty()) {
+                routes.add(createRoute(apiRouter, meta, JaxRsPathTemplate.translate(entry.template())));
+            }
+        }
 
         for (ResourceMethodMeta meta : registrationOrder) {
             // Validate: at most one body parameter; form params and body params are mutually exclusive
@@ -536,10 +560,11 @@ public class JaxRsRouteRegistrar {
             SecurityPolicy effectivePolicy = descriptor.effectiveSecurityPolicy();
             effectivePolicies.put(meta.operationId(), effectivePolicy);
 
-            // Create the Vert.x route from the translated JAX-RS path template. The template is
-            // translated once, so a publication records exactly the value the route registered with.
+            // The operation's Vert.x routes were created above from the translated JAX-RS path template(s).
+            // The full template is translated here for the publication, which records the value the
+            // operation's full-template route registered with.
             JaxRsPathTemplate routeTemplate = JaxRsPathTemplate.translate(meta.path());
-            Route route = createRoute(apiRouter, meta, routeTemplate);
+            OperationRoutes route = new OperationRoutes(routesByMeta.get(meta));
 
             // (0) Route identity: the route's FIRST handler records this operation on the request's
             // framework-owned completion state, ahead of authentication, so a request rejected after
@@ -1339,7 +1364,7 @@ public class JaxRsRouteRegistrar {
      * wrapper and continue to emit rejections immediately.
      *
      * @param operationId      the operation identifier, used in the fail-closed error message
-     * @param route            the Vert.x route to install the authentication handler(s) on
+     * @param route            the operation's Vert.x route(s) to install the authentication handler(s) on
      * @param requirementSets  the operation's effective security requirement sets (the OR set of
      *                         alternatives, each a single-scheme set from annotations)
      * @param securityHandlers the collected authentication handlers keyed by scheme name
@@ -1348,7 +1373,7 @@ public class JaxRsRouteRegistrar {
      */
     static void applySecurity(
             String operationId,
-            Route route,
+            OperationRoutes route,
             List<SecurityRequirementSet> requirementSets,
             SecuritySchemeHandlerCollector securityHandlers) {
         if (requirementSets.isEmpty()) {
@@ -1398,7 +1423,7 @@ public class JaxRsRouteRegistrar {
 
     /**
      * Calls every {@link OperationHandlerContributor} that is not an authentication-stage one (see
-     * {@link OperationHandlerContributor#authenticationStage()}) for one operation's route, in the
+     * {@link OperationHandlerContributor#authenticationStage()}) for one operation's routes, in the
      * given order, so each can append its handlers through a {@link PlainRouteRegistration} over
      * {@code route}. The authentication-stage contributors are called earlier, by
      * {@link #contributeAuthenticationStage}.
@@ -1412,7 +1437,7 @@ public class JaxRsRouteRegistrar {
      * chain, a resource method's or a framework-owned synthetic operation's, runs this one contributor
      * loop: the two can never diverge in order or inputs.
      *
-     * @param route          the Vert.x route the contributors append their handlers to
+     * @param route          the operation's Vert.x route(s); a handler a contributor appends goes to every one
      * @param operationId    the operation's id, handed to the contributors unchanged
      * @param descriptor     the operation's transport-neutral descriptor, exposed through both the
      *                       context and the route registration
@@ -1422,7 +1447,7 @@ public class JaxRsRouteRegistrar {
      * @param contributors   the contributors, already sorted into the order they must run in
      */
     static void contributeOperationHandlers(
-            Route route,
+            OperationRoutes route,
             String operationId,
             RestOperationDescriptor descriptor,
             SecurityPolicy policy,
@@ -1441,7 +1466,7 @@ public class JaxRsRouteRegistrar {
      * built by calling both, once each, at their two points in the chain: a route built through only
      * one of them would silently lose the other group.
      *
-     * @param route          the Vert.x route the contributors append their handlers to
+     * @param route          the operation's Vert.x route(s); a handler a contributor appends goes to every one
      * @param operationId    the operation's id, handed to the contributors unchanged
      * @param descriptor     the operation's transport-neutral descriptor
      * @param policy         the operation's effective security policy
@@ -1450,7 +1475,7 @@ public class JaxRsRouteRegistrar {
      * @param contributors   all of the router's contributors, already sorted into the order they must run in
      */
     static void contributeAuthenticationStage(
-            Route route,
+            OperationRoutes route,
             String operationId,
             RestOperationDescriptor descriptor,
             SecurityPolicy policy,
@@ -1460,7 +1485,7 @@ public class JaxRsRouteRegistrar {
     }
 
     private static void contribute(
-            Route route,
+            OperationRoutes route,
             String operationId,
             RestOperationDescriptor descriptor,
             SecurityPolicy policy,
@@ -1850,6 +1875,44 @@ public class JaxRsRouteRegistrar {
      * @param operationId the operation's id
      */
     record ImplicitOperation(String httpMethod, String fullPath, String operationId) {}
+
+    /**
+     * Returns the Vert.x routes the given operations register, in registration order: each operation's
+     * full template at its least specific alternative's rank, plus one entry per strictly more specific
+     * alternative of a constraint with a top-level alternation. Both JAX-RS engines feed this one
+     * function, so equal {@link ResourceMethodMeta#path()} strings give equal route orders.
+     *
+     * @param metas the scanned operations, in any order
+     * @return the route entries, most specific first
+     */
+    static List<RouteEntry> routeEntries(List<ResourceMethodMeta> metas) {
+        List<RouteEntry> entries = new ArrayList<>();
+        for (ResourceMethodMeta meta : metas) {
+            List<RoutePathSpecificity.Rank> variants = RoutePathSpecificity.rankedVariants(meta.path());
+            RoutePathSpecificity.Rank least = variants.get(variants.size() - 1);
+            entries.add(new RouteEntry(meta, meta.path(), least));
+            for (RoutePathSpecificity.Rank variant : variants.subList(0, variants.size() - 1)) {
+                if (RoutePathSpecificity.Rank.compareRank(variant, least) < 0) {
+                    entries.add(new RouteEntry(meta, variant.template(), variant));
+                }
+            }
+        }
+        entries.sort(Comparator.comparing(RouteEntry::rank, RoutePathSpecificity.Rank::compareTotal)
+                .thenComparing(entry -> entry.meta().path())
+                .thenComparing(entry -> entry.meta().operationId())
+                .thenComparing(RouteEntry::template));
+        return entries;
+    }
+
+    /**
+     * One Vert.x route to create: an operation's full template at its least specific alternative's
+     * rank, or one more specific alternative's own template.
+     *
+     * @param meta     the operation the route belongs to
+     * @param template the template the route registers with
+     * @param rank     the rank the route sorts at
+     */
+    record RouteEntry(ResourceMethodMeta meta, String template, RoutePathSpecificity.Rank rank) {}
 
     /**
      * Joins a mount's path prefix with an operation's own path into the operation's full path,

@@ -217,16 +217,17 @@ final class DefaultSyntheticOperationInstaller implements SyntheticOperationInst
             // completes as an operation completion carrying this descriptor. It is a platform handler,
             // the only handler type Vert.x lets precede the authentication handler(s).
             route.handler(RequestCompletionRecorder.operationRouteHandler(descriptor));
-            JaxRsRouteRegistrar.applySecurity(operationId, route, requirementSets, state.securityHandlers());
+            OperationRoutes operationRoutes = OperationRoutes.of(route);
+            JaxRsRouteRegistrar.applySecurity(operationId, operationRoutes, requirementSets, state.securityHandlers());
             JaxRsRouteRegistrar.contributeAuthenticationStage(
-                    route,
+                    operationRoutes,
                     operationId,
                     descriptor,
                     effectivePolicy,
                     requiredAction,
                     factory.sortedOperationHandlerContributors());
             JaxRsRouteRegistrar.contributeOperationHandlers(
-                    route,
+                    operationRoutes,
                     operationId,
                     descriptor,
                     effectivePolicy,

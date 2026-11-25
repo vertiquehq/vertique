@@ -182,6 +182,52 @@ carries `@Operation` without an id, or with a blank one, keeps the id of the dec
 identifies the route internally; it is **not** checked against the generated `openapi.json` at
 runtime.
 
+### Route precedence
+
+Vert.x runs the first route that matches a request, in the order routes were added. The registrar
+adds a mount's routes most specific first, using the JAX-RS 3.1 ranking. It applies to every HTTP
+method and does not depend on declaration order:
+
+1. more literal characters first: every character of the template outside a `{…}` variable,
+   separators included;
+2. then more path variables;
+3. then more variables that declare a regular expression (`{id:\d+}`, even `{x:[^/]+}`).
+
+Two refinements apply:
+
+- **A constraint that spans segments.** When a constraint contains a required `/` (outside a
+  character class or group, not optional, no top-level `|`), each `/` and each plain piece of it
+  counts as literal characters. Any other piece counts as one regex variable. So
+  `{slug:[^/]+/admin}` ranks with the literal `/admin`.
+- **A constraint with a top-level alternative** (`{p:a|b/admin}`). Each alternative is ranked on its
+  own:
+  - the operation's full template registers at the rank of its least specific alternative;
+  - each more specific alternative registers as an extra route at its own rank, with the same handler
+    chain;
+  - an `OperationHandlerContributor` still sees one registration, and a handler it adds goes to every
+    route of the operation.
+
+  Alternatives that rank equal stay together. A constraint containing `\Q`, a backreference or an
+  inline flag is not split. A template with *k* such variables of *n* distinct ranks each registers
+  up to *n*<sup>*k*</sup> routes, and each one is tried in turn on every request that reaches it.
+
+A route without variables always outranks a variable route that matches the same path, because the
+variables use up some of the path's characters. If two templates still tie, the registrar orders
+them by segment shape: at the first differing segment, static text beats a regex variable, which
+beats a plain variable; then the longer template wins; then the template string decides. **Routes
+that rank equal have no guaranteed order:** when both can match one path, make them distinct.
+
+**Overlapping routes with different security.** This ranking can let a route whose literal text
+comes later in the path win over a route with an earlier static or regex segment:
+
+- `/api/{tenant}/accounts` answers `/api/admin/accounts` ahead of `/api/admin/{x}`;
+- `/u/{name}/profile` answers `/u/42/profile` ahead of `/u/{id:\d+}/{action}`;
+- `/a/{x:\w+}/b` answers `/a/b/b` ahead of `/a/b/{y}`.
+
+The route that wins decides which authentication runs, so give every pair of routes that can match
+one path the same security, or make them distinct. The startup log line `Registering handler for
+operationId=…` is printed in registration order and shows the order the registrar chose.
+
 ### One response path for success and failure
 
 Every response — a returned entity, a mapped exception, a 406 from content negotiation — is produced

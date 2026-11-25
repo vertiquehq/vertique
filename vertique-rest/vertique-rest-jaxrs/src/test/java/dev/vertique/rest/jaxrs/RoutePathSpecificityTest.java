@@ -5,6 +5,7 @@ package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -34,6 +35,15 @@ class RoutePathSpecificityTest {
         assertTrue(
                 RoutePathSpecificity.compare(less, more) > 0,
                 () -> "'" + less + "' should sort after (be less specific than) '" + more + "'");
+    }
+
+    /**
+     * Asserts that two templates have equal rank: the same key and segment comparison, so only their
+     * name orders them, in either direction.
+     */
+    private static void assertEqualRank(String a, String b) {
+        assertTrue(RoutePathSpecificity.equalRank(a, b), () -> "'" + a + "' and '" + b + "' should rank equal");
+        assertTrue(RoutePathSpecificity.equalRank(b, a), () -> "'" + b + "' and '" + a + "' should rank equal");
     }
 
     @Nested
@@ -112,12 +122,12 @@ class RoutePathSpecificityTest {
         }
 
         @Test
-        @DisplayName("an alternation or an optional separator keeps the constraint one segment")
-        void alternationOrOptionalSeparatorStaysOneSegment() {
-            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:b/c|a}");
-            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:[^/]+/?admin}");
-            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:x/*y}");
-            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:x\\/?y}");
+        @DisplayName("an alternation or an optional separator counts as one regex variable: equal rank")
+        void alternationOrOptionalSeparatorRanksAsOneRegexVariable() {
+            assertEqualRank("/r/{a:\\w+}", "/r/{p:b/c|a}");
+            assertEqualRank("/r/{a:\\w+}", "/r/{p:[^/]+/?admin}");
+            assertEqualRank("/r/{a:\\w+}", "/r/{p:x/*y}");
+            assertEqualRank("/r/{a:\\w+}", "/r/{p:x\\/?y}");
         }
 
         @Test
@@ -193,6 +203,163 @@ class RoutePathSpecificityTest {
             assertTrue(
                     paths.indexOf("/hello/limited/{name}") < nameIdx,
                     "deeper static-prefixed /hello/limited/{name} must precede /hello/{name}");
+        }
+    }
+
+    @Nested
+    @DisplayName("literal-character ranking")
+    class LiteralCharacters {
+
+        @Test
+        @DisplayName("a catch-all /a/{p:.+} ranks behind /a/{id}/secret, whatever the names")
+        void catchAllRanksBehindLiteralTail() {
+            assertMoreSpecific("/a/{id}/secret", "/a/{p:.+}");
+            assertMoreSpecific("/a/{zz}/secret", "/a/{aa:.+}");
+        }
+
+        @Test
+        @DisplayName("a mixed segment with a longer literal beats one with a shorter literal")
+        void mixedSegmentLiteralLength() {
+            assertMoreSpecific("/f/~admin.txt", "/f/{name}.txt");
+            assertMoreSpecific("/f/~admin.txt", "/f/{zz}.txt");
+        }
+
+        @Test
+        @DisplayName("reversal: a later literal tail outweighs an earlier static segment")
+        void laterLiteralTailWins() {
+            assertMoreSpecific("/api/{tenant}/accounts", "/api/admin/{x}");
+            assertMoreSpecific("/u/{name}/profile", "/u/{id:\\d+}/{action}");
+        }
+
+        @Test
+        @DisplayName("reversal: at equal L and V, a constrained variable beats a plain one")
+        void regexBreaksTieAtEqualLiteralsAndVariables() {
+            assertMoreSpecific("/a/{x:\\w+}/b", "/a/b/{y}");
+        }
+
+        @Test
+        @DisplayName("residual: an explicit broad regex beats a plain variable at equal L and V")
+        void broadRegexBeatsPlainVariable() {
+            assertMoreSpecific("/a/{p:.+}", "/a/{id}");
+        }
+
+        @Test
+        @DisplayName("equal L, V and R fall back to the segment-kind tie-break: /a/b/{y} before /a/{x}/b")
+        void segmentTieBreakOrdersEqualKeys() {
+            assertMoreSpecific("/a/b/{y}", "/a/{x}/b");
+            assertFalse(RoutePathSpecificity.equalRank("/a/b/{y}", "/a/{x}/b"));
+            assertEquals(
+                    RoutePathSpecificity.rankOf("/a/b/{y}").key(),
+                    RoutePathSpecificity.rankOf("/a/{x}/b").key());
+        }
+
+        @Test
+        @DisplayName("a colon segment is a variable in a plain template and literal in a regex template")
+        void colonSegmentCountsAsVariableOnlyInPlainTemplate() {
+            assertEquals(
+                    new RoutePathSpecificity.Key(3, 1, 0),
+                    RoutePathSpecificity.rankOf("/a/:id").key());
+            assertEquals(
+                    new RoutePathSpecificity.Key(7, 1, 1),
+                    RoutePathSpecificity.rankOf("/a/:id/{n:\\d+}").key());
+        }
+
+        @Test
+        @DisplayName("a separator-spanning constraint counts each separator and plain piece as literals")
+        void spanningConstraintKey() {
+            assertEquals(
+                    new RoutePathSpecificity.Key(13, 1, 1),
+                    RoutePathSpecificity.rankOf("/repos/{slug:[^/]+/admin}").key());
+        }
+    }
+
+    @Nested
+    @DisplayName("alternation variants")
+    class Variants {
+
+        @Test
+        @DisplayName("a top-level alternation splits into one variant per alternative, most specific first")
+        void topLevelAlternationSplits() {
+            assertEquals(List.of("/r/{p:b/admin}", "/r/{p:a}"), RoutePathSpecificity.variants("/r/{p:a|b/admin}"));
+        }
+
+        @Test
+        @DisplayName("a template without an alternation is its own single variant")
+        void noAlternationIsSingleVariant() {
+            assertEquals(List.of("/a/{id}"), RoutePathSpecificity.variants("/a/{id}"));
+            assertEquals(List.of("/a/{id:\\d+}"), RoutePathSpecificity.variants("/a/{id:\\d+}"));
+        }
+
+        @Test
+        @DisplayName("no split inside a character class")
+        void noSplitInClass() {
+            assertEquals(List.of("/a/{p:[a|b]}"), RoutePathSpecificity.variants("/a/{p:[a|b]}"));
+        }
+
+        @Test
+        @DisplayName("no split inside a group")
+        void noSplitInGroup() {
+            assertEquals(List.of("/a/{p:(a|b)}"), RoutePathSpecificity.variants("/a/{p:(a|b)}"));
+        }
+
+        @Test
+        @DisplayName("no split for an escaped bar")
+        void noSplitForEscapedBar() {
+            assertEquals(List.of("/a/{p:a\\|b}"), RoutePathSpecificity.variants("/a/{p:a\\|b}"));
+        }
+
+        @Test
+        @DisplayName("no split when the constraint has a quoted section")
+        void noSplitWithQuote() {
+            assertEquals(List.of("/a/{p:\\Qa|b\\E}"), RoutePathSpecificity.variants("/a/{p:\\Qa|b\\E}"));
+            assertEquals(List.of("/a/{p:x/y|\\Qa|b\\E}"), RoutePathSpecificity.variants("/a/{p:x/y|\\Qa|b\\E}"));
+        }
+
+        @Test
+        @DisplayName("no split when the constraint has a numeric backreference")
+        void noSplitWithBackreference() {
+            assertEquals(List.of("/a/{p:(x)\\1|y}"), RoutePathSpecificity.variants("/a/{p:(x)\\1|y}"));
+        }
+
+        @Test
+        @DisplayName("no split when the constraint has an inline flag")
+        void noSplitWithInlineFlag() {
+            assertEquals(List.of("/a/{p:(?i)a|b/c}"), RoutePathSpecificity.variants("/a/{p:(?i)a|b/c}"));
+            assertEquals(List.of("/a/{p:(?i:a)|b/c}"), RoutePathSpecificity.variants("/a/{p:(?i:a)|b/c}"));
+        }
+
+        @Test
+        @DisplayName("alternatives that contribute equally merge into one alternation")
+        void equalContributionMerges() {
+            assertEquals(List.of("/a/{p:ab|cd}"), RoutePathSpecificity.variants("/a/{p:ab|cd}"));
+            assertEquals(List.of("/a/{p:x/y|z/w}"), RoutePathSpecificity.variants("/a/{p:x/y|z/w}"));
+            assertEquals(
+                    List.of("/a/{p:b/admin}", "/a/{p:ab|cd}"), RoutePathSpecificity.variants("/a/{p:ab|cd|b/admin}"));
+        }
+
+        @Test
+        @DisplayName("two alternation variables multiply, ordered most specific first")
+        void productOfTwoVariables() {
+            List<String> variants = RoutePathSpecificity.variants("/a/{p:x|y/z}/{q:m|n/o}");
+            assertEquals(4, variants.size());
+            assertEquals("/a/{p:y/z}/{q:n/o}", variants.get(0));
+            assertEquals("/a/{p:x}/{q:m}", variants.get(3));
+            assertEquals(List.of("/a/{p:y/z}/{q:m}", "/a/{p:x}/{q:n/o}"), variants.subList(1, 3));
+        }
+
+        @Test
+        @DisplayName("each variant ranks on its own alternative")
+        void variantsRankPerAlternative() {
+            List<RoutePathSpecificity.Rank> ranked = RoutePathSpecificity.rankedVariants("/r/{p:a|b/admin}");
+            assertEquals(2, ranked.size());
+            assertEquals(new RoutePathSpecificity.Key(10, 0, 0), ranked.get(0).key());
+            assertEquals(new RoutePathSpecificity.Key(3, 1, 1), ranked.get(1).key());
+        }
+
+        @Test
+        @DisplayName("the variant /r/{p:b/admin} outranks the open /r/{a:\\w+}/{b}")
+        void variantBeatsLongerOpenRoute() {
+            assertMoreSpecific("/r/{p:b/admin}", "/r/{a:\\w+}/{b}");
         }
     }
 }
