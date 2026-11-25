@@ -28,9 +28,12 @@ nothing. This module owns no configuration keys of its own.
 
 The contributed `CacheObserver` creates spans named `cache.<operation>` with bounded `provider`,
 `cache`, and `outcome` attributes plus `duration_ms`. The `outcome` value is the lowercased
-`CacheOutcome` name; a `CacheLateCompletion` records it with a `late_` prefix. An operation
+`CacheOutcome` name; a `CacheLateCompletion` records it with a `late_` prefix. A late completion
+follows an operation that already produced a `timeout` span, when the provider settles after its
+deadline, and at most one follows each timed-out operation. It carries one of four outcomes, so the
+`late_` values are exactly `late_hit`, `late_miss`, `late_success` and `late_error`. An operation
 observation with outcome `error` or `timeout` marks the span as an error, and a late completion
-does so only for `error`.
+does so only for `late_error`.
 The span is started at the operation's start (the event's end time minus its elapsed time), so its width
 covers the operation. Tracer and span failures are swallowed so telemetry cannot alter cache behavior, except
 a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is never caught. Cleanup events

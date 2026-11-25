@@ -161,11 +161,22 @@ rateLimit:
           key: [HEADER]
           headerName: X-Api-Key
           missingDimension: SHARED_BUCKET
+          cost: 2
 ```
 
 `path` scopes which mounts the middleware covers (`Middleware.path()` otherwise
 defaults to all mounts, WebSocket/SSE/static included). `defaultMode` (core
 configuration) applies to any rule policy that omits an explicit `mode`.
+
+**Per-rule `cost`.** `cost` is optional and sets how many tokens each request evaluated
+by that rule consumes. When a rule omits it, the rule consumes the referenced policy's
+`defaultCost`. A rule's `cost` must be at least `1`, and it must not exceed the referenced
+policy's capacity; either violation fails startup with a `ConfigurationException`.
+
+**An enabled edge limiter needs rules.** `rateLimit.rest.edge.enabled: true` with an
+empty or absent `rules` list fails startup with a `ConfigurationException`, because an
+enabled limiter with no rules would admit every request. Leave `enabled` unset (or
+`false`) to run without the edge limiter.
 
 
 ## Dependencies

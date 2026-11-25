@@ -31,7 +31,11 @@ cache metrics default to enabled (an absent `MetricsConfig` means enabled). When
 The contributed `CacheObserver` consumes the cache-core observation events. Operation observations
 are recorded as timers named `cache.<operation>` (the lowercased operation name) with bounded
 `provider`, `cache`, and `outcome` tags. The `outcome` value is the lowercased `CacheOutcome` name;
-a `CacheLateCompletion` records it with a `late_` prefix (for example `late_hit`). Cleanup observations use the bounded `profile`, `namespace`, and `outcome` tags and record
+a `CacheLateCompletion` records it with a `late_` prefix. A late completion follows an
+operation that already recorded `timeout`, when the provider settles after its deadline, and at most
+one follows each timed-out operation. It carries one of four outcomes, so the `late_` values are
+exactly `late_hit`, `late_miss`, `late_success` and `late_error`. The timer records the elapsed
+time from the operation's start to the late settlement. Cleanup observations use the bounded `profile`, `namespace`, and `outcome` tags and record
 these counters:
 
 | Counter | Value recorded |
