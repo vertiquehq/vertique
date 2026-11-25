@@ -25,6 +25,7 @@ import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -81,6 +82,71 @@ public class WebApplicationExceptionHeadersIT {
                     .header("WWW-Authenticate", "Bearer realm=\"api\"")
                     .build());
         }
+
+        /**
+         * @return never; the client's copy is current
+         */
+        @GET
+        @Path("/not-modified")
+        @Operation(operationId = "notModified")
+        public Future<String> notModified() {
+            throw new WebApplicationException(
+                    Response.status(304).header("ETag", "\"v1\"").build());
+        }
+
+        /**
+         * @return never; the range cannot be served
+         */
+        @GET
+        @Path("/range")
+        @Operation(operationId = "range")
+        public Future<String> range() {
+            throw new WebApplicationException(
+                    Response.status(416).header("Content-Range", "bytes */1234").build());
+        }
+
+        /**
+         * @return never; carries an ETag on a status that is neither 304 nor 416
+         */
+        @GET
+        @Path("/conflict")
+        @Operation(operationId = "conflict")
+        public Future<String> conflict() {
+            throw new WebApplicationException(Response.status(409)
+                    .header("ETag", "\"v1\"")
+                    .header("Content-Range", "bytes 0-1/2")
+                    .build());
+        }
+
+        /**
+         * @return never; carries two challenges
+         */
+        @GET
+        @Path("/two-challenges")
+        @Operation(operationId = "twoChallenges")
+        public Future<String> twoChallenges() {
+            throw new WebApplicationException(Response.status(401)
+                    .header("WWW-Authenticate", "Bearer realm=\"api\"")
+                    .header("WWW-Authenticate", "Basic realm=\"api\"")
+                    .build());
+        }
+
+        /**
+         * @return a response with two cookies and two challenges
+         */
+        @GET
+        @Path("/cookies")
+        @Operation(operationId = "cookies")
+        public Response cookies() {
+            return Response.ok("done")
+                    .type(MediaType.TEXT_PLAIN)
+                    .header("Set-Cookie", "session=; Max-Age=0; Path=/")
+                    .header("Set-Cookie", "token=abc; Path=/; HttpOnly")
+                    .header("set-cookie", "theme=dark; Path=/")
+                    .header("X-Tag", "one")
+                    .header("X-Tag", "two")
+                    .build();
+        }
     }
 
     private Future<io.vertx.ext.web.client.HttpResponse<io.vertx.core.buffer.Buffer>> get(Vertx vertx, String path) {
@@ -125,6 +191,74 @@ public class WebApplicationExceptionHeadersIT {
     }
 
     @Test
+    @DisplayName("ETag on a carried 304 reaches the client")
+    void notModifiedKeepsEtag(Vertx vertx, VertxTestContext ctx) {
+        get(vertx, "/carried/not-modified").onComplete(ctx.succeeding(resp -> {
+            ctx.verify(() -> {
+                assertEquals(304, resp.statusCode());
+                assertEquals("\"v1\"", resp.getHeader("ETag"));
+            });
+            ctx.completeNow();
+        }));
+    }
+
+    @Test
+    @DisplayName("Content-Range on a carried 416 reaches the client")
+    void rangeNotSatisfiableKeepsContentRange(Vertx vertx, VertxTestContext ctx) {
+        get(vertx, "/carried/range").onComplete(ctx.succeeding(resp -> {
+            ctx.verify(() -> {
+                assertEquals(416, resp.statusCode());
+                assertEquals("bytes */1234", resp.getHeader("Content-Range"));
+                assertEquals("application/problem+json", resp.getHeader("Content-Type"));
+            });
+            ctx.completeNow();
+        }));
+    }
+
+    @Test
+    @DisplayName("ETag and Content-Range on any other carried status are still dropped")
+    void otherStatusesStillDropThem(Vertx vertx, VertxTestContext ctx) {
+        get(vertx, "/carried/conflict").onComplete(ctx.succeeding(resp -> {
+            ctx.verify(() -> {
+                assertEquals(409, resp.statusCode());
+                assertNull(resp.getHeader("ETag"));
+                assertNull(resp.getHeader("Content-Range"));
+            });
+            ctx.completeNow();
+        }));
+    }
+
+    @Test
+    @DisplayName("every WWW-Authenticate challenge of a carried 401 reaches the client")
+    void everyCarriedChallengeReachesTheClient(Vertx vertx, VertxTestContext ctx) {
+        get(vertx, "/carried/two-challenges").onComplete(ctx.succeeding(resp -> {
+            ctx.verify(() -> {
+                assertEquals(401, resp.statusCode());
+                assertEquals(
+                        List.of("Bearer realm=\"api\"", "Basic realm=\"api\""),
+                        resp.headers().getAll("WWW-Authenticate"));
+            });
+            ctx.completeNow();
+        }));
+    }
+
+    @Test
+    @DisplayName("every value of a repeated header of a returned response reaches the client, whatever the key's case")
+    void everyValueOfARepeatedHeaderReachesTheClient(Vertx vertx, VertxTestContext ctx) {
+        get(vertx, "/carried/cookies").onComplete(ctx.succeeding(resp -> {
+            ctx.verify(() -> {
+                assertEquals(200, resp.statusCode());
+                assertEquals(
+                        Set.of("session=; Max-Age=0; Path=/", "token=abc; Path=/; HttpOnly", "theme=dark; Path=/"),
+                        Set.copyOf(resp.headers().getAll("Set-Cookie")));
+                assertEquals(3, resp.headers().getAll("Set-Cookie").size());
+                assertEquals(List.of("one", "two"), resp.headers().getAll("X-Tag"));
+            });
+            ctx.completeNow();
+        }));
+    }
+
+    @Test
     @DisplayName("the built-in mapping copies carried headers and drops the ones that describe the carried body")
     void builtInMappingCopiesCarriedHeaders() {
         Response carried = Response.status(503)
@@ -146,6 +280,21 @@ public class WebApplicationExceptionHeadersIT {
         assertNull(mapped.getHeaderString("Content-Encoding"));
         assertNull(mapped.getHeaderString("ETag"));
         assertInstanceOf(ProblemDetail.class, mapped.getEntity());
+    }
+
+    @Test
+    @DisplayName("a status override drops an ETag or Content-Range the superseded response carried")
+    void statusOverrideDropsTheKeptHeaders() {
+        Response superseded = Response.status(500)
+                .header("ETag", "\"v1\"")
+                .header("Content-Range", "bytes */9")
+                .build();
+        for (int status : new int[] {304, 416}) {
+            Response rebuilt = ErrorPipeline.rebuildWithHeaders(
+                    superseded, Response.status(status).entity(ProblemDetail.of(status, null)), status, true, false);
+            assertNull(rebuilt.getHeaderString("ETag"), "ETag on overridden " + status);
+            assertNull(rebuilt.getHeaderString("Content-Range"), "Content-Range on overridden " + status);
+        }
     }
 
     @Test
