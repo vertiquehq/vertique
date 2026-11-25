@@ -22,7 +22,11 @@ final class RestClientProcessorFixtures {
         return SourceFiles.inline("dev.vertique.rest.client.RestClient", """
                         package dev.vertique.rest.client;
 
-                        import java.lang.annotation.*;
+                        import java.lang.annotation.Documented;
+                        import java.lang.annotation.ElementType;
+                        import java.lang.annotation.Retention;
+                        import java.lang.annotation.RetentionPolicy;
+                        import java.lang.annotation.Target;
 
                         @Target(ElementType.TYPE)
                         @Retention(RetentionPolicy.RUNTIME)
@@ -48,7 +52,11 @@ final class RestClientProcessorFixtures {
         return SourceFiles.inline("dev.vertique.codegen.NoAutoWire", """
                         package dev.vertique.codegen;
 
-                        import java.lang.annotation.*;
+                        import java.lang.annotation.Documented;
+                        import java.lang.annotation.ElementType;
+                        import java.lang.annotation.Retention;
+                        import java.lang.annotation.RetentionPolicy;
+                        import java.lang.annotation.Target;
 
                         @Target(ElementType.TYPE)
                         @Retention(RetentionPolicy.SOURCE)
@@ -61,7 +69,11 @@ final class RestClientProcessorFixtures {
         return SourceFiles.inline("dev.vertique.rest.client.Url", """
                         package dev.vertique.rest.client;
 
-                        import java.lang.annotation.*;
+                        import java.lang.annotation.Documented;
+                        import java.lang.annotation.ElementType;
+                        import java.lang.annotation.Retention;
+                        import java.lang.annotation.RetentionPolicy;
+                        import java.lang.annotation.Target;
 
                         @Target({ElementType.PARAMETER})
                         @Retention(RetentionPolicy.RUNTIME)

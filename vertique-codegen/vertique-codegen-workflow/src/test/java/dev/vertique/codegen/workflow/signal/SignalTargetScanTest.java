@@ -56,7 +56,11 @@ class SignalTargetScanTest {
     private static final String SIGNAL_TARGET = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Repeatable;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -74,7 +78,10 @@ class SignalTargetScanTest {
     private static final String SIGNAL_TARGETS = """
             package dev.vertique.workflow.source;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.CLASS)
@@ -86,7 +93,10 @@ class SignalTargetScanTest {
     private static final String WORKFLOW_CONTRACT = """
             package dev.vertique.workflow.contract;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.TYPE)
             @Retention(RetentionPolicy.RUNTIME)
@@ -98,7 +108,10 @@ class SignalTargetScanTest {
     private static final String WORKFLOW_SIGNAL = """
             package dev.vertique.workflow.contract;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.RUNTIME)
@@ -110,7 +123,10 @@ class SignalTargetScanTest {
     private static final String SIGNAL_DEDUP_KEY = """
             package dev.vertique.workflow.contract;
 
-            import java.lang.annotation.*;
+            import java.lang.annotation.ElementType;
+            import java.lang.annotation.Retention;
+            import java.lang.annotation.RetentionPolicy;
+            import java.lang.annotation.Target;
 
             @Target(ElementType.PARAMETER)
             @Retention(RetentionPolicy.RUNTIME)

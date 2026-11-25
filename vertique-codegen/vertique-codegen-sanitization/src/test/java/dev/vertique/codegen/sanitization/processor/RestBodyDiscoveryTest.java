@@ -165,7 +165,10 @@ class RestBodyDiscoveryTest {
             JavaFileObject requestParamsAnnotation =
                     SourceFiles.inline("dev.vertique.rest.core.request.RequestParams", """
                     package dev.vertique.rest.core.request;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     @Target(ElementType.TYPE)
                     @Retention(RetentionPolicy.RUNTIME)
                     public @interface RequestParams {}
@@ -745,7 +748,10 @@ class RestBodyDiscoveryTest {
         void pathViaMetaAnnotation_accepted() {
             JavaFileObject metaPath = SourceFiles.inline("com.example.RestEndpoint", """
                     package com.example;
-                    import java.lang.annotation.*;
+                    import java.lang.annotation.ElementType;
+                    import java.lang.annotation.Retention;
+                    import java.lang.annotation.RetentionPolicy;
+                    import java.lang.annotation.Target;
                     import jakarta.ws.rs.Path;
                     @Target(ElementType.TYPE)
                     @Retention(RetentionPolicy.RUNTIME)
