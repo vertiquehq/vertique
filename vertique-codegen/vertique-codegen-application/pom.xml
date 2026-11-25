@@ -23,7 +23,7 @@ SPDX-License-Identifier: EUPL-1.2
         application writes neither the factory nor the service file.</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

@@ -52,8 +52,8 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Test -->
-        <!-- vertx-core is test-scope only: MicrometerMcpInventoryChecker (T006's frozen per-module
-             guard mechanism, duplicated here per its own decision) reads the committed inventory
+        <!-- vertx-core is test-scope only: MicrometerMcpInventoryChecker (the frozen per-module
+             guard mechanism, duplicated here) reads the committed inventory
              resource as an io.vertx.core.json.JsonObject, matching every sibling guard's checker. -->
         <dependency>
             <groupId>io.vertx</groupId>

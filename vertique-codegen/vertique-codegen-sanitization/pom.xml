@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-codegen-sanitization</artifactId>
     <name>Vertique Codegen Sanitization</name>
-    <description>Annotation processor (CG-008) that generates {DTO}_InputProcessor walkers for REST request body
+    <description>Annotation processor that generates {DTO}_InputProcessor walkers for REST request body
         DTOs annotated with @Sanitize/@Canonicalize, replacing the reflective Map traversal of the neutral input
         processor (dev.vertique.input.processing) with direct field-name switches and pre-resolved chain
         constants.</description>
@@ -29,7 +29,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-security-core</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

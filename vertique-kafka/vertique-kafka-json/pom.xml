@@ -85,7 +85,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
-            <!-- TP-002 (JacksonKafkaSerializerTest) installs a mapper through VertiqueJson.install and
+            <!-- JacksonKafkaSerializerTest installs a mapper through VertiqueJson.install and
                  must restore the raw Vert.x delegate in @AfterEach, so both forks of this module enable
                  the reset seam. The flag is read once at VertiqueJson class initialization; it is a
                  test-only argLine and never reaches a shipped runtime. Reproduces the parent argLine

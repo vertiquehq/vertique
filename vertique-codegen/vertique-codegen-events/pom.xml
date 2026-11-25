@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Annotation processor that builds the event-type inventory ((distinct @Observes T parameter types) ∪ (distinct constructor-injected Event&lt;T&gt; type arguments, unwrapping Provider/Lazy)) and generates a concrete X$Event extends Event&lt;X&gt; publisher plus a GeneratedEventsModule @Binds Event&lt;X&gt; for each inventory type so Event&lt;X&gt; is injectable</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

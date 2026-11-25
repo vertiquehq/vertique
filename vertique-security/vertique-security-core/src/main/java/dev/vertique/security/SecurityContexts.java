@@ -35,7 +35,7 @@ import java.util.Optional;
  * <p>Mirrors {@link SystemIdentities}: a plain static factory, not a Dagger-provided singleton —
  * transport-neutral context assembly needs no injected collaborator. None of these methods emit
  * {@link dev.vertique.security.events.SecurityEventObserver} events; a static method cannot invoke
- * an injected emitter by construction (CA-007), so consuming flows decide whether and how to audit.
+ * an injected emitter by construction, so consuming flows decide whether and how to audit.
  *
  * <p>Snapshot capture — a credential-free, to-be-signed capture of a live context's identity
  * dimension for durability-boundary carriage — is deliberately <strong>not</strong> on this class.

@@ -33,7 +33,7 @@ import java.lang.reflect.Modifier;
  * = "build")} — the exact values {@code @Jacksonized} generates — and a zero-argument {@code build()}
  * returning the built type; and, for the property in question, a builder method with exactly one
  * parameter whose type and name both match the built field exactly. A hand-written builder that
- * reproduces this whole shape resolves too — the ruling tolerates that: it says a hand-written builder
+ * reproduces this whole shape resolves too — that is tolerated: the contract says a hand-written builder
  * <em>may</em> go unresolved, not that it must.
  */
 final class BuilderBorrowDetector {

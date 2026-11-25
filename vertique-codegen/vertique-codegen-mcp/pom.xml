@@ -23,7 +23,7 @@ SPDX-License-Identifier: EUPL-1.2
         Dagger multibinding — so tool dispatch needs no runtime scanning and no reflective invocation.</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>
@@ -48,7 +48,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-security-core</artifactId>
         </dependency>
 
-        <!-- T019 (issue #379): McpInputPolicyResolver derives route/parameter input-policy chains
+        <!-- McpInputPolicyResolver derives route/parameter input-policy chains
              through apt.ElementInvocationPolicies, the shared compile-time adapter this module
              publishes; no cycle (input-processing depends only on core/jakarta.annotation/slf4j),
              mirrors vertique-codegen-jaxrs/pom.xml's identical dependency. -->

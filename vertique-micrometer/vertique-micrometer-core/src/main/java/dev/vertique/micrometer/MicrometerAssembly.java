@@ -57,7 +57,7 @@ final class MicrometerAssembly implements AutoCloseable {
 
     /**
      * Associates a backend with the provider name it was created from, for use in close/rollback
-     * log messages (Fix 3: identify the failing backend without leaking config values).
+     * log messages (identifies the failing backend without leaking config values).
      *
      * @param name    the provider's {@link MeterRegistryProvider#backendName()} — a stable identifier
      *                that is NOT a config value and is safe to include in log messages
@@ -112,7 +112,7 @@ final class MicrometerAssembly implements AutoCloseable {
             // --- Step 1: Build the ordered filter list (shared source of truth for inner + outer) ---
             // Common-tag filter first, then per-key cardinality guards, then optional global meter cap.
             // This same list is applied to the inner composite here AND exposed via filters() so the
-            // stable outer composite can install a delegating filter over it (Fix 1).
+            // stable outer composite can install a delegating filter over it.
             List<MeterFilter> builtFilters = buildFilterList(config);
 
             // --- Step 2: Apply filter list to inner composite ---
@@ -210,7 +210,7 @@ final class MicrometerAssembly implements AutoCloseable {
      * Returns the ordered list of {@link MeterFilter}s applied to the inner composite.
      *
      * <p>This list is the shared source of truth used both for the inner composite and for the
-     * delegating filter installed on the stable outer composite (Fix 1). The order is:
+     * delegating filter installed on the stable outer composite. The order is:
      * common-tags filter first, then per-key cardinality guards, then the optional global meter cap.
      *
      * @return an unmodifiable ordered list of filters; never {@code null}

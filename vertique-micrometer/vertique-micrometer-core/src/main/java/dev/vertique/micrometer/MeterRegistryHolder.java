@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * nested composites when resolving children, meters created through the stable outer register
  * <em>directly</em> into the leaf backends — bypassing the inner composite's filters.
  *
- * <p><b>Fix 1 — permanent delegating filter on OUTER:</b> to close this bypass, the stable outer
+ * <p><b>Permanent delegating filter on OUTER:</b> to close this bypass, the stable outer
  * is created with a single permanent {@link MeterFilter} installed at class-init time. This
  * delegating filter reads from {@link #ACTIVE_FILTERS} atomically, so no late-filter WARN is
  * emitted and filters cannot accumulate across test resets. The semantics mirror Micrometer's own

@@ -131,10 +131,10 @@ final class McpProtocolCodec {
 
     /**
      * The two {@code tools/call} {@code CallToolRequestParams} fields the official schema permits for
-     * multi-round-trip tool execution (MRTR) that Phase 1 deliberately does not implement: Phase 1
+     * multi-round-trip tool execution (MRTR), which this server deliberately does not implement: it
      * rejects {@code inputResponses}/{@code requestState} rather than pretending to support MRTR.
      * Present only on {@code CallToolRequestParams} (and {@code
-     * ReadResourceRequestParams}, which Phase 1 never exposes) in the vendored schema — never on
+     * ReadResourceRequestParams}, which this server never exposes) in the vendored schema — never on
      * {@code RequestParams} ({@code server/discover}) or {@code PaginatedRequestParams} ({@code
      * tools/list}) — so this check applies only to {@code tools/call}.
      */
@@ -262,8 +262,8 @@ final class McpProtocolCodec {
      * sentinel syntax is specified anywhere, and the three values
      * compared here (the fixed protocol-version literal, the fixed method-string enum, and a tool name
      * already bounded to {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*}
-     * argument-mirroring mechanism (Phase 1 emits no {@code x-mcp-header}) is the more
-     * plausible owner of that clause, and Phase 1 does not implement it either.
+     * argument-mirroring mechanism (this server emits no {@code x-mcp-header}) is the more
+     * plausible owner of that clause, and this server does not implement it either.
      *
      * <p><strong>{@code _meta} shape.</strong> {@code params._meta} must be an object; {@code
      * io.modelcontextprotocol/protocolVersion} must be a non-blank string of at most {@value
@@ -279,9 +279,9 @@ final class McpProtocolCodec {
      * supported-version set) are Phase-1 negotiation policy layered on the official schema.
      *
      * <p><strong>Reserved fields.</strong> A {@code tools/call} {@code params} containing {@code
-     * inputResponses} or {@code requestState} — schema-permitted MRTR fields Phase 1 does not implement
+     * inputResponses} or {@code requestState} — schema-permitted MRTR fields this server does not implement
      * — fails negotiation. The pinned schema itself permits both fields, so the
-     * official-schema check above does not catch this either; it is Phase 1's own policy, not a schema
+     * official-schema check above does not catch this either; it is this server's own policy, not a schema
      * violation.
      *
      * <p><strong>Rejection reason.</strong> Every rejection carries a {@link NegotiationReason} as

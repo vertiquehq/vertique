@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Annotation processor that generates {Consumer}_BindingMeta companions with precomputed Kafka consumer binding metadata, letting KafkaConsumerRegistrar skip boot-time reflective scanning, plus compile-time consumer-shape validation</description>
 
     <dependencies>
-        <!-- APT helpers from CG-001 -->
+        <!-- Shared APT helpers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-core</artifactId>

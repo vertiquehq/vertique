@@ -23,7 +23,7 @@ SPDX-License-Identifier: EUPL-1.2
     <build>
         <plugins>
             <!--
-              FR-RLOC-003/004: this server-only module MUST NOT depend on vertique-rest-jaxrs or
+              This server-only module MUST NOT depend on vertique-rest-jaxrs or
               vertique-rest-client. It defines inbound locale negotiation against vertique-rest-core
               only; outbound Accept-Language is deferred to a future vertique-rest-client-localization
               module, and the end-to-end demonstration/IT live in examples/vertique-example-localization.
@@ -45,8 +45,7 @@ SPDX-License-Identifier: EUPL-1.2
                                     </excludes>
                                     <message>
                                         vertique-rest-localization is server-only: it must not depend on
-                                        vertique-rest-jaxrs (FR-RLOC-004) or vertique-rest-client
-                                        (FR-RLOC-003). It defines inbound locale negotiation against
+                                        vertique-rest-jaxrs or vertique-rest-client. It defines inbound locale negotiation against
                                         vertique-rest-core; outbound Accept-Language is deferred to a future
                                         vertique-rest-client-localization module, and the JAX-RS runtime
                                         end-to-end test lives in examples/vertique-example-localization.

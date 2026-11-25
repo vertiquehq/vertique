@@ -54,21 +54,21 @@ final class McpSchemaHardener {
      * Hardens one canonical schema document: closes the argument-object boundary and attaches the
      * declared parameter descriptions to the root carrier's properties.
      *
-     * @param json005CanonicalDocument the parsed canonical schema document; must be a JSON object,
+     * @param canonicalDocument the parsed canonical schema document; must be a JSON object,
      *     and is mutated in place
      * @param parameters the position-stable declared-parameter metadata whose descriptions apply to
      *     root-carrier properties only
      * @return the same node, hardened
      * @throws NullPointerException if either argument is {@code null}
-     * @throws IllegalArgumentException if {@code json005CanonicalDocument} is not a JSON object
+     * @throws IllegalArgumentException if {@code canonicalDocument} is not a JSON object
      */
-    static ObjectNode harden(JsonNode json005CanonicalDocument, List<McpToolParameterMetadata> parameters) {
-        Objects.requireNonNull(json005CanonicalDocument, "json005CanonicalDocument");
+    static ObjectNode harden(JsonNode canonicalDocument, List<McpToolParameterMetadata> parameters) {
+        Objects.requireNonNull(canonicalDocument, "canonicalDocument");
         Objects.requireNonNull(parameters, "parameters");
-        if (!json005CanonicalDocument.isObject()) {
+        if (!canonicalDocument.isObject()) {
             throw new IllegalArgumentException("the canonical schema document must be a JSON object");
         }
-        ObjectNode root = (ObjectNode) json005CanonicalDocument;
+        ObjectNode root = (ObjectNode) canonicalDocument;
         closeRecursively(root, true, new IdentityHashMap<>());
         applyParameterDescriptions(root, parameters);
         return root;
