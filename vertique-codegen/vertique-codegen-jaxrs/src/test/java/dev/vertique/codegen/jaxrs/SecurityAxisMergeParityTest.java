@@ -27,7 +27,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Parity proof for per-axis cross-declaration security merging (issue #634): {@code @RolesAllowed}
+ * Parity proof for per-axis cross-declaration security merging: {@code @RolesAllowed}
  * and {@code @Authorized} are independent axes, so roles on one declaration and scopes on another
  * combine into one AND-{@code Constrained} policy on both the reflective runtime and the annotation
  * processor. Same-axis disagreement and {@code @DenyAll}/{@code @PermitAll} mixed with constrained

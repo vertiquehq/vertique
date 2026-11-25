@@ -59,7 +59,7 @@ import org.mockito.ArgumentCaptor;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * CG-015 §6 S3 parity proof: {@link ServiceClientFactory#create(Class)} must behave identically
+ * Parity proof: {@link ServiceClientFactory#create(Class)} must behave identically
  * whether the resolved contract has a real generated {@code {Contract}_ServiceClientProxy}
  * companion on the classpath (path (a)) or not (path (b), the JDK dynamic-proxy fallback).
  *
@@ -101,7 +101,7 @@ import org.opentest4j.AssertionFailedError;
  *       it per scenario would just re-prove the same single fact.</li>
  *   <li>{@link #scenario2ExplicitSecurityContextNoAmbient()} — explicit SC argument, no ambient SC
  *       bound: override present, keyed {@code SecurityContext.class.getName()}.</li>
- *   <li>{@link #scenario3AmbientSecurityContextSuppressesOverride()} — ambient SC bound (FR-CTX-063):
+ *   <li>{@link #scenario3AmbientSecurityContextSuppressesOverride()} — ambient SC bound:
  *       no caller override, on either path.</li>
  *   <li>{@link #scenario4NullPayload()} — {@code null} payload argument.</li>
  *   <li>{@link #scenario5OneWayDispatch()} — {@code @OneWay} operation: {@code sendOneWay} invoked,
@@ -109,7 +109,7 @@ import org.opentest4j.AssertionFailedError;
  *   <li>{@link #scenario6ResultUnwrap()} — request-response {@link Result} unwrap value.</li>
  *   <li>{@link #scenario7CreateTimeFailFastParity()} — {@code create()}-time fail-fast on a
  *       partial entry: identical {@link IllegalStateException} message on both paths. Unlike the
- *       other scenarios, this exercises no sender interaction at all — the §4.2 step-2 completeness
+ *       other scenarios, this exercises no sender interaction at all — the create-time completeness
  *       check throws before proxy construction is ever attempted on either path.</li>
  *   <li>{@link #scenario8SecurityContextIndexDriftParity()} — runtime metadata marks a
  *       non-{@code SecurityContext}-typed parameter position as the SC slot: both paths must throw
@@ -128,7 +128,7 @@ import org.opentest4j.AssertionFailedError;
  * regardless of companion selection.
  */
 @ExtendWith(VertxExtension.class)
-@DisplayName("Service client factory — companion vs dynamic-proxy dispatch parity (CG-015 §6 S3)")
+@DisplayName("Service client factory — companion vs dynamic-proxy dispatch parity")
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class ServiceClientProxyParityTest {
 
@@ -201,7 +201,7 @@ class ServiceClientProxyParityTest {
             }
             """);
 
-    /** Two operations; the hand-built entry deliberately omits {@code opB} (§4.2 step 2 fail-fast). */
+    /** Two operations; the hand-built entry deliberately omits {@code opB} (create-time completeness fail-fast). */
     private static final JavaFileObject PARITY_PARTIAL_GREETER = SourceFiles.inline(PARITY_PARTIAL_GREETER_FQN, """
             package com.example.parity;
             import dev.vertique.services.ServiceContract;
@@ -260,7 +260,7 @@ class ServiceClientProxyParityTest {
     void scenario1PayloadExtraction() throws Exception {
         DualPathCapture captures = greeterDualPathCapture("echo:x", "x");
 
-        // SELECTION ANCHOR (CG-015 §6 S3): create() selects the generated companion instance — not
+        // SELECTION ANCHOR: create() selects the generated companion instance — not
         // a JDK dynamic proxy — whenever one is present on the classpath. Asserted once here rather
         // than in every scenario, since every scenario drives the identical selection call.
         assertEquals(
@@ -333,7 +333,7 @@ class ServiceClientProxyParityTest {
      * @throws Throwable if the test times out or an assertion inside the bound context fails
      */
     @Test
-    @DisplayName("Scenario 3 — ambient SecurityContext bound: no SC override on either path (FR-CTX-063)")
+    @DisplayName("Scenario 3 — ambient SecurityContext bound: no SC override on either path")
     void scenario3AmbientSecurityContextSuppressesOverride(Vertx vertx, VertxTestContext ctx) throws Throwable {
         Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_SC_GREETER_FQN);
         ContractEntry<?> entryA = parityScGreeterEntry(contractA);
@@ -457,10 +457,10 @@ class ServiceClientProxyParityTest {
 
         assertTrue(
                 exA.getMessage().startsWith("Service client contract mismatch: "),
-                "path (a) message must start with the §4.2-pinned prefix, was: " + exA.getMessage());
+                "path (a) message must start with the pinned prefix, was: " + exA.getMessage());
         assertTrue(
                 exB.getMessage().startsWith("Service client contract mismatch: "),
-                "path (b) message must start with the §4.2-pinned prefix, was: " + exB.getMessage());
+                "path (b) message must start with the pinned prefix, was: " + exB.getMessage());
         assertTrue(exA.getMessage().contains(contractA.getName()), "path (a) message must name the contract FQCN");
         assertTrue(exB.getMessage().contains(contractB.getName()), "path (b) message must name the contract FQCN");
         assertTrue(exA.getMessage().contains("opB"), "path (a) message must name the missing operation 'opB'");
@@ -471,7 +471,7 @@ class ServiceClientProxyParityTest {
     // --- Scenario 8: SecurityContext-index drift ---
 
     /**
-     * The contradiction pattern of {@code ServiceClientProxyRoundtripTest}'s D1 tests, applied to the
+     * The contradiction pattern of {@code ServiceClientProxyRoundtripTest}'s falsifiability tests, applied to the
      * {@code SecurityContext} slot and driven through <em>both</em> paths: the runtime metadata marks
      * parameter position 1 — a plain {@code String} in the source — as the
      * {@code SecurityContext}-keyed dispatch-context param.
@@ -604,7 +604,7 @@ class ServiceClientProxyParityTest {
 
     /**
      * Builds a deliberately partial entry for {@link #PARITY_PARTIAL_GREETER}: only {@code opA} is
-     * registered, {@code opB} is omitted so §4.2 step 2 fails {@code create()} fast.
+     * registered, {@code opB} is omitted so the create-time completeness check fails {@code create()} fast.
      *
      * @param contractClass the loaded {@code ParityPartialGreeter} interface (either compilation)
      * @return the built contract entry, missing operation {@code opB}

@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
 
 /**
  * Test-local, runtime-retained <em>marker</em> method annotation that is <strong>not</strong> an
- * {@link dev.vertique.aop.Aspect} trigger, used by {@code vertique-codegen-aop} slice-2.1
+ * {@link dev.vertique.aop.Aspect} trigger, used by {@code vertique-codegen-aop}
  * compile-tests.
  *
  * <p>It carries a single {@code String value()} of a {@link #SUPPORTED supported} attribute kind so
@@ -22,7 +22,7 @@ import java.lang.annotation.Target;
  * cover non-aspect runtime-retained annotations.
  *
  * <p><strong>Retention is {@link RetentionPolicy#RUNTIME RUNTIME}</strong> deliberately: only
- * runtime-retained method annotations are materialized into literals (FR-013-13). A
+ * runtime-retained method annotations are materialized into literals. A
  * {@code SOURCE}/{@code CLASS}-retained annotation is invisible at runtime and is not part of the
  * reflection-free metadata surface.
  */

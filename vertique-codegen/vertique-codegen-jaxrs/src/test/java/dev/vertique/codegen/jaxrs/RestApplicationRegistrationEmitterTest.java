@@ -27,12 +27,12 @@ import org.junit.jupiter.api.Test;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * APT compilation and reflective invocation tests for T022's native registration emission:
+ * APT compilation and reflective invocation tests for native registration emission:
  * {@link GeneratedJaxRsResourcesModuleEmitter} writes one {@code @Provides @IntoSet
  * GeneratedRestApplicationRegistration} method per registered {@code @RestApplication}
- * declaration (C-APP), with its evaluated {@code @ConditionalOnProperty} activation, no factory
+ * declaration, with its evaluated {@code @ConditionalOnProperty} activation, no factory
  * and no {@code Provider}, and the module's package staying with the compilation unit's
- * DI-eligible resources when it has any (PF-27).
+ * DI-eligible resources when it has any.
  *
  * <p>Each test compiles one or more small fixtures through {@link JaxRsPipelineProcessor} via
  * {@link ProcessorTestHarness}, then loads the generated {@code GeneratedJaxRsResourcesModule}
@@ -40,10 +40,10 @@ import org.opentest4j.AssertionFailedError;
  * with a {@code @VertxConfig JsonObject} argument, comparing the resulting registrations'
  * accessor tuples against the expected shape. It also reads the presence-gated resource bindings'
  * reflective parameter types, to prove they gate on the native registration set,
- * {@code Set<GeneratedRestApplicationRegistration>} (T028), and checks that {@code @RestApplication}
+ * {@code Set<GeneratedRestApplicationRegistration>}, and checks that {@code @RestApplication}
  * registration methods sharing a simple name share one name counter, which a
- * {@code jakarta.ws.rs.core.Application} subclass of the same simple name, never registered since
- * T028, does not advance.
+ * {@code jakarta.ws.rs.core.Application} subclass of the same simple name, never registered,
+ * does not advance.
  */
 class RestApplicationRegistrationEmitterTest {
 
@@ -245,7 +245,7 @@ class RestApplicationRegistrationEmitterTest {
             """.formatted(NAMES_PKG));
 
     // -----------------------------------------------------------------------------------------
-    // TP-007 — one native registration is emitted per declaration, with its evaluated activation
+    // One native registration is emitted per declaration, with its evaluated activation
     // -----------------------------------------------------------------------------------------
 
     @Test
@@ -320,7 +320,7 @@ class RestApplicationRegistrationEmitterTest {
         result.assertGeneratedSourceDoesNotContain(MIXED_MODULE, "PublicApi::new");
         result.assertGeneratedSourceDoesNotContain(MIXED_MODULE, "Provider<PublicApi>");
 
-        // The presence-gated bindings gate on the native registration set (T028).
+        // The presence-gated bindings gate on the native registration set.
         assertResourceBindingGatesOnNativeRegistrations(module, "pathResourceBinding");
         assertResourceBindingGatesOnNativeRegistrations(module, "orderResourceBinding");
     }
@@ -351,7 +351,7 @@ class RestApplicationRegistrationEmitterTest {
 
     /**
      * One unit holds {@code a.Api} and {@code b.Api} declarations and a {@code c.Api extends
-     * Application} subclass: the subclass is not registered (T028), so it takes no registration
+     * Application} subclass: the subclass is not registered, so it takes no registration
      * method and no counter value, and the two declarations' registration methods derive the base
      * name {@code apiRegistration} and share one counter, named in fully-qualified-name order. Every
      * declared method returning any {@code Generated…Registration} type counts, so a registration

@@ -1507,7 +1507,7 @@ class SanitizationProcessorRoundtripTest {
     /**
      * Single-argument generic that is <em>not</em> a container. Both paths must classify a
      * {@code ConfWrapper<ConfLeafDto>} field to the erased {@code ConfWrapper} and stop — the type
-     * argument is not reachable, which is issue #383's shape.
+     * argument is not reachable.
      */
     private static final JavaFileObject CONF_WRAPPER = SourceFiles.inline("com.example.conf.ConfWrapper", """
             package com.example.conf;

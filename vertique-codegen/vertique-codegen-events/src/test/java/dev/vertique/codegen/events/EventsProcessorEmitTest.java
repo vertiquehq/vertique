@@ -12,13 +12,12 @@ import org.junit.jupiter.api.Test;
 /**
  * Compile-test verifying that {@link EventsProcessor} emits a {@code @Provides @IntoSet
  * ObserverRegistration} method in {@code GeneratedEventsModule} for each {@code @Observes} observer
- * method (plan §3.3, FR-013-11a).
+ * method.
  *
- * <p>Slice 3.2's {@link EventsProcessor} generates publisher bindings ({@code @Binds Event<X>}) and
- * the concrete {@code X$Event} publisher, but emits <strong>no</strong> {@code ObserverRegistration}
- * provider. These tests are therefore <strong>RED</strong> until slice 3.3 is implemented:
- * {@link #generatedEventsModuleEmitsIntoSetObserverRegistration()} will fail because the generated
- * module source does not contain {@code @IntoSet} or {@code ObserverRegistration}.
+ * <p>Besides the publisher bindings ({@code @Binds Event<X>}) and the concrete {@code X$Event}
+ * publisher, the {@link EventsProcessor} must emit an {@code ObserverRegistration} provider:
+ * {@link #generatedEventsModuleEmitsIntoSetObserverRegistration()} fails if the generated module
+ * source does not contain {@code @IntoSet} or {@code ObserverRegistration}.
  */
 class EventsProcessorEmitTest {
 
@@ -79,9 +78,6 @@ class EventsProcessorEmitTest {
         // When: the EventsProcessor runs
         // Then: the GeneratedEventsModule source contains @IntoSet, ObserverRegistration,
         //       and references the observer bean + method (proving a registration provider was emitted).
-        //
-        // RED: slice 3.2's EventsProcessor only emits @Binds Event<X> — no ObserverRegistration
-        // provider — so the assertions on @IntoSet and ObserverRegistration fail.
         ProcessorTestHarness.run(new EventsProcessor(), orderPlacedEvent(), orderObserverBean(), publishingBean())
                 .assertSuccess()
                 .assertGeneratedSourceContains(MODULE_FQN, "@IntoSet")
@@ -98,8 +94,6 @@ class EventsProcessorEmitTest {
         // Then: the module source contains both @Provides and @IntoSet (not abstract @Binds)
         //       because an ObserverRegistration must be constructed with the bean instance,
         //       priority, and a lambda — requiring a concrete @Provides method.
-        //
-        // RED: same as above — no @Provides @IntoSet ObserverRegistration is emitted by slice 3.2.
         ProcessorTestHarness.run(new EventsProcessor(), orderPlacedEvent(), orderObserverBean(), publishingBean())
                 .assertSuccess()
                 .assertGeneratedSourceContains(MODULE_FQN, "@Provides")
@@ -114,8 +108,6 @@ class EventsProcessorEmitTest {
         // When: the EventsProcessor runs
         // Then: the generated module source references OrderPlaced.class (the event type is baked as
         //       a constant, not discovered via reflection at runtime).
-        //
-        // RED: no ObserverRegistration provider is emitted by slice 3.2.
         ProcessorTestHarness.run(new EventsProcessor(), orderPlacedEvent(), orderObserverBean(), publishingBean())
                 .assertSuccess()
                 .assertGeneratedSourceContains(MODULE_FQN, "OrderPlaced.class");

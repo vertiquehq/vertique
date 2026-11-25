@@ -11,7 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Codegen parity for issue #533: a {@code @Sanitize}/{@code @Canonicalize} on the
+ * Codegen parity: a {@code @Sanitize}/{@code @Canonicalize} on the
  * {@code @BeanParam} parameter itself must reach the generated plan as {@code POL{i}} and be
  * passed to {@code materializeBean}, not discarded in favour of a bare route baseline.
  */

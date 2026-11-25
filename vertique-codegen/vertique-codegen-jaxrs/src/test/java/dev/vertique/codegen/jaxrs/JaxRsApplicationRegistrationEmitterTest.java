@@ -16,7 +16,7 @@ import org.opentest4j.AssertionFailedError;
 
 /**
  * APT compilation tests for the resource bindings {@link GeneratedJaxRsResourcesModuleEmitter}
- * writes beside the application registrations (C-GEN): for every DI-eligible resource, a
+ * writes beside the application registrations: for every DI-eligible resource, a
  * presence-gated legacy {@code @JaxRsResources} binding that takes the native registration set,
  * {@code Set<GeneratedRestApplicationRegistration> applications}, and contributes the resource only
  * while that set is empty, and a lazy {@code GeneratedJaxRsResourceEntry} catalog entry that never
@@ -35,14 +35,14 @@ import org.opentest4j.AssertionFailedError;
 class JaxRsApplicationRegistrationEmitterTest {
 
     // -----------------------------------------------------------------------------------------
-    // TP-008 — catalog entries and presence-gated bindings are emitted
+    // Catalog entries and presence-gated bindings are emitted
     // -----------------------------------------------------------------------------------------
 
-    private static final String TP008_MODULE = "dev.vertique.test.tp008.GeneratedJaxRsResourcesModule";
+    private static final String EMITTED_MODULE = "dev.vertique.test.appregistration.GeneratedJaxRsResourcesModule";
 
-    private static final JavaFileObject TP008_CATALOG_RESOURCE =
-            SourceFiles.inline("dev.vertique.test.tp008.CatalogResource", """
-            package dev.vertique.test.tp008;
+    private static final JavaFileObject EMITTED_CATALOG_RESOURCE =
+            SourceFiles.inline("dev.vertique.test.appregistration.CatalogResource", """
+            package dev.vertique.test.appregistration;
 
             import jakarta.inject.Inject;
             import jakarta.ws.rs.GET;
@@ -58,9 +58,9 @@ class JaxRsApplicationRegistrationEmitterTest {
             }
             """);
 
-    private static final JavaFileObject TP008_BETA_RESOURCE =
-            SourceFiles.inline("dev.vertique.test.tp008.BetaResource", """
-            package dev.vertique.test.tp008;
+    private static final JavaFileObject EMITTED_BETA_RESOURCE =
+            SourceFiles.inline("dev.vertique.test.appregistration.BetaResource", """
+            package dev.vertique.test.appregistration;
 
             import dev.vertique.codegen.ConditionalOnProperty;
             import jakarta.inject.Inject;
@@ -68,7 +68,7 @@ class JaxRsApplicationRegistrationEmitterTest {
             import jakarta.ws.rs.Path;
 
             @Path("/beta")
-            @ConditionalOnProperty(name = "tp008.betaResource.enabled")
+            @ConditionalOnProperty(name = "appregistration.betaResource.enabled")
             public class BetaResource {
                 @Inject
                 public BetaResource() {}
@@ -78,8 +78,8 @@ class JaxRsApplicationRegistrationEmitterTest {
             }
             """);
 
-    /** Expected C-GEN shape (mirroring T002's hand-written {@code unita} module) for the plain resource. */
-    private static final String TP008_CATALOG_BINDING = """
+    /** Expected generated shape for the plain resource. */
+    private static final String EMITTED_CATALOG_BINDING = """
             @Provides
             @ElementsIntoSet
             @JaxRsResources
@@ -91,7 +91,7 @@ class JaxRsApplicationRegistrationEmitterTest {
             }
             """;
 
-    private static final String TP008_CATALOG_ENTRY = """
+    private static final String EMITTED_CATALOG_ENTRY = """
             @Provides
             @IntoSet
             static GeneratedJaxRsResourceEntry catalogResourceEntry(
@@ -100,8 +100,8 @@ class JaxRsApplicationRegistrationEmitterTest {
             }
             """;
 
-    /** Expected C-GEN shape for the {@code @ConditionalOnProperty} resource, mirroring {@code unita}'s DisabledResource. */
-    private static final String TP008_BETA_BINDING = """
+    /** Expected generated shape for the {@code @ConditionalOnProperty} resource. */
+    private static final String EMITTED_BETA_BINDING = """
             @Provides
             @ElementsIntoSet
             @JaxRsResources
@@ -115,7 +115,7 @@ class JaxRsApplicationRegistrationEmitterTest {
             }
             """;
 
-    private static final String TP008_BETA_ENTRY = """
+    private static final String EMITTED_BETA_ENTRY = """
             @Provides
             @IntoSet
             static GeneratedJaxRsResourceEntry betaResourceEntry(
@@ -128,21 +128,23 @@ class JaxRsApplicationRegistrationEmitterTest {
             """;
 
     @Test
-    @DisplayName("TP-008 — catalog entries and presence-gated bindings on the native registration set are emitted")
+    @DisplayName("catalog entries and presence-gated bindings on the native registration set are emitted")
     void emitsCatalogEntryAndPresenceGatedBinding() {
         var result =
-                ProcessorTestHarness.run(new JaxRsPipelineProcessor(), TP008_CATALOG_RESOURCE, TP008_BETA_RESOURCE);
+                ProcessorTestHarness.run(new JaxRsPipelineProcessor(), EMITTED_CATALOG_RESOURCE, EMITTED_BETA_RESOURCE);
         result.assertSuccess();
-        String source = sourceOf(result, TP008_MODULE);
-        logGeneratedSource("TP-008 module", source);
+        String source = sourceOf(result, EMITTED_MODULE);
+        logGeneratedSource("module", source);
 
         assertAll(
-                "TP-008 C-GEN shape",
+                "generated shape",
                 () -> assertContainsNormalized(
-                        source, TP008_CATALOG_BINDING, "catalogResourceBinding in " + TP008_MODULE),
-                () -> assertContainsNormalized(source, TP008_CATALOG_ENTRY, "catalogResourceEntry in " + TP008_MODULE),
-                () -> assertContainsNormalized(source, TP008_BETA_BINDING, "betaResourceBinding in " + TP008_MODULE),
-                () -> assertContainsNormalized(source, TP008_BETA_ENTRY, "betaResourceEntry in " + TP008_MODULE));
+                        source, EMITTED_CATALOG_BINDING, "catalogResourceBinding in " + EMITTED_MODULE),
+                () -> assertContainsNormalized(
+                        source, EMITTED_CATALOG_ENTRY, "catalogResourceEntry in " + EMITTED_MODULE),
+                () -> assertContainsNormalized(
+                        source, EMITTED_BETA_BINDING, "betaResourceBinding in " + EMITTED_MODULE),
+                () -> assertContainsNormalized(source, EMITTED_BETA_ENTRY, "betaResourceEntry in " + EMITTED_MODULE));
     }
 
     // -----------------------------------------------------------------------------------------

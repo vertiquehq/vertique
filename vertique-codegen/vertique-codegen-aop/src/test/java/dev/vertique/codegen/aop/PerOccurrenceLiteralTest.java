@@ -13,20 +13,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug F2 (first half): {@code AopProxyEmitter.collectAspects} keys aspects by
- * annotation FQN with {@code computeIfAbsent}, so it keeps a SINGLE {@code AspectRef} per aspect
- * <em>type</em> holding the FIRST mirror encountered. It then emits one {@code static final}
- * literal constant per aspect type (built from that representative mirror) and references it from
- * every intercepted method's chain.
+ * Each aspect occurrence materializes its own literal. When two methods on the same bean carry
+ * {@code @TestTagged} with different attribute values ({@code {"a"}} vs {@code {"b"}}), {@code
+ * AopProxyEmitter.collectAspects} must not collapse them into a single per-aspect-type literal built
+ * from the first mirror encountered; otherwise the second method's {@code {"b"}} is silently lost.
  *
- * <p>Consequently, when two methods on the same bean carry {@code @TestTagged} with DIFFERENT
- * attribute values ({@code {"a"}} vs {@code {"b"}}), both methods' chains share the same literal
- * built from the first mirror's {@code {"a"}} — method-2's {@code {"b"}} is silently lost.
- *
- * <p>The assertion reads the generated proxy source directly (not gated on {@code assertSuccess()},
- * since the F1 array-literal bug also makes this compilation fail) and requires BOTH {@code "a"}
- * and {@code "b"} to appear as distinct literal constructor arguments — proving each occurrence
- * materializes its own literal. Currently RED: only {@code "a"} appears.
+ * <p>The assertion reads the generated proxy source directly and requires both {@code "a"} and
+ * {@code "b"} to appear as distinct literal constructor arguments.
  */
 class PerOccurrenceLiteralTest {
 
@@ -78,6 +71,6 @@ class PerOccurrenceLiteralTest {
         assertTrue(
                 proxy.contains("\"b\""),
                 "proxy must reference the second occurrence's {\"b\"} literal as a distinct literal — "
-                        + "F2 collapses both to the first mirror's {\"a\"}; generated source:\n" + proxy);
+                        + "collapsing both to the first mirror's {\"a\"} would lose it; generated source:\n" + proxy);
     }
 }

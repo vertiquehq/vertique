@@ -10,7 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * P2-W3 test: a runtime-retained method annotation carrying a <strong>nested-annotation</strong>
+ * Compile test: a runtime-retained method annotation carrying a <strong>nested-annotation</strong>
  * member ({@link TestNestedAnnotationAttr#nested()}) on an intercepted method compiles through the
  * recursive literal emitter.
  *

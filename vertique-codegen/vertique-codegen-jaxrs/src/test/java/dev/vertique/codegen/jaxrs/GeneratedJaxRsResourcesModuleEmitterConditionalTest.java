@@ -12,17 +12,17 @@ import org.junit.jupiter.api.Test;
 /**
  * APT compilation tests for the presence-gated legacy binding, its paired lazy catalog entry, and
  * conditional and uniform {@code @ElementsIntoSet} binding emission in
- * {@link GeneratedJaxRsResourcesModuleEmitter} (CG-011 W3).
+ * {@link GeneratedJaxRsResourcesModuleEmitter}.
  *
  * <p>Each test compiles a small fixture through {@link JaxRsPipelineProcessor} and verifies
  * the shape of the generated {@code GeneratedJaxRsResourcesModule}:
  * <ul>
  *   <li>All legacy bindings use {@code @ElementsIntoSet Set<Object>} — the uniform shape
- *       (FR-CG011-020) — and also take {@code Set<GeneratedRestApplicationRegistration>
+ *       — and also take {@code Set<GeneratedRestApplicationRegistration>
  *       applications}, gating their body on {@code applications.isEmpty()} (presence-gated
  *       binding).</li>
  *   <li>All methods accept {@code @VertxConfig JsonObject config} and
- *       {@code Provider<Resource> provider} parameters (FR-CG011-021).</li>
+ *       {@code Provider<Resource> provider} parameters.</li>
  *   <li>Unconditional resources produce {@code applications.isEmpty() ? Set.of(provider.get()) :
  *       Set.of()} with no {@code PropertyCondition} guard.</li>
  *   <li>Conditional resources emit a {@code private static final PropertyCondition[]

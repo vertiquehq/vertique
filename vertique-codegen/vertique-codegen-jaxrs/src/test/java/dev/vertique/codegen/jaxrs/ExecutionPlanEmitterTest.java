@@ -27,8 +27,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * APT compile-tests for {@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter} (CG-010
- * step 4d, slice 2).
+ * APT compile-tests for {@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter}.
  *
  * <p>Each test compiles a small fixture through the full pipeline processor and asserts on the
  * presence/absence of generated execution plans and their compilability.
@@ -426,7 +425,7 @@ class ExecutionPlanEmitterTest {
                     .orElse("");
 
             // CONTEXT params resolve through the RestContextResolver chain via the support contract,
-            // keyed by a static Class<?> constant resolved once at class-load time (rest-016).
+            // keyed by a static Class<?> constant resolved once at class-load time.
             assertTrue(
                     src.contains("support.resolveContext(CTX0, ctx,"),
                     "CONTEXT param must dispatch via support.resolveContext(CTX0, ctx, ...)");
@@ -434,7 +433,7 @@ class ExecutionPlanEmitterTest {
                     src.contains("static final Class<?> CTX0 = loadClass("),
                     "CONTEXT param type must be loaded once into a static CTX0 constant");
 
-            // CG-010 optimization guard: no per-request class loading, ParamMeta, or policy for CONTEXT.
+            // Optimization guard: no per-request class loading, ParamMeta, or policy for CONTEXT.
             assertFalse(
                     src.contains("resolveContext(loadClass("),
                     "CONTEXT param must NOT call loadClass(...) per request — it must use the static CTX0 constant");
@@ -656,7 +655,7 @@ class ExecutionPlanEmitterTest {
         }
     }
 
-    // --- Neutral generated source — no OpenAPI validation coupling (slice 4) ---
+    // --- Neutral generated source — no OpenAPI validation coupling ---
 
     @Nested
     @DisplayName("generated execution plan is OpenAPI-validation free")
@@ -697,7 +696,7 @@ class ExecutionPlanEmitterTest {
         }
     }
 
-    // --- Generated vs reflective dispatch parity (FR-008) ---
+    // --- Generated vs reflective dispatch parity ---
 
     @Nested
     @DisplayName("generated dispatch parity with the reflective BoundRequest binding")
@@ -878,24 +877,24 @@ class ExecutionPlanEmitterTest {
                 .orElse("");
     }
 
-    // --- Literal-backed parameter annotations (GitHub issue #162, slice 2) ---
+    // --- Literal-backed parameter annotations ---
 
     /**
-     * RED tests for literal-backed parameter annotations on {@code ExecutionPlanEmitter}'s
-     * generated {@code P{n}} constants (GitHub issue #162).
+     * Tests for literal-backed parameter annotations on {@code ExecutionPlanEmitter}'s
+     * generated {@code P{n}} constants.
      *
-     * <p>Before this slice, {@code buildParamMetaConstants} wraps every parameter's
+     * <p>Previously, {@code buildParamMetaConstants} wrapped every parameter's
      * {@code ParameterMetadata} view in a jaxrs-local {@code ReflectiveParameterMetadata} whose
-     * fifth ({@code Annotation[]}) constructor argument is a literal {@code null} — parameter
-     * annotations are simply absent on the generated execution-plan path. These tests prove the
-     * fix: each parameter's runtime-retained annotations are materialized at compile time into a
+     * fifth ({@code Annotation[]}) constructor argument was a literal {@code null}, so parameter
+     * annotations were absent on the generated execution-plan path. These tests prove that
+     * each parameter's runtime-retained annotations are materialized at compile time into a
      * literal-backed {@code ParameterMetadata} implementation (mirroring
      * {@code vertique-codegen-aop}'s {@code ParameterAnnotationLiteralTest}), so
      * {@code findAnnotation}/{@code annotationsLazy()} resolve real values with zero reflection at
      * request time.
      */
     @Nested
-    @DisplayName("literal-backed parameter annotations (issue #162)")
+    @DisplayName("literal-backed parameter annotations")
     class ParameterAnnotationLiterals {
 
         @Test
@@ -1104,8 +1103,7 @@ class ExecutionPlanEmitterTest {
         }
 
         @Test
-        @DisplayName(
-                "interface-only marker annotation (no override on the concrete parameter) is still materialized — review finding fix")
+        @DisplayName("interface-only marker annotation (no override on the concrete parameter) is still materialized")
         void interfaceOnlyMarkerAnnotation_stillMaterializedOnConcreteExecutionPlan() throws Exception {
             var result = ProcessorTestHarness.run(
                     new JaxRsPipelineProcessor(),

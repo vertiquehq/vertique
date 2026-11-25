@@ -11,17 +11,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that two event types sharing the same simple name but living in distinct packages
- * (P3-W3) do not produce colliding publisher class names or duplicate {@code @Binds}/{@code @Provides}
+ * do not produce colliding publisher class names or duplicate {@code @Binds}/{@code @Provides}
  * method names in {@code GeneratedEventsModule}.
  *
- * <p>Before the fix, both {@code com.acme.OrderCreated} and {@code com.shop.OrderCreated} mapped to
- * the same publisher simple name {@code OrderCreated$Event} (in the LCP package) and the same bind
- * method name {@code bindOrderCreatedEvent}. The fix emits each publisher into its event type's
- * own package, making the FQNs distinct.
- *
- * <p><strong>Red failure mode:</strong> the harness raises a "duplicate class" error or the
- * generated module contains two methods with the same name. After the fix, both publishers are
- * emitted in their respective event packages and the module bind method names are disambiguated.
+ * <p>Mapping both {@code com.acme.OrderCreated} and {@code com.shop.OrderCreated} to the same
+ * publisher simple name {@code OrderCreated$Event} (in the LCP package) and the same bind method
+ * name {@code bindOrderCreatedEvent} would raise a "duplicate class" error or give the generated
+ * module two methods with the same name. Instead each publisher is emitted into its event type's
+ * own package, making the FQNs distinct, and the module bind method names are disambiguated.
  */
 class SameSimpleNameEventTypesTest {
 

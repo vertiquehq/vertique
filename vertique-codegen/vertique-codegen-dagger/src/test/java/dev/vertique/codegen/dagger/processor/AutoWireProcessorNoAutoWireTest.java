@@ -14,9 +14,9 @@ import org.junit.jupiter.api.Test;
  * {@link AutoWireProcessor}.
  *
  * <p>JAX-RS {@code @Path} resource binding moved to {@code JaxRsPipelineProcessor} in
- * {@code vertique-codegen-jaxrs} (CG-010); JAX-RS-specific {@code @NoAutoWire} coverage lives in
- * {@code JaxRsPipelineProcessorTest}. This test focuses on the markers that remain CG-002's
- * responsibility (REST client, Kafka, DelayedJob).
+ * {@code vertique-codegen-jaxrs}; JAX-RS-specific {@code @NoAutoWire} coverage lives in
+ * {@code JaxRsPipelineProcessorTest}. This test focuses on the markers that remain
+ * this processor's responsibility (REST client, Kafka, DelayedJob).
  */
 class AutoWireProcessorNoAutoWireTest {
 

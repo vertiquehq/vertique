@@ -10,7 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies that {@code @Observes Object} is rejected at compile time with a clear diagnostic (P3-W5).
+ * Verifies that {@code @Observes Object} is rejected at compile time with a clear diagnostic.
  *
  * <p>The {@link dev.vertique.events.ObserverRegistry}'s superclass walk excludes {@code Object.class}
  * from dispatch, so an {@code @Observes Object} observer silently never fires. Allowing it would
@@ -18,10 +18,9 @@ import org.junit.jupiter.api.Test;
  * detect this pattern at compile time and emit a
  * {@link dev.vertique.codegen.Diagnostics#observerMustNotObserveObject} error.
  *
- * <p><strong>Red failure mode:</strong> before the fix, the processor silently generates an
- * {@code ObserverRegistration} for the {@code Object} type, which never dispatches. After the fix,
- * the processor emits an explicit compile error containing {@code "Object"} and skips emission
- * for the offending method.
+ * <p>Without that check the processor would silently generate an {@code ObserverRegistration} for
+ * the {@code Object} type, which never dispatches. Instead the processor emits an explicit compile
+ * error containing {@code "Object"} and skips emission for the offending method.
  */
 class ObservesObjectIsCompileErrorTest {
 

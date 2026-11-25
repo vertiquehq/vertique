@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
  * Verifies that {@link ServiceContractProcessor} enforces that service implementations have exactly
  * one {@code @Inject} constructor.
  *
- * <p>CG-005 is stricter than CG-002: CG-002 silently skips on zero {@code @Inject} constructors
- * (auto-wire opt-in semantics), while CG-005 emits a hard error. This reflects the stronger
+ * <p>Unlike auto-wire discovery, which silently skips an impl with zero {@code @Inject} constructors
+ * (opt-in semantics), this check emits a hard error. This reflects the stronger
  * invariant that every registered service must be DI-manageable.
  *
  * <p>Cases covered:

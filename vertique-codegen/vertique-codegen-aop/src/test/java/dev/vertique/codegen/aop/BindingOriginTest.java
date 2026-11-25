@@ -10,16 +10,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the {@code @Inject}-only binding-origin rule (FR-013-03a, plan §3): method-AOP applies
+ * Verifies the {@code @Inject}-only binding-origin rule: method-AOP applies
  * only to a bean bound by exactly one {@code @Inject} constructor. A bean with no {@code @Inject}
  * ctor, with more than one {@code @Inject} ctor, or that is also user-{@code @Provides}-supplied in
  * the same compilation is a compile error — never a silent or fabricated binding.
  *
  * <p>Cases (a) and (b) reuse {@code InjectConstructorValidator}'s message wording (0 →
  * "has no @Inject constructor"; &gt;1 → {@code Diagnostics.duplicateInjectConstructor}).
- *
- * <p><strong>Red:</strong> the no-op scaffold processor raises no diagnostic, so each compilation
- * succeeds and {@code assertFailed()} fails.
  */
 class BindingOriginTest {
 

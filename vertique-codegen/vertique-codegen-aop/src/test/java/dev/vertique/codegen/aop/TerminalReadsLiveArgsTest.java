@@ -10,23 +10,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug N1: the generated terminal super-call ignores the live {@code args[]}
- * array.
+ * The generated terminal super-call reads the live {@code args[]} array.
  *
  * <p>{@code AopProxyEmitter#buildOverride} copies the intercepted method's parameters into a local
  * {@code Object[] args = {...}} array (so an aspect can mutate {@code invocation.arguments()[i]}),
- * but then builds the terminal lambda as {@code () -> super.greet(name)} — passing the
- * <em>original parameter locals</em> rather than reading back from the (possibly mutated) array.
- * The terminal must read the live array: {@code () -> super.greet((String)
- * args[0])}. As written, an aspect that rewrites {@code invocation.arguments()[i]} is a silent
- * no-op — the original argument value reaches {@code super}.
+ * and builds the terminal lambda as {@code () -> super.greet((String) args[0])}, reading back from
+ * the (possibly mutated) array rather than passing the <em>original parameter locals</em>. Passing
+ * the locals would make an aspect that rewrites {@code invocation.arguments()[i]} a silent no-op,
+ * because the original argument value would reach {@code super}.
  *
- * <p>The bean's {@code greet} method takes a single {@code String} parameter, so a correct terminal
- * reads {@code (String) args[0]}. The test asserts the generated proxy's terminal super-call reads
- * from the {@code args} array, not from the bare original parameter name.
- *
- * <p>Currently RED: the emitter passes the original {@code name} local to {@code super.greet(...)},
- * so {@code args[0]} never appears inside the terminal super-call and the assertion fails.
+ * <p>The bean's {@code greet} method takes a single {@code String} parameter, so the terminal reads
+ * {@code (String) args[0]}. The test asserts the generated proxy's terminal super-call reads from
+ * the {@code args} array, not from the bare original parameter name.
  */
 class TerminalReadsLiveArgsTest {
 
@@ -57,7 +52,7 @@ class TerminalReadsLiveArgsTest {
         ProcessorTestHarness.run(new AopProcessor(), greeterBean())
                 .assertSuccess()
                 // The terminal must read the (possibly aspect-mutated) live array:
-                // super.greet((String) args[0]). RED today: emitter passes the original `name` local.
+                // super.greet((String) args[0]).
                 .assertGeneratedSourceContains(PROXY_FQN, "super.greet((String) args[0]")
                 // And it must NOT pass the bare original parameter name straight to super.
                 .assertGeneratedSourceDoesNotContain(PROXY_FQN, "super.greet(name)");

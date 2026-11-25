@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
  */
 class ZeroApplicationLegacyTest {
 
-    /** The classes the enabled default-mount resource set must hold, and no others (PP-001). */
+    /** The classes the enabled default-mount resource set must hold, and no others. */
     private static final Set<Class<?>> EXPECTED_ENABLED_RESOURCE_TYPES =
             Set.of(CatalogResource.class, StatusResource.class, ExtraResource.class);
 

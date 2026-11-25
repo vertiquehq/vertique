@@ -15,10 +15,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins the service client static-proxy emission contract (CG-015 Slice S1).
+ * Pins the service client static-proxy emission contract.
  *
- * <p>Pins the emission contract frozen by the CG-015 plan (§4.1, §4.2 mismatch-message protocol,
- * §4.4) for {@code {Contract}_ServiceClientProxy} classes that {@link ServiceContractProcessor}'s
+ * <p>Pins the emission contract (including the mismatch-message protocol)
+ * for {@code {Contract}_ServiceClientProxy} classes that {@link ServiceContractProcessor}'s
  * contract-only discovery loop generates for every source-root {@code @ServiceContract} interface:
  * minimal direct emission, all four dispatch shapes (security-context parameter, {@code @OneWay},
  * inherited, and default methods), nested-contract name flattening, emission through a substituted

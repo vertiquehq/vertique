@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * APT compile-tests for {@link JaxRsPipelineProcessor} bean-param model emission (CG-010 step 4c).
+ * APT compile-tests for {@link JaxRsPipelineProcessor} bean-param model emission.
  *
  * <p>Each test compiles a small fixture through the pipeline processor, loads the generated
  * {@code _BeanParamModel} class via the compilation's classloader, instantiates it, and calls
@@ -30,8 +30,7 @@ import org.junit.jupiter.api.Test;
  * <p>Covered scenarios:
  * <ul>
  *   <li>Record components in declaration order with various {@code JaxRsParamSource} values.</li>
- *   <li>Class hierarchy with subclass-wins field-hiding dedup (closed adjacent defect ex-#30
- *       alignment).</li>
+ *   <li>Class hierarchy with subclass-wins field-hiding dedup.</li>
  *   <li>{@code @DefaultValue} propagation on record and class fields.</li>
  *   <li>Each {@code JaxRsParamSource} value covered: PATH, QUERY, HEADER, COOKIE, FORM.</li>
  * </ul>
@@ -647,7 +646,7 @@ class BeanParamModelEmitterTest {
         }
     }
 
-    // --- Nested bean class — binary-name vs source-name parity (round-5 review) ---
+    // --- Nested bean class — binary-name vs source-name parity ---
 
     @Nested
     @DisplayName("nested bean class — companion class-init resolves binary FQN (Outer$Inner)")
@@ -659,7 +658,7 @@ class BeanParamModelEmitterTest {
             // The bean type is a nested static class. The emitted ANN_n constants reference the
             // bean class by FQN string; resolveClass uses Class.forName(fqn, true, cl) which requires
             // the BINARY name (Outer$Inner), NOT the source-form qualified name (Outer.Inner) that
-            // TypeElement.getQualifiedName() returns. Before the round-5 fix, class-init of the
+            // TypeElement.getQualifiedName() returns. Previously, class-init of the
             // generated companion threw ExceptionInInitializerError wrapping ClassNotFoundException
             // for any nested @BeanParam type. This test pins the regression.
             var result = ProcessorTestHarness.run(

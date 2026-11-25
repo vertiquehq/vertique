@@ -27,7 +27,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-002: the Services codegen and reflective registration paths must share the canonical
+ * The Services codegen and reflective registration paths must share the canonical
  * resilience metadata package after the atomic vocabulary move.
  */
 class ResilienceCodegenMigrationTest {

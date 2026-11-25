@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  * Smoke test that verifies a minimal direct-impl contract compiles and produces a
  * {@code _ContractContributor} source file plus a {@code GeneratedServicesModule}.
  *
- * <p>Verifies the end-to-end scaffold: processor discovers the impl, extracts the model,
+ * <p>Verifies the end-to-end flow: processor discovers the impl, extracts the model,
  * validates it, and emits both files.
  */
 class ServiceContractProcessorDirectImplSmokeTest {

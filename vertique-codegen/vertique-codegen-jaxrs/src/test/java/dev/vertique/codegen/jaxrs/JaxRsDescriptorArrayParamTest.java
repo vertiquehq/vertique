@@ -17,17 +17,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies array-typed parameter FQN resolution in generated JAX-RS descriptors (legacy issue
- * #153 / plan findings F1 and F4).
+ * Verifies array-typed parameter FQN resolution in generated JAX-RS descriptors.
  *
  * <p>{@code JaxRsDescriptorEmitter} emits a parameter's erased type as a string FQN constant and
  * resolves it inside the generated {@code describe()} body via
  * {@link GeneratedJaxRsDescriptorSupport#resolveClass(String, ClassLoader)}. That wire format is
  * Java <em>source</em> array form — a base name plus one {@code []} pair per dimension — which
  * {@code Class.forName} cannot load directly; {@code resolveClass} therefore strips the brackets
- * and rebuilds the array class via {@code Array.newInstance} (F1). The stripped base name must be
+ * and rebuilds the array class via {@code Array.newInstance}. The stripped base name must be
  * the <em>binary</em> one, so an array of a nested type emits {@code Outer$Inner[]} rather than the
- * dotted source form {@code TypeMirror.toString()} would yield (F4).
+ * dotted source form {@code TypeMirror.toString()} would yield.
  *
  * <p>Each test compiles a small resource fixture through {@link JaxRsPipelineProcessor}, then
  * invokes the generated descriptor's {@code describe(...)} method reflectively (mirroring
@@ -70,7 +69,7 @@ class JaxRsDescriptorArrayParamTest {
                 describeMethod.invoke(descriptor, resourceInstance, support, Collections.emptyList());
     }
 
-    // --- F1: single-dimensional array query param ---
+    // --- single-dimensional array query param ---
 
     @Test
     @DisplayName("@QueryParam String[] — describe() resolves the array type without throwing")
@@ -99,13 +98,13 @@ class JaxRsDescriptorArrayParamTest {
                         result,
                         "dev.vertique.test.ArrayQueryResource",
                         "dev.vertique.test.ArrayQueryResource_JaxRsDescriptor"),
-                "describe() must not throw for an array-typed @QueryParam (F1)");
+                "describe() must not throw for an array-typed @QueryParam");
 
         ResourceMethodMeta.ParamMeta paramMeta = metas.get(0).params().get(0);
         assertEquals(String[].class, paramMeta.type(), "Array-typed @QueryParam must resolve to String[].class");
     }
 
-    // --- F2: byte[] body remains a documented working shape under codegen ---
+    // --- byte[] body remains a documented working shape under codegen ---
 
     @Test
     @DisplayName("unannotated byte[] body param — describe() resolves byte[].class without throwing")
@@ -136,7 +135,7 @@ class JaxRsDescriptorArrayParamTest {
                         result,
                         "dev.vertique.test.ByteBodyResource",
                         "dev.vertique.test.ByteBodyResource_JaxRsDescriptor"),
-                "describe() must not throw for an unannotated byte[] body param (F2) — codegen must not "
+                "describe() must not throw for an unannotated byte[] body param — codegen must not "
                         + "regress this documented reflective-path working shape");
 
         ResourceMethodMeta.ParamMeta paramMeta = metas.get(0).params().get(0);
@@ -177,18 +176,16 @@ class JaxRsDescriptorArrayParamTest {
         assertEquals(String[][].class, paramMeta.type(), "String[][] param must resolve to String[][].class");
     }
 
-    // --- F4: nested (inner) element type array param ---
+    // --- nested (inner) element type array param ---
 
     @Test
-    @DisplayName("nested-type element array param (Outer.Inner[]) — describe() resolves without throwing (decides F4)")
+    @DisplayName("nested-type element array param (Outer.Inner[]) — describe() resolves without throwing")
     void nestedTypeArrayParam_describe_resolves() throws Exception {
-        // This test is the decision procedure for plan finding F4: TypeMirrorFqn.erasedFqn's array
-        // branch falls back to TypeMirror.toString(), which is expected to yield the DOTTED source
-        // form "dev.vertique.test.Outer.Inner[]" for a nested element type rather than the BINARY
-        // form "dev.vertique.test.Outer$Inner[]" that Class.forName (after array-dimension
-        // stripping) requires. If this test is still red after S1's fix alone, S2 (binary base
-        // names in TypeMirrorFqn's array branch) is required; if it goes green from S1 alone, S2
-        // is skipped and that must be recorded in the plan's Amendments section, never silently.
+        // TypeMirrorFqn.erasedFqn's array branch must not fall back to TypeMirror.toString(),
+        // which yields the DOTTED source form "dev.vertique.test.Outer.Inner[]" for a nested
+        // element type rather than the BINARY form "dev.vertique.test.Outer$Inner[]" that
+        // Class.forName (after array-dimension stripping) requires. This test checks that the
+        // emitted array base name resolves to the nested type.
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Outer", """
                         package dev.vertique.test;
@@ -212,12 +209,12 @@ class JaxRsDescriptorArrayParamTest {
 
         assertDoesNotThrow(
                 () -> callDescribe(result, "dev.vertique.test.Outer", "dev.vertique.test.Outer_JaxRsDescriptor"),
-                "describe() must not throw for a nested-element-type array param (F4) — the emitted array "
+                "describe() must not throw for a nested-element-type array param — the emitted array "
                         + "FQN's base name must resolve to the nested type, whether that requires binary "
                         + "Outer$Inner form or is already handled by dimension-stripping alone");
     }
 
-    // --- F4 (emitter level): the emitted FQN string itself ---
+    // --- Emitter level: the emitted FQN string itself ---
 
     @Test
     @DisplayName("nested-type array param — the emitted descriptor FQN constant uses the binary Outer$Inner base")

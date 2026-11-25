@@ -473,7 +473,7 @@ class RestBodyDiscoveryTest {
             assertNoInputProcessorGenerated(result, "com.example.Status_InputProcessor");
         }
 
-        // --- @Context annotation exclusion (FR-REST-016 slice g) ---
+        // --- @Context annotation exclusion ---
 
         @Test
         @DisplayName("@Context-annotated ContextValue param — excluded (annotation takes priority)")

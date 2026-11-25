@@ -15,10 +15,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** TP-001 proof for the complete T011 resilience annotation validation matrix. */
+/** Compile-time validation matrix for the resilience annotation processor. */
 class ResilienceAnnotationProcessorTest {
 
-    private static final String PACKAGE = "t011";
+    private static final String PACKAGE = "com.example";
     private static final String COMMON_IMPORTS = """
             import dev.vertique.resilience.annotation.Bulkhead;
             import dev.vertique.resilience.annotation.CircuitBreaker;
@@ -29,10 +29,10 @@ class ResilienceAnnotationProcessorTest {
             import jakarta.inject.Inject;
             """;
 
-    @DisplayName("enforces the T011 contract matrix")
+    @DisplayName("enforces the validation matrix")
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t011ContractMatrixRows")
-    void shouldEnforceT011ContractMatrix(MatrixRow row) {
+    @MethodSource("validationMatrixRows")
+    void shouldEnforceValidationMatrix(MatrixRow row) {
         ProcessorTestHarness.Result result = compile(row);
         if (row.success()) {
             result.assertSuccess();
@@ -42,7 +42,7 @@ class ResilienceAnnotationProcessorTest {
         }
     }
 
-    static Stream<MatrixRow> t011ContractMatrixRows() {
+    static Stream<MatrixRow> validationMatrixRows() {
         return Stream.of(
                 error(
                         "declaration-without-anchor",
@@ -430,7 +430,7 @@ class ResilienceAnnotationProcessorTest {
 
     private static JavaFileObject contractWithRetry() {
         return SourceFiles.inline(PACKAGE + ".Contract", """
-                package t011;
+                package com.example;
                 import dev.vertique.resilience.annotation.Resilient;
                 import dev.vertique.resilience.annotation.Retry;
                 import dev.vertique.services.ServiceContract;
@@ -445,7 +445,7 @@ class ResilienceAnnotationProcessorTest {
 
     private static JavaFileObject contractWithoutResilience() {
         return SourceFiles.inline(PACKAGE + ".Contract", """
-                package t011;
+                package com.example;
                 import dev.vertique.services.ServiceContract;
                 import io.vertx.core.Future;
                 @ServiceContract("contract")
@@ -457,7 +457,7 @@ class ResilienceAnnotationProcessorTest {
 
     private static JavaFileObject contractWithTypeLevelRetry() {
         return SourceFiles.inline(PACKAGE + ".Contract", """
-                package t011;
+                package com.example;
                 import dev.vertique.resilience.annotation.Timeout;
                 import dev.vertique.services.ServiceContract;
                 import io.vertx.core.Future;
@@ -471,7 +471,7 @@ class ResilienceAnnotationProcessorTest {
 
     private static JavaFileObject baseContract() {
         return SourceFiles.inline(PACKAGE + ".Base", """
-                package t011;
+                package com.example;
                 import dev.vertique.resilience.annotation.Retry;
                 import io.vertx.core.Future;
                 public interface Base {
@@ -483,7 +483,7 @@ class ResilienceAnnotationProcessorTest {
 
     private static JavaFileObject derivedContract() {
         return SourceFiles.inline(PACKAGE + ".Contract", """
-                package t011;
+                package com.example;
                 import dev.vertique.services.ServiceContract;
                 @ServiceContract("contract")
                 public interface Contract extends Base {}

@@ -14,16 +14,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug F2 (second half): the {@code <Ann>$AopLiteral} class is emitted inside
- * {@code AopProxyEmitter.emit}, which the processor calls once PER BEAN. When two beans in the same
- * compilation each carry the same aspect annotation ({@code @TestTagged}), the emitter writes
- * {@code TestTagged$AopLiteral} twice through the {@code Filer}, producing an
- * "Attempt to recreate a file" error and failing the whole compilation.
+ * Two beans carrying the same aspect annotation share one generated literal class. The {@code
+ * <Ann>$AopLiteral} class is per aspect type, not per bean, so the processor emits it at most once
+ * per compilation; writing {@code TestTagged$AopLiteral} twice through the {@code Filer} would
+ * fail the whole compilation with an "Attempt to recreate a file" error.
  *
- * <p>The literal is per-aspect-type, not per-bean — it should be emitted at most once per
- * compilation. This test asserts the compilation SUCCEEDS (no duplicate Filer output) and that no
- * "recreate a file" diagnostic is present. Currently RED: the duplicate {@code TestTagged$AopLiteral}
- * write aborts the compilation.
+ * <p>This test asserts the compilation succeeds (no duplicate Filer output) and that no "recreate a
+ * file" diagnostic is present, with both beans annotated with {@code @TestTagged}.
  */
 class DuplicateLiteralAcrossBeansTest {
 
@@ -76,7 +73,7 @@ class DuplicateLiteralAcrossBeansTest {
         assertFalse(
                 recreateError,
                 "the per-aspect TestTagged$AopLiteral must be emitted at most once per compilation — "
-                        + "F2 writes it once per bean, triggering 'Attempt to recreate a file'");
+                        + "writing it once per bean would trigger 'Attempt to recreate a file'");
 
         // The compilation as a whole must succeed (no duplicate-type / recreate-file abort).
         result.assertSuccess();

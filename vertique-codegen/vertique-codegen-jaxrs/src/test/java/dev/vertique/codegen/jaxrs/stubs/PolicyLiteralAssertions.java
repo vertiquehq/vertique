@@ -17,8 +17,8 @@ import java.util.stream.Collectors;
  * ...))} using simple names (JavaPoet's {@code $T} renders the imported simple name in the emitted
  * source, exactly as {@code InputPolicyParityTest} already asserts for individual class literals).
  *
- * <p>Both {@code InputPolicyParityTest} (T016) and {@code JaxRsInvocationPolicyMatrixTest} (T018,
- * issue #379) assert generated {@code POL{n}} content through this single formatter so the
+ * <p>Both {@code InputPolicyParityTest} and {@code JaxRsInvocationPolicyMatrixTest}
+ * assert generated {@code POL{n}} content through this single formatter so the
  * literal shape is never restated as a second literal that could silently drift from the emitter.
  */
 public final class PolicyLiteralAssertions {

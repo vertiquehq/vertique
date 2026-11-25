@@ -10,16 +10,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug N3: a generic intercepted method produces an uncompilable proxy.
+ * A generic intercepted method yields a compilable proxy.
  *
  * <p>For a generic method {@code <T> io.vertx.core.Future<T> echo(T value)},
  * {@code AopProxyEmitter#buildOverride} copies the {@code T}-referencing parameter and return types
- * into the override but never emits the method's own type parameters (the {@code <T>} declaration).
- * The generated override therefore references an undeclared type variable {@code T}, and the proxy
- * source fails to compile with "cannot find symbol: class T".
+ * into the override and must also emit the method's own type parameters (the {@code <T>}
+ * declaration). Without it the override references an undeclared type variable {@code T} and the
+ * proxy source fails with "cannot find symbol: class T".
  *
- * <p>The test asserts compilation SUCCEEDS. Currently RED: the override omits {@code <T>}, so the
- * generated proxy references an undeclared {@code T} and does not compile.
+ * <p>The test asserts compilation succeeds.
  */
 class GenericMethodCompilesTest {
 

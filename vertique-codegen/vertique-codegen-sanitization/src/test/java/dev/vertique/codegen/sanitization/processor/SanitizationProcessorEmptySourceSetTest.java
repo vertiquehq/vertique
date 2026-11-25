@@ -9,12 +9,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Scaffold smoke test for {@link SanitizationProcessor}.
+ * Smoke test for {@link SanitizationProcessor}.
  *
  * <p>Verifies that the processor is properly registered and compiles without errors against an
  * empty source set (no {@code @Path} resources, no DTOs — nothing to emit).
  */
-class SanitizationProcessorScaffoldTest {
+class SanitizationProcessorEmptySourceSetTest {
 
     @Test
     @DisplayName("processor compiles against empty source set without errors or generated files")

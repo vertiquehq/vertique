@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Each test snapshots the full {@code JavaFile.toString()} output so any future change to
  * the emit logic produces a clear diff rather than a silent behavior change. The expected strings
- * are a stable part of the CG-001 contract.
+ * are a stable part of the generator's contract.
  */
 class DaggerModuleWriterTest {
 

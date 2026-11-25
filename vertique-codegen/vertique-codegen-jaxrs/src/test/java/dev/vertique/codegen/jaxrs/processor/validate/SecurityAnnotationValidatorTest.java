@@ -354,18 +354,18 @@ class SecurityAnnotationValidatorTest {
         }
     }
 
-    // --- Short-circuit after conflict (Fix C) ---
+    // --- Short-circuit after conflict ---
 
     @Nested
-    @DisplayName("short-circuit after conflict — exactly one error emitted (Fix C)")
+    @DisplayName("short-circuit after conflict — exactly one error emitted")
     class ShortCircuitAfterConflict {
 
         @Test
         @DisplayName("@PermitAll + @RolesAllowed({}) at method level → exactly ONE error (conflict), not two")
         void permitAllAndEmptyRolesAllowed_exactlyOneError() {
-            // Fix C bug: before the fix, both a conflict error AND an empty-@RolesAllowed error
-            // were emitted for this method. The runtime ResourceScanner continues after the first
-            // violation, so only the conflict is reported.
+            // Only the conflict error is emitted, not also an empty-@RolesAllowed error. The
+            // runtime ResourceScanner continues after the first violation, so only the conflict is
+            // reported.
             var result =
                     ProcessorTestHarness.run(new ValidatorProbe(), SourceFiles.inline("dev.vertique.test.Res", """
                             package dev.vertique.test;
@@ -389,7 +389,7 @@ class SecurityAnnotationValidatorTest {
         @DisplayName(
                 "class-level @DenyAll + @RolesAllowed({}) + method no annotation → class conflict only, NOT empty-roles fallback")
         void classConflict_methodNoAnnotation_onlyClassConflict() {
-            // Fix C: a class-level conflict (already reported by validateClassLevel) should NOT
+            // A class-level conflict (already reported by validateClassLevel) should NOT
             // also trigger the method-level empty-@RolesAllowed fallback, because the class
             // conflict means the class-level @RolesAllowed is already invalid/inapplicable.
             // Only the class-level conflict error should fire; no method-level errors.
@@ -415,7 +415,7 @@ class SecurityAnnotationValidatorTest {
         @Test
         @DisplayName("class-level @DenyAll + @RolesAllowed({}) + method-level @RolesAllowed({}) → class conflict only")
         void classConflict_methodEmptyRoles_onlyClassConflict() {
-            // Round-3 Codex finding: when the class has a conflict AND the method declares its own
+            // When the class has a conflict AND the method declares its own
             // empty @RolesAllowed, runtime ResourceScanner continue's on the class-level conflict
             // and never invokes hasEmptyRolesAllowed for that method. The validator must do the same.
             var result =

@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
  * encoding scheme:
  *
  * <ul>
- *   <li><strong>P3-W6 case collision</strong> — FQNs differing only in the case of a
+ *   <li><strong>Case collision</strong> — FQNs differing only in the case of a
  *       segment-initial character (e.g. {@code com.foo.Bar} vs {@code com.Foo.Bar}).</li>
  *   <li><strong>Underscore/dot-placement collision</strong> — FQNs whose string value is identical
  *       after naively replacing {@code .} with {@code _}, because one has a literal {@code _} in a
@@ -31,13 +31,13 @@ import org.junit.jupiter.api.Test;
  * position in the inventory sorted by FQN ({@link String} natural order) as the unique
  * discriminator — is provably injective: distinct ordinals always produce distinct method names,
  * regardless of how the FQNs relate. Sorting by FQN also makes the ordinals deterministic across
- * compilation runs, independent of {@code RoundEnvironment.getRootElements()} iteration order
- * (P3-W7). These tests verify the load-bearing property: compilation SUCCEEDS (no duplicate
+ * compilation runs, independent of {@code RoundEnvironment.getRootElements()} iteration order. These
+ * tests verify the load-bearing property: compilation SUCCEEDS (no duplicate
  * method) and both type references appear in the generated module source.
  */
 class FqnCaseCollisionTest {
 
-    // --- P3-W6 case-collision fixtures ---
+    // --- case-collision fixtures ---
 
     // Module package = LCP of "com.foo" and "com.Foo" = "com"
     private static final String CASE_COLLISION_MODULE_FQN = "com.GeneratedEventsModule";
@@ -195,10 +195,10 @@ class FqnCaseCollisionTest {
                         """);
     }
 
-    // --- P3-W6 case-collision tests ---
+    // --- case-collision tests ---
 
     @Nested
-    @DisplayName("P3-W6: FQNs differing only in segment-initial case")
+    @DisplayName("FQNs differing only in segment-initial case")
     class CaseCollisionTests {
 
         @Test

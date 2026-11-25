@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * APT compile-tests for {@link JaxRsPipelineProcessor} descriptor emission (CG-010 step 4b).
+ * APT compile-tests for {@link JaxRsPipelineProcessor} descriptor emission.
  *
  * <p>Each test compiles a small fixture through the pipeline processor, loads the generated
  * {@code _JaxRsDescriptor} class via the compilation's classloader, instantiates it reflectively,
@@ -577,7 +577,7 @@ class JaxRsDescriptorEmitterTest {
         }
 
         @Test
-        @DisplayName("blank @PathParam name preserved (CG-009 blank-name parity)")
+        @DisplayName("blank @PathParam name preserved (blank-name parity)")
         void blankParamName_preserved() throws Exception {
             var result = ProcessorTestHarness.run(
                     new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.BlankNameResource", """
@@ -607,24 +607,24 @@ class JaxRsDescriptorEmitterTest {
         }
     }
 
-    // --- Literal-backed parameter annotations (GitHub issue #162, slice 3) ---
+    // --- Literal-backed parameter annotations ---
 
     /**
-     * RED tests for literal-backed parameter annotations on {@code JaxRsDescriptorEmitter}'s
-     * generated {@code describe()} output (GitHub issue #162).
+     * Tests for literal-backed parameter annotations on {@code JaxRsDescriptorEmitter}'s
+     * generated {@code describe()} output.
      *
-     * <p>Before this slice, the descriptor's per-parameter {@code ParameterMetadata} view is
+     * <p>Previously, the descriptor's per-parameter {@code ParameterMetadata} view was
      * wrapped in a jaxrs-local {@code ReflectiveParameterMetadata} backed by a live
      * {@code support.effectiveParameterAnnotations(method, index)} reflective read — real
-     * annotations are present, but resolved reflectively at class-registration time rather than
-     * compile-time-literal-backed. These tests prove the fix: each parameter's runtime-retained
+     * annotations were present, but resolved reflectively at class-registration time rather than
+     * compile-time-literal-backed. These tests prove that each parameter's runtime-retained
      * annotations are materialized at compile time into a literal-backed {@code ParameterMetadata}
      * implementation, so {@code findAnnotation}/{@code annotationsLazy()} resolve real values with
      * zero reflection at class-registration time (mirroring
-     * {@code ExecutionPlanEmitter}'s {@code ParameterAnnotationLiterals} tests, slice 2).
+     * {@code ExecutionPlanEmitter}'s {@code ParameterAnnotationLiterals} tests).
      */
     @Nested
-    @DisplayName("literal-backed parameter annotations (issue #162)")
+    @DisplayName("literal-backed parameter annotations")
     class ParameterAnnotationLiterals {
 
         @Test

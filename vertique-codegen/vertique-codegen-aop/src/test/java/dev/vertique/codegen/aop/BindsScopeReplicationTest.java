@@ -11,13 +11,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the generated {@code GeneratedAopModule} replicates the target bean's declared scope on
- * the proxy {@code @Binds} — never hard-codes {@code @Singleton} (FR-013-03 / spike V7).
+ * the proxy {@code @Binds} — never hard-codes {@code @Singleton}.
  *
  * <p>A {@code @Singleton} bean yields a {@code @Singleton}-scoped binding; an unscoped bean yields an
  * unscoped binding.
- *
- * <p><strong>Red:</strong> the no-op scaffold processor emits no module, so no {@code @Binds} exists
- * and both assertions fail.
  */
 class BindsScopeReplicationTest {
 
@@ -55,7 +52,7 @@ class BindsScopeReplicationTest {
     }
 
     @Test
-    @DisplayName("the generated module carries @Generated(AopProcessor) (FR-013-16)")
+    @DisplayName("the generated module carries @Generated(AopProcessor)")
     void generatedModuleCarriesGeneratedMarker() {
         ProcessorTestHarness.run(new AopProcessor(), bean("Plain", "", ""))
                 .assertSuccess()

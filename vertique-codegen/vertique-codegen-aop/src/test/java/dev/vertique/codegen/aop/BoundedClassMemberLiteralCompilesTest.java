@@ -13,20 +13,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for P2R2-W1: {@code AnnotationLiteralEmitter.memberFieldType} normalizes every
- * {@code Class} member to {@code Class<?>}. For a bounded {@code Class<? extends Number> value()}
- * member the generated {@code <Ann>$AopLiteral} accessor {@code public Class<?> value()} does NOT
- * override the annotation interface method {@code Class<? extends Number> value()} — an incompatible
- * (non-covariant) return type — so the generated literal source fails to compile.
+ * A bounded {@code Class<? extends Number> value()} annotation member yields a compilable literal:
+ * {@code AnnotationLiteralEmitter.memberFieldType} preserves the member's declared type on the
+ * generated {@code <Ann>$AopLiteral} field and accessor (erasing only the {@code .class} value
+ * expression), so the accessor overrides the annotation interface method with a compatible return
+ * type. Normalizing the member to {@code Class<?>} would be a non-covariant return type and the
+ * generated literal source would not compile.
  *
- * <p>{@code firstUnsupportedAttribute} treats {@code Class} as supported, so the shape is neither
- * supported nor cleanly rejected: it silently emits non-compiling code.
- *
- * <p><strong>Expected RED behavior:</strong> the overall compilation FAILS (the emitted
- * {@code TestBoundedClass$AopLiteral} accessor does not override the bounded interface method), so
- * {@code assertSuccess()} throws. Once W1 is fixed, the emitter must preserve the member's declared
- * type on the field/accessor (erasing only the {@code .class} value expression), so the accessor
- * overrides correctly and compilation succeeds.
+ * <p>The test asserts the overall compilation succeeds.
  */
 class BoundedClassMemberLiteralCompilesTest {
 

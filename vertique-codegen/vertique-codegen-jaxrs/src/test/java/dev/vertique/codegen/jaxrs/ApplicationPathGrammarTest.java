@@ -37,8 +37,8 @@ import org.opentest4j.AssertionFailedError;
  * <p>Each test compiles a {@code PathResource} and an {@code Api} declaration,
  * {@code @RestApplication(name = "api", path = <value>, resources = PathResource.class)}, through
  * {@link JaxRsPipelineProcessor} via {@link ProcessorTestHarness}, following
- * {@link RestApplicationDeclarationTest}'s fixture style, whose TP-004 holds the normalization
- * rows. An error names the declaration when its message contains its binary name. An accepted
+ * {@link RestApplicationDeclarationTest}'s fixture style, whose path-normalization section holds the
+ * normalization rows. An error names the declaration when its message contains its binary name. An accepted
  * value is checked at method level: the generated module declares exactly one registration method,
  * {@code apiRegistration}, whose {@code of(…)} call carries the value as its path literal and whose
  * registration's {@code path()} returns it.
@@ -111,7 +111,7 @@ class ApplicationPathGrammarTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-001 — an invalid @RestApplication path fails compilation naming the declaration, value,
+    // An invalid @RestApplication path fails compilation naming the declaration, value,
     // and rule
     // -----------------------------------------------------------------------------------------
 
@@ -145,10 +145,10 @@ class ApplicationPathGrammarTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("pathRejectionCases")
-    @DisplayName("TP-001 — an invalid @RestApplication path fails compilation naming the declaration, value, and rule")
+    @DisplayName("an invalid @RestApplication path fails compilation naming the declaration, value, and rule")
     void rejectsInvalidPathsNamingRule(String label, PathRejectionCase testCase) {
         var result = compile(PATH_GRAMMAR_PACKAGE, "", testCase.value(), testCase.options());
-        logDiagnostics("TP-001 " + label, result);
+        logDiagnostics(label, result);
 
         result.assertFailed();
         List<Diagnostic<? extends JavaFileObject>> errors = result.compilation().errors();
@@ -173,13 +173,13 @@ class ApplicationPathGrammarTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-002 — unreserved paths compile unchanged, and a @NoAutoWire declaration is never checked
+    // Unreserved paths compile unchanged, and a @NoAutoWire declaration is never checked
     // -----------------------------------------------------------------------------------------
 
     /**
-     * One TP-002 row. The {@code @NoAutoWire} row carries {@code "/api/:id"}, a value TP-001
-     * rejects on a checked declaration, so a mutation that runs the grammar on opted-out
-     * declarations is observable; it expects T022's opt-out warning instead of a registration.
+     * One unreserved-path row. The {@code @NoAutoWire} row carries {@code "/api/:id"}, a value the
+     * path grammar rejects on a checked declaration, so a mutation that runs the grammar on opted-out
+     * declarations is observable; it expects the opt-out warning instead of a registration.
      */
     private record UnreservedPathCase(String label, String packageName, String value, boolean noAutoWire) {}
 
@@ -194,11 +194,11 @@ class ApplicationPathGrammarTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("unreservedPathCases")
-    @DisplayName("TP-002 — unreserved paths compile unchanged, and a @NoAutoWire declaration is never checked")
+    @DisplayName("unreserved paths compile unchanged, and a @NoAutoWire declaration is never checked")
     void acceptsUnreservedPaths(String label, UnreservedPathCase testCase) {
         String annotations = testCase.noAutoWire() ? "@NoAutoWire" : "";
         var result = compile(testCase.packageName(), annotations, testCase.value(), Map.of());
-        logDiagnostics("TP-002 " + label, result);
+        logDiagnostics(label, result);
 
         result.assertSuccess();
         if (testCase.noAutoWire()) {
@@ -247,7 +247,7 @@ class ApplicationPathGrammarTest {
 
     /**
      * Asserts that the opted-out declaration in {@code packageName} gets no error and exactly one
-     * diagnostic naming it, T022's opt-out warning, that no diagnostic reports a path rule, and that
+     * diagnostic naming it, the opt-out warning, that no diagnostic reports a path rule, and that
      * the module written for {@code PathResource} declares no registration method.
      */
     private static void assertOnlyTheOptOutWarning(ProcessorTestHarness.Result result, String packageName) {
@@ -273,7 +273,7 @@ class ApplicationPathGrammarTest {
                         && message.contains("is annotated @NoAutoWire")
                         && message.contains("not registered")
                         && message.contains("not validated"),
-                () -> "Expected the one diagnostic naming " + declaration + " to be T022's opt-out warning."
+                () -> "Expected the one diagnostic naming " + declaration + " to be the opt-out warning."
                         + diagnosticsSummary(result));
         assertTrue(
                 result.compilation().diagnostics().stream()

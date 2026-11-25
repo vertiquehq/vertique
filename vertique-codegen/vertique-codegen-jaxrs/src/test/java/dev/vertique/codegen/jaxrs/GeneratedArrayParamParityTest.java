@@ -55,11 +55,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Verifies that generated JAX-RS dispatch treats {@code T[]} query/header/body params at parity
- * with the reflective path (legacy issue #153; plan findings F8, decision 8; S3).
+ * with the reflective path.
  *
- * <p>{@code S1}/{@code S2} made array-typed parameter FQNs resolve inside generated
- * {@code describe()} bodies (no more startup crash), and {@code S3} made
- * {@code EffectiveJaxRsContractResolver.resolveComponentType} recognize scalar
+ * <p>Array-typed parameter FQNs resolve inside generated
+ * {@code describe()} bodies (no startup crash), and
+ * {@code EffectiveJaxRsContractResolver.resolveComponentType} recognizes scalar
  * {@link javax.lang.model.type.ArrayType} element types so the generated {@code componentType()}
  * gates the multiplicity path exactly where the reflective
  * {@code ResourceScanner.resolveComponentType} / {@code isScalarArrayComponent} policy does. This
@@ -91,7 +91,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       {@code Boolean}, {@code Character}), plus an {@code enum} and a bounded type variable whose
  *       erasure is an {@code enum};</li>
  *   <li><b>shapes that must stay non-multi-value</b> — primitive-array bodies
- *       ({@code int[]}/{@code char[]}/{@code byte[]}/{@code short[]}, decision 8's carve-out), a
+ *       ({@code int[]}/{@code char[]}/{@code byte[]}/{@code short[]}, a deliberate carve-out), a
  *       nested array ({@code String[][]}), whose element type is itself an array and therefore not a
  *       scalar component on either path, and the collection shapes whose type argument core reflection
  *       does not reify as a {@link Class} — a wildcard ({@code List<? extends CharSequence>}), a type
@@ -111,7 +111,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * unreachable from this module. Tests 2–4 below therefore drive the real generated
  * {@link ResourceExecutionPlan} bytecode with a minimal {@link GeneratedJaxRsSupport} stub that
  * mirrors {@code ParameterExtractor}'s documented {@code componentType()}-gated multiplicity rule
- * (decision 1) rather than calling it — the same pattern {@code ExecutionPlanEmitterTest}'s
+ * rather than calling it — the same pattern {@code ExecutionPlanEmitterTest}'s
  * {@code boundRequestReadingSupport()} already establishes. The rule itself (binding all values
  * when {@code componentType() != null}) is proven correct for the reflective path separately by
  * {@code SetAndArrayQueryParamBindTest}; what these tests add is proof that the REAL generated
@@ -120,7 +120,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class GeneratedArrayParamParityTest {
 
-    // --- Test 1: componentType()/source parity matrix (decision 8 / F8) ---
+    // --- Test 1: componentType()/source parity matrix ---
 
     /**
      * One matrix row: a parameter shape represented once as a plain compiled reflective fixture
@@ -179,7 +179,7 @@ class GeneratedArrayParamParityTest {
 
     /**
      * Builds the APT source text for the {@code @PathParam String[]} declaration — the shape whose
-     * generated {@code componentType()} diverged from the reflective path (F1). Shared by the matrix
+     * generated {@code componentType()} diverged from the reflective path. Shared by the matrix
      * row and by {@link #pathArrayParam_startupConverterProbe_rejectsOnBothPaths()} so both prove
      * their halves of the same declaration.
      *
@@ -458,7 +458,7 @@ class GeneratedArrayParamParityTest {
      *       {@code Parameter.getType()} is already erased, the generated side because
      *       {@code isScalarArrayComponent}/{@code TypeMirrorFqn.erasedFqn} erase the mirror);</li>
      *   <li><b>non-multi-value shapes</b> — {@code int[]}/{@code char[]}/{@code byte[]}/
-     *       {@code short[]} unannotated bodies (expected BODY + null componentType, decision 8's
+     *       {@code short[]} unannotated bodies (expected BODY + null componentType, a deliberate
      *       carve-out), a {@code @QueryParam String[][]} (QUERY + null componentType: the element
      *       type is itself an array, not a scalar component), and {@code @QueryParam} declarations of
      *       {@code List<? extends CharSequence>}, {@code List<T>}, {@code List<List<String>>},
@@ -1043,7 +1043,7 @@ class GeneratedArrayParamParityTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("matrixCases")
-    @DisplayName("generated componentType()/source matches reflective for each array param shape (decision 8)")
+    @DisplayName("generated componentType()/source matches reflective for each array param shape")
     void scalarArrayComponentPolicy_generatedMatchesReflective(String label, MatrixCase matrixCase) throws Exception {
         // Reflective side: the real, public entry point — exercises the real
         // ResourceScanner.resolveComponentType/isScalarArrayComponent policy, already proven
@@ -1072,13 +1072,12 @@ class GeneratedArrayParamParityTest {
         // where ResourceScanner does; the PATH row proves it does NOT resolve one where the
         // reflective scanner deliberately hard-codes null (a path param is single-valued). The
         // int[]/char[]/byte[]/short[] body rows and the String[][] row must agree on null — those
-        // are the non-multi-value carve-outs (decision 8) and must NOT regress.
+        // are the non-multi-value carve-outs and must NOT regress.
         assertEquals(reflective.source(), generated.source(), label + ": parity breach on param source");
         assertEquals(
                 reflective.componentType() != null,
                 generated.componentType() != null,
-                label + ": parity breach on componentType() nullity (the componentType != null multiplicity gate,"
-                        + " decision 1)");
+                label + ": parity breach on componentType() nullity (the componentType != null multiplicity gate)");
         if (matrixCase.expectedPlatformComponentType() != null) {
             assertEquals(
                     matrixCase.expectedPlatformComponentType(),
@@ -1200,7 +1199,7 @@ class GeneratedArrayParamParityTest {
     }
 
     @Test
-    @DisplayName("?tags=a&tags=b — generated dispatch binds both values, at parity with reflective (F1/#153)")
+    @DisplayName("?tags=a&tags=b — generated dispatch binds both values, at parity with reflective")
     void arrayQueryParam_generatedAndReflective_bindAllValues() throws Exception {
         ResourceMethodMeta.ParamMeta reflectiveMeta = new JaxRsRouteRegistrar()
                 .scanResource(new StringArrayQueryBindReflective())
@@ -1243,7 +1242,7 @@ class GeneratedArrayParamParityTest {
     }
 
     @Test
-    @DisplayName("Header: tags=a, tags=b — generated dispatch binds both values, at parity with reflective (F1/#153)")
+    @DisplayName("Header: tags=a, tags=b — generated dispatch binds both values, at parity with reflective")
     void arrayHeaderParam_generatedAndReflective_bindAllValues() throws Exception {
         ResourceMethodMeta.ParamMeta reflectiveMeta = new JaxRsRouteRegistrar()
                 .scanResource(new StringArrayHeaderBindReflective())
@@ -1292,7 +1291,7 @@ class GeneratedArrayParamParityTest {
      *
      * @param source the source whose map should carry the values ({@code QUERY} or {@code HEADER})
      * @param name   the parameter name
-     * @param values the submitted values, in submission order (no ordering guarantee is asserted, F8)
+     * @param values the submitted values, in submission order (no ordering guarantee is asserted)
      * @return a {@link BoundRequest} stub exposing exactly one populated map
      */
     private static BoundRequest multiValueBoundRequest(
@@ -1333,12 +1332,12 @@ class GeneratedArrayParamParityTest {
     }
 
     /**
-     * Mirrors {@code ParameterExtractor}'s {@code componentType()}-gated multiplicity rule (decision
-     * 1) for a repeated string-valued source: when {@code meta.componentType() != null}, every
+     * Mirrors {@code ParameterExtractor}'s {@code componentType()}-gated multiplicity rule
+     * for a repeated string-valued source: when {@code meta.componentType() != null}, every
      * submitted value is read into a {@code String[]}; otherwise (today's generated behavior for
-     * every scalar array shape) only the first submitted value is read — the precise pre-fix
-     * defect the F1 Amendment describes ("exactly one value bound", never "the first value" as an
-     * ordering claim, F8). {@code ParameterExtractor} itself is package-private in
+     * every scalar array shape) only the first submitted value is read — the precise previous
+     * defect ("exactly one value bound", never "the first value" as an
+     * ordering claim). {@code ParameterExtractor} itself is package-private in
      * {@code vertique-rest-jaxrs} and unreachable from this module; its actual binding behavior for
      * a non-null {@code componentType()} is separately proven correct by
      * {@code SetAndArrayQueryParamBindTest}.
@@ -1426,7 +1425,7 @@ class GeneratedArrayParamParityTest {
     }
 
     /**
-     * Asserts that {@code actual} is a {@code String[]} whose CONTENT (never order — F8, decision 7)
+     * Asserts that {@code actual} is a {@code String[]} whose CONTENT (never order)
      * equals {@code expected}.
      *
      * @param expected the expected element set
@@ -1559,14 +1558,14 @@ class GeneratedArrayParamParityTest {
                 "resource method must receive the exact byte[] (observed via its returned length)");
     }
 
-    // --- Test 5: startup converter-probe agreement for an array-typed @PathParam (F1) ---
+    // --- Test 5: startup converter-probe agreement for an array-typed @PathParam ---
 
     /**
      * Proves the two paths agree on <em>rejection</em>, not merely on metadata: an array-typed
      * {@code @PathParam} is unbindable, and the startup converter probe must refuse it whichever path
      * produced the {@link ResourceMethodMeta.ParamMeta}.
      *
-     * <p>This is the second half of the F1 defect. With a generated
+     * <p>This is the second half of the array-parameter defect. With a generated
      * {@code componentType() == String}, {@code JaxRsRouteRegistrar}'s probe substitutes the
      * <em>element</em> type (see
      * {@code ConversionContexts.forDescriptorConvertibleType}: a non-null {@code componentType}
@@ -1601,7 +1600,7 @@ class GeneratedArrayParamParityTest {
      * @throws Exception if compilation or any reflection step fails
      */
     @Test
-    @DisplayName("@PathParam String[] — the startup converter probe rejects it on BOTH paths (F1)")
+    @DisplayName("@PathParam String[] — the startup converter probe rejects it on BOTH paths")
     void pathArrayParam_startupConverterProbe_rejectsOnBothPaths() throws Exception {
         ResourceMethodMeta.ParamMeta reflective = new JaxRsRouteRegistrar()
                 .scanResource(new StringArrayPathReflective())
@@ -1622,7 +1621,7 @@ class GeneratedArrayParamParityTest {
                 startupConverterProbeResolves(reflective),
                 "reflective (oracle): no converter can satisfy an array-typed @PathParam, so the probe must fail");
 
-        // The assertion under test: the generated path must reach the SAME verdict. Before the F1 fix
+        // The assertion under test: the generated path must reach the SAME verdict. Previously
         // the generated componentType() was String, so the probe resolved the built-in String
         // converter and the route mounted — diverging from its reflective twin.
         assertFalse(
@@ -1641,7 +1640,7 @@ class GeneratedArrayParamParityTest {
      *
      * <p>The resolver is the built-ins-only chain — no application {@code ParamConverterBinding}s and
      * no JAX-RS {@code ParamConverterProvider}s — matching a default deployment, which is the
-     * configuration in which the F1 divergence was observed.
+     * configuration in which the divergence was observed.
      *
      * @param meta the parameter metadata produced by either dispatch path
      * @return {@code true} when a converter is resolvable (the registrar would mount the route),

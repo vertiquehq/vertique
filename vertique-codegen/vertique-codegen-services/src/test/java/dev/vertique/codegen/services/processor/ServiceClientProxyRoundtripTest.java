@@ -62,7 +62,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 
 /**
- * CG-015 §6 S1 direct-instantiation proof for the generated {@code {Contract}_ServiceClientProxy}
+ * Direct-instantiation proof for the generated {@code {Contract}_ServiceClientProxy}
  * companion.
  *
  * <p>Compiles fixture {@code @ServiceContract} interfaces (no impl classes — the fixtures are
@@ -77,20 +77,20 @@ import org.mockito.ArgumentCaptor;
  * {@code ServiceClientProxyParityTest} (this module) and {@code ServiceClientFactoryCompanionTest}
  * ({@code vertique-services}).
  *
- * <p><strong>D1 falsifiability tests</strong> ({@link #runtimeOneWayContradictionWins()} and
+ * <p><strong>Falsifiability tests</strong> ({@link #runtimeOneWayContradictionWins()} and
  * {@link #runtimeParamIndexContradictionWins()}) hand-build a {@link ContractEntry} whose runtime
- * {@link ServiceMethodMeta} deliberately contradicts the fixture's source declaration. Per CG-015
- * D1, {@code oneWay} and payload/SecurityContext parameter indices are runtime-owned (read from
+ * {@link ServiceMethodMeta} deliberately contradicts the fixture's source declaration. The
+ * {@code oneWay} flag and payload/SecurityContext parameter indices are runtime-owned (read from
  * {@code entry.operations()} at construction), not baked from the source signature at APT time — an
  * emitter that bakes either at compile time fails these tests.
  *
- * <p>The mismatch-message protocol (CG-015 §4.2) is pinned by {@link
+ * <p>The mismatch-message protocol is pinned by {@link
  * #ctorFailsFastOnMissingOperation()}: the generated constructor's message for a baked operation id
  * absent from {@code entry.operations()} must start with the literal
  * {@code "Service client contract mismatch: "} and name both the contract and the operation.
  */
 @ExtendWith(VertxExtension.class)
-@DisplayName("Service client proxy — construction and dispatch roundtrip (CG-015 §6 S1)")
+@DisplayName("Service client proxy — construction and dispatch roundtrip")
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class ServiceClientProxyRoundtripTest {
 
@@ -188,7 +188,7 @@ class ServiceClientProxyRoundtripTest {
     /**
      * Security context first, payload second — a legal contract shape whose source classification
      * (index 0 {@code DISPATCH_CONTEXT}, index 1 {@code PAYLOAD}) is the mirror image of the runtime
-     * metadata the D1 index-contradiction test hand-builds for it.
+     * metadata the index-contradiction test hand-builds for it.
      */
     private static final JavaFileObject TWO_PARAM_GREETER = SourceFiles.inline("com.example.TwoParamGreeter", """
             package com.example;
@@ -246,7 +246,7 @@ class ServiceClientProxyRoundtripTest {
     }
 
     @Test
-    @DisplayName("ambient SecurityContext suppresses the caller-supplied SC override (FR-CTX-063)")
+    @DisplayName("ambient SecurityContext suppresses the caller-supplied SC override")
     void ambientSecurityContextSuppressesCallerOverride(Vertx vertx, VertxTestContext ctx) throws Throwable {
         Class<?> scGreeterClass = RESULT.loadGeneratedClass("com.example.ScGreeter");
         Class<?> proxyClass = RESULT.loadGeneratedClass("com.example.ScGreeter_ServiceClientProxy");
@@ -442,7 +442,7 @@ class ServiceClientProxyRoundtripTest {
     }
 
     @Test
-    @DisplayName("runtime oneWay=true wins over the source method lacking @OneWay (D1 falsifiability)")
+    @DisplayName("runtime oneWay=true wins over the source method lacking @OneWay")
     void runtimeOneWayContradictionWins() throws Exception {
         Class<?> greeterClass = RESULT.loadGeneratedClass("com.example.Greeter");
         Class<?> proxyClass = RESULT.loadGeneratedClass("com.example.Greeter_ServiceClientProxy");
@@ -492,7 +492,7 @@ class ServiceClientProxyRoundtripTest {
      * @throws Exception if the generated proxy cannot be loaded, constructed, or invoked
      */
     @Test
-    @DisplayName("runtime PAYLOAD param index wins over the source declaration order (D1 falsifiability)")
+    @DisplayName("runtime PAYLOAD param index wins over the source declaration order")
     void runtimeParamIndexContradictionWins() throws Exception {
         Class<?> twoParamGreeterClass = RESULT.loadGeneratedClass("com.example.TwoParamGreeter");
         Class<?> proxyClass = RESULT.loadGeneratedClass("com.example.TwoParamGreeter_ServiceClientProxy");

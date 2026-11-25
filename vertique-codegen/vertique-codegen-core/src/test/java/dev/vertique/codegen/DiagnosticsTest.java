@@ -21,7 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * Unit tests for {@link Diagnostics}.
  *
- * <p>The static formatter methods are externally-stable contracts for CG-002+ — their exact
+ * <p>The static formatter methods are externally-stable contracts for the processors — their exact
  * string outputs are tested here and must not change without a deliberate API decision.
  */
 @ExtendWith(MockitoExtension.class)
@@ -113,7 +113,7 @@ class DiagnosticsTest {
                 Diagnostics.pathParamMissingPlaceholder("id", "myMethod"));
     }
 
-    // --- T003 shared selector and proxyability formatters (stable contract) ---
+    // --- shared selector and proxyability formatters (stable contract) ---
 
     @Test
     @DisplayName("selectorPathBlank formats the family-prefixed diagnostic")
@@ -201,7 +201,7 @@ class DiagnosticsTest {
     }
 
     @Test
-    @DisplayName("resilience formatters preserve the T011 diagnostic contract")
+    @DisplayName("resilience formatters preserve the diagnostic contract")
     void resilienceFormatters_exactStrings() {
         assertEquals(
                 "resilience declarations on a concrete class require @Resilient on the same method",
@@ -238,7 +238,7 @@ class DiagnosticsTest {
                 Diagnostics.bulkheadQueueTimeoutMs());
     }
 
-    // --- CG-009 JAX-RS formatters (stable contract) ---
+    // --- JAX-RS formatters (stable contract) ---
 
     @Test
     void securityAnnotationConflict_exactString() {
@@ -277,7 +277,7 @@ class DiagnosticsTest {
                 Diagnostics.multipleHttpVerbs("handle", java.util.List.of("@GET", "@POST")));
     }
 
-    // --- CG-012 Track B delayed-job formatters (stable contract) ---
+    // --- delayed-job formatters (stable contract) ---
 
     @Test
     void delayedJobMustBeInterface_exactString() {
@@ -329,7 +329,7 @@ class DiagnosticsTest {
                 Diagnostics.delayedJobContractDeclaresMethod("com.example.MyJob", "doExtra"));
     }
 
-    // --- CG-012 Track A Kafka consumer formatters (stable contract) ---
+    // --- Kafka consumer formatters (stable contract) ---
 
     @Test
     void kafkaHandlerPayloadArity_exactString() {
@@ -406,7 +406,7 @@ class DiagnosticsTest {
                 Diagnostics.kafkaHandlerPayloadNotFirst("OrderRouter", "onOrder"));
     }
 
-    // --- CG-012 Track C workflow contract formatters (stable contract; mirror WorkflowProxyValidator) ---
+    // --- workflow contract formatters (stable contract; mirror WorkflowProxyValidator) ---
 
     @Test
     void workflowContractMustBeInterface_exactString() {
@@ -592,7 +592,7 @@ class DiagnosticsTest {
                         "com.example.OrderWorkflow", "start(com.example.StartOrder)"));
     }
 
-    // --- CG-013 Events W2/W3 formatters (stable contract) ---
+    // --- events observer accessibility and payload formatters (stable contract) ---
 
     @Test
     void observerMustBeAccessible_exactString() {
@@ -610,7 +610,7 @@ class DiagnosticsTest {
                 Diagnostics.eventPayloadMustNotBeParameterized("Box<String>"));
     }
 
-    // --- CG-013 Events observer-signature formatter (stable contract) ---
+    // --- events observer-signature formatter (stable contract) ---
 
     @Test
     void observerMustReturnVoid_exactString() {
@@ -636,7 +636,7 @@ class DiagnosticsTest {
                 Diagnostics.observerMustNotObserveObject("com.example.MyObserver.onAny"));
     }
 
-    // --- CG-013 AOP intercepted-return formatters (stable contract) ---
+    // --- AOP intercepted-return formatters (stable contract) ---
 
     @Test
     void aopBeanMustBePublic_exactString() {

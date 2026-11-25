@@ -10,8 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies that {@link EventsProcessor} rejects parameterized (generic) event payload types
- * (W3 — generic event payload).
+ * Verifies that {@link EventsProcessor} rejects parameterized (generic) event payload types.
  *
  * <p>The v1 event inventory records event types as erased {@code TypeElement} references.
  * A parameterized payload such as {@code Event<Box<String>>} would be recorded as {@code Box}
@@ -27,9 +26,8 @@ import org.junit.jupiter.api.Test;
  *   <li>the {@code Event<T>} type argument in a constructor {@code @Inject} scan.</li>
  * </ul>
  *
- * <p><strong>RED</strong>: before the fix the processor silently records the erased type and
- * emits a wrong binding. After the fix, the compilation fails with a diagnostic containing
- * {@code "parameterized"}.
+ * <p>The compilation fails with a diagnostic containing {@code "parameterized"} instead of the
+ * processor silently recording the erased type and emitting a wrong binding.
  */
 class ParameterizedEventPayloadIsCompileErrorTest {
 

@@ -29,8 +29,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end proof for GitHub issue #162 (rest-jaxrs codegen literal-backed parameter annotations,
- * slice 6): a JAX-RS {@code ParamConverterProvider} that inspects <em>parameter annotations</em> to
+ * End-to-end proof for literal-backed parameter annotations in the JAX-RS codegen: a JAX-RS
+ * {@code ParamConverterProvider} that inspects <em>parameter annotations</em> to
  * decide whether it applies now works identically on codegen-generated routes — both the
  * per-request execution-plan path ({@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter}) and
  * the startup-descriptor path ({@link dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter}) — as
@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Test;
  * to the reflective scan, so the fallback genuinely surfaces the full annotation (correct member
  * value) — not merely a bare-presence signal.
  *
- * <p>Before slices 1-5 of this issue, {@code ExecutionPlanEmitter} emitted a {@code null} parameter
+ * <p>Previously, {@code ExecutionPlanEmitter} emitted a {@code null} parameter
  * annotations array (the provider would never even be consulted meaningfully) and
  * {@code JaxRsDescriptorEmitter} emitted a live reflective read (functionally present, but not
  * literal-backed). Both paths now emit a compile-time literal-backed {@code ParameterMetadata}, so
@@ -373,8 +373,8 @@ class AnnotationSensitiveParamConverterCodegenTest {
         // Fallback-exercise proof: the codegen ParamMeta's annotationsLazy() must include the
         // unsupported-member annotation. Since AnnotationLiteralEmitter cannot render it as a literal,
         // its presence here is proof the reflective fallback (GeneratedJaxRsReflectiveAnnotations)
-        // supplied it. Against a hypothetical no-fallback state this array would omit the annotation
-        // (RED), the provider below would decline, and the conversion would fail to resolve.
+        // supplied it. Against a hypothetical no-fallback state this array would omit the annotation,
+        // the provider below would decline, and the conversion would fail to resolve.
         boolean fallbackSuppliedAnnotation = false;
         for (Annotation a : paramMeta.annotationsLazy().get()) {
             if (a instanceof TestUnsupportedMemberMarker) {

@@ -11,16 +11,13 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the inventory scan unwraps the standard Dagger wrappers {@code Provider<Event<T>>} and
- * {@code Lazy<Event<T>>} at constructor {@code @Inject} sites (plan §3 / §3a frozen decision: the
+ * {@code Lazy<Event<T>>} at constructor {@code @Inject} sites (the
  * inventory includes {@code Event<T>} constructor-injection type args <em>incl. Provider/Lazy
  * wrappers</em>).
  *
  * <p>Fixture: a single bean injects {@code Provider<Event<X>>} and {@code Lazy<Event<Y>>} through its
  * {@code @Inject} constructor (neither {@code X} nor {@code Y} is observed). Both {@code X} and
  * {@code Y} must enter the inventory and receive a generated publisher + binding.
- *
- * <p><strong>Red:</strong> the slice-3.2 scaffold {@link EventsProcessor} is a no-op, so neither
- * {@code X$Event} nor {@code Y$Event} is generated.
  */
 class ProviderAndLazyEventInjectionDiscoveredTest {
 

@@ -21,7 +21,7 @@ import java.util.List;
  *
  * <p>Used by {@link RegistrationBenchmark} to measure the generated-descriptor fast path.
  * For each of the 8 {@link BenchResource} methods, one {@link ResourceMethodMeta} entry is
- * returned without any reflective annotation walk — simulating the CG-010 generated path where
+ * returned without any reflective annotation walk — simulating the generated path where
  * all metadata is known at compile time.
  */
 public final class BenchResource_JaxRsDescriptor implements GeneratedJaxRsResourceDescriptor<BenchResource> {

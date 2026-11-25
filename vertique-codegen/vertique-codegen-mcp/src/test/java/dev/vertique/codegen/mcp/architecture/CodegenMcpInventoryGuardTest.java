@@ -12,11 +12,10 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 /**
- * Progressive public-surface guard for {@code vertique-codegen-mcp} (T008, inherited from T006's
- * frozen per-module mechanism).
+ * Progressive public-surface guard for {@code vertique-codegen-mcp}.
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
+ * full generic signature in both directions: recorded and compiled sets must be
  * exactly equal. This guard scans only this module's own compiled
  * {@code target/classes} output; it does not — and cannot from this module — measure the generated
  * source surface {@code vertique-codegen-mcp} emits into a downstream application's compilation,

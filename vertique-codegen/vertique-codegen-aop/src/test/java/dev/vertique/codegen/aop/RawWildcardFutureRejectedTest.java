@@ -10,10 +10,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Codex R3-2: a raw or wildcard {@code io.vertx.core.Future} intercepted return
- * is mishandled by {@link AopProxyEmitter}, and the processor does not reject it.
+ * Verifies that a raw or wildcard {@code io.vertx.core.Future} intercepted return, which
+ * {@link AopProxyEmitter} cannot handle safely, is rejected by the processor.
  *
- * <p>Two distinct failure modes motivate the explicit-rejection decision (reject what we don't safely
+ * <p>Two distinct failure modes motivate explicit rejection (reject what we don't safely
  * support, LOUDLY):
  * <ul>
  *   <li><strong>Raw {@code Future}</strong> — {@code CodegenContext.unwrapFuture} returns the original
@@ -26,12 +26,10 @@ import org.junit.jupiter.api.Test;
  *       diagnostic.
  * </ul>
  *
- * <p>The intended v1 behavior is for {@link AopProcessor} to REJECT both with a clear
- * {@code Diagnostics.error} mentioning the unsupported raw/wildcard {@code Future} return.
- *
- * <p><strong>Red now:</strong> the raw case compiles successfully (mis-metered as sync, so no error
- * diagnostic) and the wildcard case fails only with a generated-source cast error — neither emits the
- * clear rejection diagnostic these tests assert on, so both assertions fail.
+ * <p>{@link AopProcessor} must reject both with a clear {@code Diagnostics.error} mentioning the
+ * unsupported raw/wildcard {@code Future} return. Without that, the raw case compiles successfully
+ * (mis-metered as sync, so no error diagnostic) and the wildcard case fails only with a
+ * generated-source cast error.
  */
 class RawWildcardFutureRejectedTest {
 

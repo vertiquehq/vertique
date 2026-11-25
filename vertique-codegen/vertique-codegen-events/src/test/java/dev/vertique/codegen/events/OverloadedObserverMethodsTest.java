@@ -10,16 +10,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies that a bean with two {@code @Observes} overloads on the same method name (P3-W1) produces
+ * Verifies that a bean with two {@code @Observes} overloads on the same method name produces
  * distinct {@code @Provides @IntoSet ObserverRegistration} method names in {@code GeneratedEventsModule}.
  *
- * <p>Before the fix, both overloads mapped to {@code provideMyBeanOnEventObserverRegistration},
- * causing a duplicate method name in the generated module source and an uncompilable output.
- *
- * <p><strong>Red failure mode:</strong> the generated {@code GeneratedEventsModule} contains two
- * methods with the same name, so the source itself does not compile (or the harness would surface
- * the collision). After the fix, the two methods must have distinct names (event-simple-name +
- * ordinal disambiguator) and the compilation must succeed.
+ * <p>Mapping both overloads to {@code provideMyBeanOnEventObserverRegistration} would put two
+ * methods with the same name in the generated module source and make it uncompilable. The two
+ * methods must have distinct names (event-simple-name + ordinal disambiguator) and the compilation
+ * must succeed.
  */
 class OverloadedObserverMethodsTest {
 

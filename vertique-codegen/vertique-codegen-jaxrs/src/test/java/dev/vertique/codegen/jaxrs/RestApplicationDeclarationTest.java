@@ -45,7 +45,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * APT compilation tests for T022's {@code @RestApplication} declaration checks: declaration form
+ * APT compilation tests for the {@code @RestApplication} declaration checks: declaration form
  * (an interface only), the name grammar and reserved names, the application path grammar, listed
  * resources, exactly-one-of membership and discovery-alone, opting out, and the accessibility rule
  * over the declaring interface and every listed resource class.
@@ -53,17 +53,17 @@ import org.opentest4j.AssertionFailedError;
  * <p>Each test compiles one or more small fixtures through {@link JaxRsPipelineProcessor} via
  * {@link ProcessorTestHarness} and asserts the compiler diagnostics and/or the generated
  * {@code GeneratedJaxRsResourcesModule} source, mirroring {@link JaxRsApplicationRegistrationEmitterTest}'s
- * and {@link ApplicationPathGrammarTest}'s fixture and assertion style. TP-001 and TP-010 also run
+ * and {@link ApplicationPathGrammarTest}'s fixture and assertion style. The declaration-form and accessibility sections also run
  * a {@link GeneratedModuleRecorder} beside the pipeline, to read a failed compilation's generated
  * module, which the harness cannot return once compilation fails. {@code PathResource} and
- * {@code Api} fixtures follow the T022 test-proof preamble: a concrete class with {@code @Path("/p")},
+ * {@code Api} fixtures are: a concrete class with {@code @Path("/p")},
  * an {@code @Inject} constructor, and one {@code @GET} method; and
  * {@code @RestApplication(name = "api", path = "/api", resources = PathResource.class) interface Api {}},
  * unless a row states otherwise.
  */
 class RestApplicationDeclarationTest {
 
-    /** {@code [a-z0-9][a-z0-9_-]{0,63}} — the application name grammar (FR-022). */
+    /** {@code [a-z0-9][a-z0-9_-]{0,63}} — the application name grammar. */
     private static final String GRAMMAR_PHRASE = "[a-z0-9][a-z0-9_-]{0,63}";
 
     private static final String RESERVED_PHRASE = "reserved";
@@ -104,7 +104,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-001 — @RestApplication on anything but an interface fails compilation naming the type
+    // @RestApplication on anything but an interface fails compilation naming the type
     // -----------------------------------------------------------------------------------------
 
     private record NonInterfaceCase(
@@ -211,7 +211,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-002 — application names follow [a-z0-9][a-z0-9_-]{0,63}
+    // Application names follow [a-z0-9][a-z0-9_-]{0,63}
     // -----------------------------------------------------------------------------------------
 
     private enum NameOutcome {
@@ -298,7 +298,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-003 — two declarations with one name in one unit fail naming both
+    // Two declarations with one name in one unit fail naming both
     // -----------------------------------------------------------------------------------------
 
     private static final String FIRST_APP_PKG = "dev.vertique.test.declaration.duplicatename.first";
@@ -403,7 +403,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-004 — application paths are normalized and rest-024's rejected paths fail naming the rule
+    // Application paths are normalized and rejected paths fail naming the rule
     // -----------------------------------------------------------------------------------------
 
     private enum PathOutcome {
@@ -456,7 +456,7 @@ class RestApplicationDeclarationTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("pathCases")
-    @DisplayName("application paths are normalized and rest-024's rejected paths fail naming the rule")
+    @DisplayName("application paths are normalized and rejected paths fail naming the rule")
     void applicationPathsFollowTheApplicationPathGrammar(String label, PathCase testCase, String packageName) {
         String moduleFqn = packageName + ".GeneratedJaxRsResourcesModule";
         String apiFqn = packageName + ".Api";
@@ -506,7 +506,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-005 — listed resources must be concrete @Path resource classes, listed once
+    // Listed resources must be concrete @Path resource classes, listed once
     // -----------------------------------------------------------------------------------------
 
     @Test
@@ -729,7 +729,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-006 — membership is exactly one form, and discovery stands alone in its unit
+    // Membership is exactly one form, and discovery stands alone in its unit
     // -----------------------------------------------------------------------------------------
 
     @Test
@@ -912,7 +912,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-008 — opted-out declarations are not registered and are named in one warning
+    // Opted-out declarations are not registered and are named in one warning
     // -----------------------------------------------------------------------------------------
 
     @TestFactory
@@ -998,7 +998,7 @@ class RestApplicationDeclarationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-010 — the declaring interface and listed resources must be accessible from the module
+    // The declaring interface and listed resources must be accessible from the module
     // -----------------------------------------------------------------------------------------
 
     private static final String ACC_MODULE = "acc.GeneratedJaxRsResourcesModule";
@@ -1301,8 +1301,8 @@ class RestApplicationDeclarationTest {
     }
 
     /**
-     * Asserts that no ERROR diagnostic is reported inside {@code moduleFqn}'s generated source,
-     * TP-010's "no error inside the generated module's source" clause.
+     * Asserts that no ERROR diagnostic is reported inside {@code moduleFqn}'s generated source
+     * (the accessibility rule's "no error inside the generated module's source" clause).
      *
      * <p>After a failed compilation this proves nothing about what the module contains: javac does
      * not attribute any source once an error exists, so a registration the pipeline should not have

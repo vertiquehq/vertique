@@ -21,13 +21,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice-2.1 RED tests for reflection-free <em>parameter-level</em> {@code findAnnotation}/
- * {@code hasAnnotation} on the generated proxy's nested {@code ParameterMetadataImpl} (FR-015-07).
+ * Verifies reflection-free <em>parameter-level</em> {@code findAnnotation}/
+ * {@code hasAnnotation} on the generated proxy's nested {@code ParameterMetadataImpl}.
  *
  * <p>The bean's intercepted method carries an aspect trigger ({@code @TestTimed}) so the proxy is
  * generated, and its <em>parameter</em> carries a runtime-retained, {@code PARAMETER}-targeted
- * marker ({@link TestParamMarker}). The slice-2.1 GREEN step must, for each {@code @Retention(RUNTIME)}
- * parameter annotation, generate a {@code <Ann>$AopLiteral} and have the nested
+ * marker ({@link TestParamMarker}). For each {@code @Retention(RUNTIME)}
+ * parameter annotation, the processor must generate a {@code <Ann>$AopLiteral} and have the nested
  * {@code ParameterMetadataImpl}'s {@code findAnnotation(Class)} return the matching literal by
  * {@code annotationType()} — with no call to {@code Parameter.getAnnotation} /
  * {@code Method.getParameterAnnotations} / {@code Class.getDeclaredMethod} reflection. This mirrors
@@ -43,18 +43,18 @@ import org.junit.jupiter.api.Test;
  * so the source-level assertions below read the {@code Greeter$AopProxy} source (the same pattern as
  * {@link ArrayAttributeLiteralCompilesTest} and {@link FindAnnotationReflectionFreeTest}).
  *
- * <p><strong>Expected RED behavior:</strong> the current {@code MetadataEmitter} emits the nested
- * {@code ParameterMetadataImpl}'s {@code findAnnotation} as an {@code Optional.<A>empty()} stub and
- * {@code hasAnnotation} as a {@code false} stub, and never materializes parameter annotations into
- * literals — so no {@code TestParamMarker} literal is referenced anywhere in the proxy. Both content
- * assertions therefore fail until the parameter-level literal-backed lookup lands.
+ * <p>The content assertions fail if the nested {@code ParameterMetadataImpl}'s {@code findAnnotation}
+ * is an {@code Optional.<A>empty()} stub and {@code hasAnnotation} a {@code false} stub, or if
+ * parameter annotations are never materialized into literals so that no {@code TestParamMarker}
+ * literal is referenced anywhere in the proxy.
  *
- * <p>{@link #annotationsLazyIsConsistentWithFindAnnotation()} covers a distinct gap: the nested
+ * <p>{@link #annotationsLazyIsConsistentWithFindAnnotation()} covers a distinct case: the nested
  * {@code ParameterMetadataImpl} stores the real per-parameter {@code Annotation[]} in a field (used
- * by {@code findAnnotation}/{@code hasAnnotation}), but until the {@code annotationsLazy()} override
- * lands it inherits the {@code ParameterMetadata} SPI default ({@code () -> new Annotation[0]}) — so
- * {@code findAnnotation} sees the marker while {@code annotationsLazy()} reports none. This test
- * loads and instantiates the generated {@code ParameterMetadataImpl} to prove the two views agree.
+ * by {@code findAnnotation}/{@code hasAnnotation}), so it must override {@code annotationsLazy()}
+ * rather than inherit the {@code ParameterMetadata} SPI default ({@code () -> new Annotation[0]});
+ * otherwise {@code findAnnotation} sees the marker while {@code annotationsLazy()} reports none. This
+ * test loads and instantiates the generated {@code ParameterMetadataImpl} to prove the two views
+ * agree.
  */
 class ParameterAnnotationLiteralTest {
 
@@ -107,8 +107,8 @@ class ParameterAnnotationLiteralTest {
 
         // The reflection-free parameter-level lookup must reference the materialized TestParamMarker
         // literal — either the generated TestParamMarker$AopLiteral type or a TestParamMarker-typed
-        // literal constant the ParameterMetadataImpl returns. The current stub returns
-        // Optional.<A>empty() and references no parameter-marker literal at all.
+        // literal constant the ParameterMetadataImpl returns. A stub would return
+        // Optional.<A>empty() and reference no parameter-marker literal at all.
         boolean referencesParamMarkerLiteral =
                 proxy.contains("TestParamMarker$AopLiteral") || proxy.contains("TestParamMarker.class");
         assertTrue(

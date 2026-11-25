@@ -27,7 +27,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * CG-005 acceptance criterion #2: roundtrip test.
+ * Roundtrip test.
  *
  * <p>Compiles a contract with class-level resilience annotations, a method-level {@code @Timeout}
  * override, and an interceptor-visible class-level marker annotation against
@@ -356,7 +356,7 @@ class ServiceContractProcessorRoundtripTest {
         Class<?> implClass = result.loadGeneratedClass("com.example.BillingServiceImpl");
         Class<?> contributorClass = result.loadGeneratedClass("com.example.BillingService_ContractContributor");
 
-        // Instantiate the impl and wrap it in a Provider proxy (CG-011 W4: constructor now takes
+        // Instantiate the impl and wrap it in a Provider proxy (the constructor takes
         // Provider<Impl> for lazy instantiation, not the impl directly).
         Object implInstance = implClass.getDeclaredConstructor().newInstance();
         Object implProvider = buildProvider(implInstance, implClass.getClassLoader());
@@ -597,8 +597,8 @@ class ServiceContractProcessorRoundtripTest {
     }
 
     /**
-     * Finds the single-parameter constructor on a generated contributor class. With CG-011 W4
-     * the constructor accepts one {@code Provider<Impl>} rather than {@code Impl} directly.
+     * Finds the single-parameter constructor on a generated contributor class. The
+     * constructor accepts one {@code Provider<Impl>} rather than {@code Impl} directly.
      *
      * @param contributorClass the generated contributor class to inspect
      * @return the single-parameter constructor, made accessible

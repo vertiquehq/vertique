@@ -20,11 +20,9 @@ import org.junit.jupiter.api.Test;
  * source. The processor must catch this condition up front and emit a clear diagnostic so the build
  * fails with the AOP message rather than a confusing generated-source {@code javac} error.
  *
- * <p><strong>RED now:</strong> the current processor does not check bean visibility — a
- * package-private bean generates a proxy and a {@code @Binds} without complaint. The
- * {@code nonPublicBeanIsCompileError} test will fail because no diagnostic containing
- * {@code "must be public"} is emitted. The positive case ({@code publicBeanCompiles}) already
- * passes.
+ * <p>The {@code nonPublicBeanIsCompileError} test expects a diagnostic containing
+ * {@code "must be public"} for a package-private bean. The positive case
+ * ({@code publicBeanCompiles}) shows that a public bean still generates a proxy normally.
  */
 class NonPublicBeanIsCompileErrorTest {
 
@@ -77,9 +75,8 @@ class NonPublicBeanIsCompileErrorTest {
     void nonPublicBeanIsCompileError() {
         ProcessorTestHarness.run(new AopProcessor(), packagePrivateBean())
                 .assertFailed()
-                // "must be public" is the distinguishing substring that only the new diagnostic
-                // carries — absent from any current generated-source javac error. Genuinely RED
-                // until the visibility check is added to isNotProxyable.
+                // "must be public" is the distinguishing substring that only the visibility
+                // diagnostic carries — absent from any generated-source javac error.
                 .assertErrorMessage("must be public");
     }
 

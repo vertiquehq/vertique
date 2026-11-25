@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that {@link ServiceContractProcessor} emits a compiler warning when an impl is annotated
- * with both {@code @NoAutoWire} and {@code @ConditionalOnProperty} (CG-011 W4 scanner extension).
+ * with both {@code @NoAutoWire} and {@code @ConditionalOnProperty}.
  *
  * <p>The combination is a no-op: {@code @NoAutoWire} causes the scanner to skip the impl entirely,
  * so the condition is never evaluated. The warning surfaces the silent misconfiguration so that

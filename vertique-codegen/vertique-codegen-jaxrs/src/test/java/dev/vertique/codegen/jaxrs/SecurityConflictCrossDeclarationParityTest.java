@@ -20,12 +20,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Parity proof for fail-closed cross-declaration security conflicts (issue #634 / OWASP A01 /
+ * Parity proof for fail-closed cross-declaration security conflicts (OWASP A01 /
  * CWE-863): when security annotations disagree across declarations of the same method, both the
  * reflective runtime and the annotation processor must reject — nearer-declaration-wins must not
  * emit a served policy on the codegen path.
  *
- * <p>Covers both directions named by the issue: a class override and an interface default, plus
+ * <p>Covers both directions: a class override and an interface default, plus
  * disagreeing {@code @RolesAllowed} values across two super-interfaces.
  */
 class SecurityConflictCrossDeclarationParityTest {

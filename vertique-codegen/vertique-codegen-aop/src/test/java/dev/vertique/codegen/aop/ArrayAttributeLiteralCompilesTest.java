@@ -13,29 +13,25 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for Bug F1: {@code AnnotationLiteralEmitter.valueLiteral} falls through array
- * annotation attributes to {@code String.valueOf(raw)}. For a {@code String[]} member the raw value
- * is a {@code List<? extends AnnotationValue>} whose {@code toString()} renders {@code ["k", "v"]} —
- * not a valid Java array initializer — so the generated {@code <Ann>$AopLiteral} constructor invocation
- * does not compile.
+ * An annotation with a {@code String[]} member yields a compilable literal: {@code
+ * AnnotationLiteralEmitter} renders the array attribute as a valid Java array initializer rather
+ * than the {@code toString()} of the raw {@code List<? extends AnnotationValue>} (which would print
+ * {@code ["k", "v"]}), so the generated {@code <Ann>$AopLiteral} constructor invocation compiles.
  *
  * <p>The real {@code @Timed} aspect's {@code extraTags()} member is a {@code String[]}, so this is
- * the production-relevant shape that the hand-written-proxy {@code @Timed} runtime test never
- * exercised through the real emitter.
+ * the production-relevant shape that a hand-written-proxy {@code @Timed} runtime test does not
+ * exercise through the real emitter.
  *
- * <p><strong>Expected RED behavior:</strong> the overall compilation FAILS (the emitted
- * {@code TestTagged$AopLiteral} constructor args are uncompilable), so {@code assertSuccess()} throws,
- * and the assertion on a valid {@code new String[]{...}} / {@code {...}} array initializer cannot be
- * satisfied. Once F1 is fixed, the emitter must produce a real array initializer and the
- * compilation must succeed.
+ * <p>The test asserts the overall compilation succeeds and that the emitted constructor arguments
+ * contain a valid {@code new String[]{...}} / {@code {...}} array initializer.
  */
 class ArrayAttributeLiteralCompilesTest {
 
-    // The String[] array initializer (the F1 fix) is rendered by AnnotationLiteralEmitter.constructorArgs
+    // The String[] array initializer is rendered by AnnotationLiteralEmitter.constructorArgs
     // at the literal's *construction site* — i.e. inside the generated AopProxy, where the proxy holds a
     // `static final <Ann> ..._LITERAL = new TestTagged$AopLiteral(new String[]{...})` constant. The literal
     // class itself only stores `this.tags = tags`; the array initializer lives in the proxy. So the proof
-    // of F1 (a valid array initializer that compiles) is read from the proxy source below.
+    // (a valid array initializer that compiles) is read from the proxy source below.
     private static final String TAGGED_PROXY_FQN = "com.example.Tagged$AopProxy";
 
     private static final String DEFAULT_TAGGED_PROXY_FQN = "com.example.DefaultTagged$AopProxy";
