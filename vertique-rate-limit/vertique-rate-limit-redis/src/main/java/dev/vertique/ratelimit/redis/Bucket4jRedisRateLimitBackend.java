@@ -31,7 +31,8 @@ import org.slf4j.LoggerFactory;
 /**
  * CLUSTERED {@link RateLimitBackend}: Bucket4j's Vert.x Redis CAS integration over one shared
  * {@code Redis} client, with Vertique owning the operation deadline, the no-retry policy, and TTL
- * maintenance that {@code bucket4j_jdk17-vertx:8.19.0}'s minimal builder surface has no hook for.
+ * maintenance, none of which uses the request-timeout, retry, expiration or client-clock hooks that
+ * {@code bucket4j_jdk17-vertx:8.22.0}'s builder offers.
  *
  * <p>Package-private by design — reached only through {@link #redis}, this class's only
  * production caller ({@code dev.vertique.ratelimit.redis.RateLimitRedisModule}). No Bucket4j or
@@ -69,9 +70,9 @@ final class Bucket4jRedisRateLimitBackend implements RateLimitBackend {
     /**
      * Builds the CLUSTERED backend from the shared Redis client (the exact, frozen construction
      * chain): {@code
-     * Bucket4jVertx.casBasedBuilder(sharedRedis).keyMapper(Mapper.STRING).build().asAsync()}. No
-     * timeout/retry/TTL/clock hook exists on this builder in 8.19.0 — the deadline, no-retry
-     * policy, and TTL maintenance below are all Vertique-owned.
+     * Bucket4jVertx.casBasedBuilder(sharedRedis).keyMapper(Mapper.STRING).build().asAsync()}. The
+     * builder's timeout, retry, TTL and clock hooks (8.22.0) are deliberately left unset — the
+     * deadline, no-retry policy, and TTL maintenance below are all Vertique-owned.
      *
      * @param sharedRedis {@code vertique-redis-core}'s shared client for the configured connection
      *     profile; both the CAS engine and the {@code PEXPIRE} writer issue commands on this same

@@ -30,7 +30,7 @@ import org.testcontainers.utility.DockerImageName;
  * TP-004: the same shared conformance vector set ({@code spec.md} §11.3) runs once against LOCAL
  * and once against CLUSTERED, proving both modes agree on {@code outcome}, {@code remaining}, and
  * the presence/absence of {@code retryAfter}/{@code resetAfter} — not merely that each mode passes
- * its own separate suite. No injectable clock exists for CLUSTERED in Bucket4j 8.19.0's Vert.x
+ * its own separate suite. CLUSTERED configures no client clock on Bucket4j's Vert.x
  * builder, so every vector here only exercises full-initial-state-to-exhaustion sequences within
  * one refill period — never mid-period refill timing — so wall-clock jitter cannot flake the
  * agreement assertion.
