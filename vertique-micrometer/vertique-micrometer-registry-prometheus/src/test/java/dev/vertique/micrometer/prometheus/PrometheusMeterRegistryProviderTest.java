@@ -3,7 +3,11 @@
 
 package dev.vertique.micrometer.prometheus;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.micrometer.MeterRegistryBackend;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
