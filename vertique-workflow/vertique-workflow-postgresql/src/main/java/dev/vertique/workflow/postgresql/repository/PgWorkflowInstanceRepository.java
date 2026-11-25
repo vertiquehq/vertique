@@ -151,7 +151,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * state JSON.
      *
      * <p>Parameters: $1=id, $2=definition_version, $3=plan_hash, $4=new version,
-     * $5=current_step_id, $6=state_json, $7=expected (old) version.
+     * $5=current_step_id, $6=state_json, $7=expected (old) version, $8=definition_scope_key.
      */
     private final String sqlMigratePinAndState;
 
@@ -493,8 +493,8 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
-     * Counts the instances pinned to exactly one definition version of the default scope that are running,
-     * waiting or compensating, archived instances included.
+     * Counts the instances pinned to exactly one definition version of the default scope that are pending,
+     * running, waiting or compensating, archived instances included.
      *
      * @param definitionId the workflow definition id
      * @param version the exact definition version
@@ -505,8 +505,8 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
-     * Counts the instances pinned to exactly one definition version of one scope that are running, waiting or
-     * compensating, archived instances included. Uses the pool directly without row locking.
+     * Counts the instances pinned to exactly one definition version of one scope that are pending, running,
+     * waiting or compensating, archived instances included. Uses the pool directly without row locking.
      *
      * @param key the scope, definition id and exact version of the pinned definition
      * @return a {@link Future} containing the number of non-terminal instances

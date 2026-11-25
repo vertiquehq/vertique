@@ -31,15 +31,14 @@ import java.util.function.Consumer;
  *
  * <p>This class has no dependency on {@link dev.vertique.workflow.registry.WorkflowRegistry},
  * which is the key design decision that breaks the Dagger cycle between the bootstrap and the
- * service:
+ * service. It compiles; it records and registers nothing:
  * <ul>
  *   <li>{@link dev.vertique.workflow.definition.service.WorkflowDefinitionBootstrap} uses the
- *       pipeline directly and registers compiled definitions into the
- *       {@link dev.vertique.workflow.registry.WorkflowRegistry} parameter passed via
- *       {@code WorkflowContributor.contribute(registry)}.</li>
+ *       pipeline directly to compile the packaged documents when the registry is constructed; the
+ *       engine's startup then records the compiled documents in the definition store.</li>
  *   <li>{@link dev.vertique.workflow.definition.service.DefaultWorkflowDefinitionService} uses
- *       the pipeline and then calls the registry via {@code Provider<WorkflowRegistry>} (lazy
- *       resolution at first use, after the Dagger graph is fully constructed).</li>
+ *       the pipeline to compile a document passed to {@code load}, then stores the result as a
+ *       candidate row in the registry store; the lifecycle publishes and activates it later.</li>
  * </ul>
  *
  * <p>The pipeline runs these stages for each resource:

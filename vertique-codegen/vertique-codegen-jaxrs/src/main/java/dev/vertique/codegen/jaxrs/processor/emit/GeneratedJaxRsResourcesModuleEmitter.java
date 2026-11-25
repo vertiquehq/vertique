@@ -209,8 +209,9 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
         String methodName = bindingMethodName(candidate.getSimpleName().toString());
         String entryMethodName = suffixedMethodName(candidate.getSimpleName().toString(), "Entry");
         // ClassName.get(TypeElement) yields the source-form nested name when the resource is a
-        // static nested class. JaxRsCandidateScanner only surfaces top-level root elements
-        // today; using the element-aware overload keeps every emitter in this pipeline consistent.
+        // static nested class. JaxRsCandidateScanner surfaces top-level root elements and their
+        // static nested types (private nested types are skipped on purpose); using the element-aware
+        // overload keeps every emitter in this pipeline consistent.
         ClassName implType = ClassName.get(candidate);
         List<Conditions.ConditionData> conditionData = conditions.read(candidate);
 

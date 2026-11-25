@@ -33,7 +33,9 @@ import java.time.Clock;
 import java.util.Set;
 
 /**
- * Public assembly seam for the portable workflow engine — the non-Dagger parallel to the wiring
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
+ * <p>Public assembly seam for the portable workflow engine — the non-Dagger parallel to the wiring
  * {@link WorkflowEngineModule} performs at runtime.
  *
  * <p>{@link #create} accepts the engine's externally-supplied dependencies as one

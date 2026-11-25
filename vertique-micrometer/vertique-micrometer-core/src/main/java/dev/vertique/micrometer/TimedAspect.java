@@ -29,9 +29,10 @@ import lombok.extern.slf4j.Slf4j;
  * simple name, or {@code none}) tags, plus any {@link Timed#extraTags()} pairs.
  *
  * <p>Recording is fire-and-forget and isolated: the duration is a {@link System#nanoTime()} delta
- * and so is never negative — the clock is monotonic, and nothing clamps it. Any
- * {@link Throwable} thrown by the registry (including {@link Error} subclasses) is caught and
- * logged at warn, and the original result or exception is returned to the caller untouched. When {@link MetricsConfig#enabled()} is {@code false} (or a {@code MetricsConfig} is
+ * and so is never negative — the clock is monotonic, and nothing clamps it. A
+ * {@link Throwable} thrown by the registry is caught and logged at warn with its class name only, and the
+ * original result or exception is returned to the caller untouched; a {@link VirtualMachineError},
+ * {@link ThreadDeath} or {@link LinkageError} is not contained and is rethrown. When {@link MetricsConfig#enabled()} is {@code false} (or a {@code MetricsConfig} is
  * present and disabled) the interceptor records nothing while still passing the call through.
  *
  * @see Timed

@@ -82,7 +82,7 @@ generators (the registration check, the plan schema producer and the state compa
 
 ## Schemas Stored On Definition Rows
 
-`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version whose start type is `void` gets the explicit schema `{"type":"null"}`, which admits no payload, so that a start that submits one is refused at record time; a row without a start schema (a null column, written before the schema was stored) leaves the decision to the executor. A node that runs the executor (`workflow.executor.enabled` is `true`, the default) needs this producer: without the module its startup fails with a `WorkflowConfigurationException` that names `vertique-workflow-schema` and `workflow.executor.enabled`, before it writes any definition row. A recording-only node (`workflow.executor.enabled=false`) needs neither the producer nor the module.
+`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer itself produces the start, decision and output schemas only; the signal names come from `DeclaredSignalNames` in `vertique-workflow-core`. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version whose start type is `void` gets the explicit schema `{"type":"null"}`, which admits no payload, so that a start that submits one is refused at record time; a row without a start schema (a null column, written before the schema was stored) leaves the decision to the executor. A node that runs the executor (`workflow.executor.enabled` is `true`, the default) needs this producer: without the module its startup fails with a `WorkflowConfigurationException` that names `vertique-workflow-schema` and `workflow.executor.enabled`, before it writes any definition row. A recording-only node (`workflow.executor.enabled=false`) needs neither the producer nor the module.
 
 ---
 
@@ -183,7 +183,7 @@ linear-safe, or review them before they enter a payload type.
 
 ### Threading and class loading
 
-- Validators run synchronously on the registering thread. Call `publish` off the event loop.
+- Validators run synchronously on the registering thread. The lifecycle builds the plan for `publish` and `reinstate` (and the definition service's `load`) through `executeBlocking` on the current Vert.x context, so a caller already on a Vert.x context need not leave it; the validators still block the thread they run on, so keep registration off a thread that must not block.
 - This module loads no class. It describes the classes the type-name index holds, so a split class-loader
   layout needs nothing from it.
 - **Behaviour change.** An earlier version loaded a payload type name the index did not know as a binary class
@@ -440,8 +440,9 @@ profile override; the original exception is chained as the cause. The start payl
   bean-validation constraints that the engine still enforces.
 - **Declaring a scalar or array payload type.** `String`, `int`, `List<X>` and single-value records
   are rejected at registration. Wrap the value in a record.
-- **Calling `publish` on the event loop.** Schema generation and pattern compilation block the
-  calling thread.
+- **Registering a definition on a thread that must not block.** Schema generation and pattern compilation block the
+  registering thread. `publish` and `reinstate` (and the definition service's `load`) run their plan build through `executeBlocking` on the current Vert.x
+  context, so a caller on a Vert.x context does not need to leave it.
 - **Expecting a pattern limit on the engine path.** A `@Pattern` constraint checked by the engine's
   bean-validation path runs on strings of any length; only keyed validation is bounded. Do not rely
   on this module to cap pattern input that the engine evaluates.

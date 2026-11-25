@@ -34,7 +34,7 @@ import java.util.UUID;
  * completion that cannot be applied is rejected and the task is {@code OPEN} again, so the caller may complete it again
  * with a new idempotency key. Use the execution probe ({@code awaitIdle}) to wait for the outcome.
  *
- * <p>A request is refused, with nothing recorded, by a failed {@link Future}:
+ * <p>A request is refused, with nothing recorded and nothing for the caller to roll back, by a failed {@link Future}:
  * <ul>
  *   <li>{@code WorkflowInvalidPayloadException} — the payload is over the record-time size or depth bound, violates
  *       the JSON Schema of the decision stored with the task, or names a decision the task does not offer.</li>
@@ -108,6 +108,11 @@ public interface TransactionalTaskService<TX> {
      * produce a succeeded {@link Future}. {@link TaskMutationResult#STALE_NOOP} is a contract
      * violation by the SPI and produces a failed {@link Future} with
      * {@link IllegalStateException}.
+     *
+     * <p>Unlike {@link #complete}, a reassignment claims its idempotency key before it compares
+     * {@code expectedAssignment} and checks that the task is still {@code OPEN}. The caller owns the transaction and
+     * must roll it back when the future fails with {@code WorkflowStaleAssignmentException} or
+     * {@code WorkflowConflictException}; otherwise the claim is committed with the task unchanged.
      *
      * @param cmd the reassignment command; must not be null
      * @param tx the active transaction context; must not be null

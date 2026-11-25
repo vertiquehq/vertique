@@ -19,7 +19,7 @@ public sealed interface WorkflowExecutorEvent {
      *
      * @param kind    the command kind, for example {@code START}
      * @param outcome the outcome: {@code COMPLETE}, {@code REJECTED}, {@code STALE}, {@code FAILED},
-     *                {@code SUPERSEDED}, {@code DEAD_LETTERED}, {@code CANCELLED} or {@code PARKED}
+     *                {@code DEAD_LETTERED}, {@code CANCELLED} or {@code PARKED}
      * @param elapsed the time from the claim of the command to its outcome
      */
     record CommandSettled(String kind, String outcome, Duration elapsed) implements WorkflowExecutorEvent {}

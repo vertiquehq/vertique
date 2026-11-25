@@ -28,8 +28,10 @@ import jakarta.annotation.Nullable;
  * @param stuckAfterSeconds how long a command may stay unsettled after it first became available before it is
  *     reported stuck, in seconds; at least 1
  * @param enabled whether this node runs the workflow executor. {@code false} makes the node recording-only: it
- *     records starts, signals, completions, cancels and reassignments and serves queries, but deploys no executor,
- *     builds no plan and loads no workflow class, and it refuses the operations that need a build
+ *     records starts, signals, completions, retries and migrations as commands, applies cancels and reassignments
+ *     directly in the caller's transaction (a cancel is synchronous and records no command) and serves queries, but
+ *     deploys no executor, builds no plan and loads no workflow class, and it refuses the operations that need a
+ *     build
  */
 public record WorkflowExecutorConfig(
         int instances,

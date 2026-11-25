@@ -63,6 +63,8 @@ import java.util.Set;
  * <ul>
  *   <li>{@code @Multibinds} methods — one empty-set default per named callback registry, and
  *       one for {@link WorkflowDefinitionSource} contributions.</li>
+ *   <li>{@code @BindsOptionalOf} — the {@link ContextHolder}, so that a graph without one still
+ *       builds and the definition service records candidates without an actor.</li>
  *   <li>{@code @Binds @Singleton} methods — binding each {@code Default*Registry}
  *       implementation to its corresponding interface.</li>
  *   <li>a {@code @Binds @Singleton} binding — {@link CelExpressionProfile} to
@@ -72,6 +74,8 @@ import java.util.Set;
  *   <li>a {@code @Provides @IntoSet @Singleton} method — exposes
  *       {@link WorkflowDefinitionBootstrap} as a {@link WorkflowContributor} into the
  *       core multibinding so it runs at registry construction time.</li>
+ *   <li>a {@code @Binds @IntoSet} binding — the document compiler the engine uses to rebuild a
+ *       stored document, contributed without requiring a store binding.</li>
  *   <li>{@link dev.vertique.workflow.definition.compiler.DecisionRouteCompiler},
  *       {@link dev.vertique.workflow.definition.compiler.WorkflowDefinitionCompiler} — registered
  *       as concrete {@code @Singleton} beans; they are injected directly without interface

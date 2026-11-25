@@ -286,10 +286,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     /**
      * {@inheritDoc}
      *
-     * <p>Executes {@code SELECT … FOR UPDATE}. Returns {@link Optional#empty()} when the row does
-     * not exist or is already in a terminal status (the FOR UPDATE lock is only acquired for OPEN
-     * rows since the WHERE clause includes all statuses — any caller should check the returned
-     * record's status).
+     * <p>Executes {@code SELECT … FOR UPDATE} on the row of the task, whatever its status. Returns
+     * {@link Optional#empty()} only when the row does not exist; a task in a terminal status, or one that is
+     * {@code COMPLETING}, comes back with its row locked, so the caller must check the returned record's status.
      */
     @Override
     public Future<Optional<TaskRecord>> lockForCompletion(UUID taskId, SqlClient tx) {

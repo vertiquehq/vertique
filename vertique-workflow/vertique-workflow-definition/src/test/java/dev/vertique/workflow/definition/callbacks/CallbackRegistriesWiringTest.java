@@ -22,13 +22,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Smoke test verifying that {@link WorkflowDefinitionModule} correctly wires all 10 named callback
+ * Smoke test verifying that {@link WorkflowDefinitionModule} correctly wires all 12 named callback
  * registries and {@link RegisteredIdentifierLookup} via Dagger multibinding.
  *
  * <p>A tiny test component installs {@code WorkflowDefinitionModule} plus a test module that
- * contributes one entry into each of the 10 multibindings. After graph construction, the test
+ * contributes one entry into each of the 12 multibindings. After graph construction, the test
  * asserts that each registry contains the expected id and that the {@link RegisteredIdentifierLookup}
- * facade exposes all 10 registries correctly.
+ * facade exposes all 12 registries correctly.
  */
 class CallbackRegistriesWiringTest {
 
@@ -106,6 +106,18 @@ class CallbackRegistriesWiringTest {
         static NamedConditionContributor namedCondition() {
             return b -> b.register(new NamedCondition<>("wiring.cond", _State.class, s -> true));
         }
+
+        @Provides
+        @IntoSet
+        static CorrelationKeyResolverContributor correlationKeyResolver() {
+            return b -> b.register(new NamedCorrelationKeyResolver<>("wiring.correlation", _State.class, s -> s.v()));
+        }
+
+        @Provides
+        @IntoSet
+        static OutputMapperContributor outputMapper() {
+            return b -> b.register(new NamedOutputMapper<>("wiring.output", _State.class, String.class, s -> s.v()));
+        }
     }
 
     // --- Dagger component ---
@@ -125,7 +137,7 @@ class CallbackRegistriesWiringTest {
     // --- Test ---
 
     @Test
-    @DisplayName("Dagger graph provides RegisteredIdentifierLookup with all 10 registries populated")
+    @DisplayName("Dagger graph provides RegisteredIdentifierLookup with all 12 registries populated")
     void wiresAllRegistries() {
         RegisteredIdentifierLookup lookup =
                 DaggerCallbackRegistriesWiringTest_TestComponent.create().registeredIdentifierLookup();
@@ -159,6 +171,12 @@ class CallbackRegistriesWiringTest {
                 .isTrue();
         assertThat(lookup.namedConditions().contains("wiring.cond"))
                 .as("namedConditions should contain wiring.cond")
+                .isTrue();
+        assertThat(lookup.correlationKeyResolvers().contains("wiring.correlation"))
+                .as("correlationKeyResolvers should contain wiring.correlation")
+                .isTrue();
+        assertThat(lookup.outputMappers().contains("wiring.output"))
+                .as("outputMappers should contain wiring.output")
                 .isTrue();
     }
 }

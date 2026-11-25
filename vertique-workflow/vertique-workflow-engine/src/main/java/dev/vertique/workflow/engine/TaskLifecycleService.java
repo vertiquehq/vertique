@@ -173,10 +173,10 @@ final class TaskLifecycleService {
 
     /**
      * Opt-in constraint check applied to coerced decision payloads right after coercion and before
-     * the task is completed. On the branch path the timer cancel, locks and history work run first,
-     * inside the same transaction; a rejection rolls that transaction back, so any earlier side
-     * effect and the deduplication claim roll back with it. A no-op when the application binds no
-     * bean validator.
+     * the task is completed. It runs in the executor's segment, under the segment's savepoint, so a
+     * rejection rolls the work of the segment back (on the branch path the timer cancel, locks and
+     * history work included); the recorded completion's deduplication claim stays. A no-op when the
+     * application binds no bean validator.
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 

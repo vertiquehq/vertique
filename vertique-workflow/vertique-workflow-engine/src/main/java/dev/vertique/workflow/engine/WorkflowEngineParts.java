@@ -45,7 +45,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Everything {@link WorkflowEngineFactory#create(WorkflowEngineParts)} needs to assemble an engine outside Dagger.
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
+ * <p>Everything {@link WorkflowEngineFactory#create(WorkflowEngineParts)} needs to assemble an engine outside Dagger.
  *
  * <p>The class has no public constructor: {@link #builder()} is the only way to create it, so a part can be added
  * later without breaking a caller. {@link Builder#build()} fails fast with a {@link NullPointerException} that names

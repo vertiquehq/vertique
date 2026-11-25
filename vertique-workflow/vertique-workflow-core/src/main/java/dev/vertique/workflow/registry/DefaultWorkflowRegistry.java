@@ -1088,9 +1088,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * <p>A key the registry holds, which is every code definition and every document registered at startup, is
-     * answered here. Any other key is handed to the bound {@link DocumentPlanSource}; without one the future fails
-     * with {@link WorkflowDefinitionNotFoundException}. On a recording-only node, which holds no workflow code and
+     * <p>A key the registry holds, which is every code definition, is answered here. Documents are not registered
+     * in the registry: a document key, like any other key the registry does not hold, is handed to the bound
+     * {@link DocumentPlanSource}; without one the future fails with {@link WorkflowDefinitionNotFoundException}. On a recording-only node, which holds no workflow code and
      * builds no plan, the future fails with {@link WorkflowNodeRoleException}.
      */
     @Override

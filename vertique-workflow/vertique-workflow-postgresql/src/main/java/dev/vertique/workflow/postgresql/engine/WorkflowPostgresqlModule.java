@@ -68,18 +68,18 @@ import java.util.Set;
  * {@code @WorkflowRecorders} multibinding, the {@code @OptionalIntentKinds} default set, the
  * optional {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} binding, and the
  * engine's {@code core}/{@code context} includes). This module contributes only the dialect-specific
- * bindings: the five repository SPIs, the task/timer/definition-registry stores, the transaction runner, and the
+ * bindings: the repository SPIs, the task/timer/definition-registry stores, the transaction runner, and the
  * query, history and retention services — all bound to their PostgreSQL implementations.
  *
  * <p>Consumers install only {@code WorkflowPostgresqlModule}; the engine wiring arrives transitively
  * through the {@code include}, so application wiring is unchanged.
  *
- * <p>The five repositories, the three stores (task, timer and definition registry) and
+ * <p>The repositories, the stores (task, timer and definition registry) and
  * {@link PgWorkflowRetentionRepository} are each
  * provided as one scoped instance built with the optional {@link DbSchemas} placement, so every
  * workflow table is read and written in the schema mapped for the {@code workflow} instance and
  * resolves through the connection's default schema when no mapping exists. The SPI bindings and
- * the query, retention and recovery services all resolve to those same instances. The module also
+ * the query, history and retention services all resolve to those same instances. The module also
  * includes {@link WorkflowMigrationsModule}, which contributes the workflow migration declaration,
  * and {@link DbSchemasModule}, which declares the optional {@link DbSchemas} binding.
  *
