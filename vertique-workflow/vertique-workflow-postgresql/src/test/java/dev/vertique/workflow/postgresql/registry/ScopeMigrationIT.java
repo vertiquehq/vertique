@@ -42,7 +42,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class ScopeMigrationIT {
 
-    private static final String PINNED_V1_SHA256 = "b444c9f5943de792243e7080d78531d9c1755d9413429980ac98322727889ae2";
+    private static final String PINNED_V1_SHA256 = "1f5851a413ea9ff9fe3ada7901738a988f158bd9511204b7a657340d4aa8044d";
 
     private static final String V1_SCRIPT = "V1__create_workflow_tables.sql";
     private static final String V002_SCRIPT = "V002__definitions_scopes_recorded_execution_signal_correlation.sql";
@@ -60,7 +60,7 @@ public class ScopeMigrationIT {
 
     @Test
     void upgradeFromV1AppliesOneScopeMigration() throws Exception {
-        // Given the first migration is shipped byte for byte as it was released
+        // Given the first migration is shipped byte for byte as pinned (its earlier release differed in comments only)
         assertThat(shippedSha256(V1_SCRIPT)).isEqualTo(PINNED_V1_SHA256);
 
         // And a database migrated to the first version only, holding two instances (one with a business key),

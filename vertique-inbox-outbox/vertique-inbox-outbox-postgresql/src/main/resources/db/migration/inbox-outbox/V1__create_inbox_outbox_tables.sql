@@ -8,7 +8,7 @@
 
 CREATE TABLE outbox (
     id               BIGSERIAL PRIMARY KEY,
-    -- Framework-generated per-row durable carrier identity (PRD identity-002 F3b). Allocated by the
+    -- Framework-generated per-row durable carrier identity. Allocated by the
     -- producer BEFORE insert and never derived from application-writable input, so a durable identity
     -- snapshot can be signed for this exact row (see SnapshotCarrierBinding) and the receive-side relay
     -- can reproduce the same carrier from this first-class column to detect a transplanted snapshot.

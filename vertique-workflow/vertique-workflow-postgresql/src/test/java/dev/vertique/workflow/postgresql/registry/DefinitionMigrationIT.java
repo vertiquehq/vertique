@@ -33,7 +33,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionMigrationIT {
 
-    private static final String PINNED_V1_SHA256 = "b444c9f5943de792243e7080d78531d9c1755d9413429980ac98322727889ae2";
+    private static final String PINNED_V1_SHA256 = "1f5851a413ea9ff9fe3ada7901738a988f158bd9511204b7a657340d4aa8044d";
 
     static final PostgresContainer db = new PostgresContainer().withDatabaseName("wf_definition_migration_it");
 

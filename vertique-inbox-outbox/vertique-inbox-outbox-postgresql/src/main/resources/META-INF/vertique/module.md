@@ -245,7 +245,7 @@ resolves.
 
 The Flyway migration creates two tables and associated indexes. **`V1__create_inbox_outbox_tables.sql`
 is frozen from this Stable release.** Every later schema change ships as `V2+`, never as an edit to
-`V1`.
+`V1`; the one exception is a comment-only edit that changed its checksum (see [Upgrade notes](#upgrade-notes)).
 
 - `V1__create_inbox_outbox_tables.sql` — the `outbox` and `inbox` tables, their indexes and the `LISTEN/NOTIFY` trigger.
 - `V002__add_outbox_scope.sql` — adds `outbox.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock, and is safe to rerun. No index and no check constraint are added; `inbox` is unchanged.
@@ -396,6 +396,12 @@ look in a schema the migration never filled.
   `dev.vertique:vertique-db-postgresql`.
 - **One source of `DbSchemas`.** A component that binds `DbSchemas` itself cannot also install
   `DbModule`: Dagger reports a duplicate binding at compile time, with no silent precedence.
+
+---
+
+## Upgrade notes
+
+- **The `V1` script comments changed, so its checksum changed.** `V1__create_inbox_outbox_tables.sql` creates the same objects as before; only comments were reworded. Flyway checksums the file text, so a database that applied the earlier `V1` fails validation with a checksum mismatch: `MIGRATE` mode stops at startup while `validateOnMigrate` is `true` (the default), and `VALIDATE` mode reports the mismatch. The framework has no repair setting of its own. Run Flyway's `repair` once, before the first node of this version starts, against every history that holds the script, with the same `locations`, schemas and history table the application uses: `flyway_schema_history_inbox_outbox` in the schema of the `inbox_outbox` instance in the named layout, or `flyway_schema_history` in the single layout. `repair` realigns the recorded checksum with the shipped file and applies no migration. A new database is unaffected.
 
 ---
 
