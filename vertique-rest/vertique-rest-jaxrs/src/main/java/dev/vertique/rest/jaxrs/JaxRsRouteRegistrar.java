@@ -477,7 +477,18 @@ public class JaxRsRouteRegistrar {
             // A method the loop below will reject creates no route: its template may not even compile.
             if (RouteValidator.validateMethodParams(meta).isEmpty()
                     && RouteValidator.validatePathTemplate(meta).isEmpty()) {
-                routes.add(createRoute(apiRouter, meta, JaxRsPathTemplate.translate(entry.template())));
+                boolean variant = !entry.template().equals(meta.path());
+                if (variant) {
+                    log.info(
+                            "Registering alternative route for operationId={} [{} {}]",
+                            meta.operationId(),
+                            meta.httpMethod(),
+                            entry.template());
+                }
+                JaxRsPathTemplate template = variant
+                        ? JaxRsPathTemplate.translateVariant(meta.path(), entry.template())
+                        : JaxRsPathTemplate.translate(entry.template());
+                routes.add(createRoute(apiRouter, meta, template));
             }
         }
 

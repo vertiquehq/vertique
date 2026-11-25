@@ -361,5 +361,41 @@ class RoutePathSpecificityTest {
         void variantBeatsLongerOpenRoute() {
             assertMoreSpecific("/r/{p:b/admin}", "/r/{a:\\w+}/{b}");
         }
+
+        @Test
+        @DisplayName("no split for an unusual character class")
+        void noSplitForUnusualClasses() {
+            assertEquals(List.of("/a/{p:[]|x]}"), RoutePathSpecificity.variants("/a/{p:[]|x]}"));
+            assertEquals(List.of("/a/{p:[^]|x]}"), RoutePathSpecificity.variants("/a/{p:[^]|x]}"));
+            assertEquals(List.of("/a/{p:[[a]|b]}"), RoutePathSpecificity.variants("/a/{p:[[a]|b]}"));
+        }
+
+        @Test
+        @DisplayName("no split when the constraint declares a named group, but a lookbehind does not block it")
+        void namedGroupBlocksSplit() {
+            assertEquals(List.of("/a/{p:(?<g>a)|b/c}"), RoutePathSpecificity.variants("/a/{p:(?<g>a)|b/c}"));
+            assertEquals(2, RoutePathSpecificity.variants("/a/{p:(?<=x)a|b/c}").size());
+        }
+
+        @Test
+        @DisplayName("no split when an alternative does not compile")
+        void noSplitForUncompilableAlternative() {
+            assertEquals(List.of("/a/{p:+a|b/c}"), RoutePathSpecificity.variants("/a/{p:+a|b/c}"));
+            assertEquals(List.of("/a/{p:*a|b/c}"), RoutePathSpecificity.variants("/a/{p:*a|b/c}"));
+        }
+
+        @Test
+        @DisplayName("alternative text is kept exactly, not trimmed")
+        void alternativeTextIsKeptExactly() {
+            List<String> variants = RoutePathSpecificity.variants("/x/{p:b/admin | [^/]+}");
+            assertEquals(2, variants.size());
+            assertTrue(variants.stream().anyMatch(v -> v.contains("b/admin }")), variants::toString);
+        }
+
+        @Test
+        @DisplayName("a literal outranks the same text inside a variable: /h/~a/b before /h/{p:~a/b}")
+        void literalBeatsVariableWithSameText() {
+            assertMoreSpecific("/h/~a/b", "/h/{p:~a/b}");
+        }
     }
 }

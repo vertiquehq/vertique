@@ -357,6 +357,40 @@ class FilesRouteShadowingIT {
         }
     }
 
+    /** Open alternation beside a longer open route that would otherwise answer first. */
+    @Path("/q")
+    public static class OpenAlternationResource {
+
+        /**
+         * Open two-variable route.
+         *
+         * @param a the first bound value
+         * @param b the second bound value
+         * @return the bound values echoed back
+         */
+        @GET
+        @Path("/{a:\\w+}/{b}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "qLong")
+        public String longer(@PathParam("a") String a, @PathParam("b") String b) {
+            return "long=" + a + "/" + b;
+        }
+
+        /**
+         * Open alternation: the single segment {@code a}, or {@code b/x}.
+         *
+         * @param p the bound value
+         * @return the bound value echoed back
+         */
+        @GET
+        @Path("/{p:a|b/x}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "qAlt")
+        public String alt(@PathParam("p") String p) {
+            return "alt=" + p;
+        }
+    }
+
     @AfterEach
     void tearDown(Vertx vertx, VertxTestContext ctx) {
         if (server == null) {
@@ -494,5 +528,17 @@ class FilesRouteShadowingIT {
         WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
         run(vertx, ctx, new ReversalResource(), port -> expect(client, port, "/u/42/profile", 200)
                 .compose(v -> expect(client, port, "/u/42/edit", 401)));
+    }
+
+    @Test
+    @DisplayName("An open alternation variant /q/{p:a|b/x} answers /q/b/x ahead of /q/{a:\\w+}/{b}")
+    void variantRouteBindsParameterLikeFullTemplate(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new OpenAlternationResource(), port -> body(client, port, "/q/b/x")
+                .compose(first -> {
+                    ctx.verify(() -> assertEquals("alt=b/x", first));
+                    return body(client, port, "/q/c/d");
+                })
+                .andThen(r -> ctx.verify(() -> assertEquals("long=c/d", r.result()))));
     }
 }

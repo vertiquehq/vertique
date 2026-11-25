@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Orders JAX-RS {@code @Path} templates so that the more specific route registers on the plain Vert.x
@@ -87,6 +88,9 @@ final class RoutePathSpecificity {
     /** Matches a Vert.x colon-form variable ({@code :name}) in the literal text of a plain template. */
     private static final Pattern COLON_VARIABLE = Pattern.compile(":\\w+");
 
+    /** Matches a named group of the constraint itself, not a lookbehind. */
+    private static final Pattern USER_NAMED_GROUP = Pattern.compile("\\(\\?<(?![=!])");
+
     /** Matches the start of an inline flag group such as {@code (?i)} or {@code (?-i:}. */
     private static final Pattern INLINE_FLAG = Pattern.compile("\\(\\?[a-zA-Z-]");
 
@@ -135,7 +139,15 @@ final class RoutePathSpecificity {
          */
         static int compareRank(Rank a, Rank b) {
             int byKey = a.key.compareTo(b.key);
-            return byKey != 0 ? byKey : segmentOrder(a.template, b.template);
+            if (byKey != 0) {
+                return byKey;
+            }
+            int bySegments = segmentOrder(a.template, b.template);
+            if (bySegments != 0) {
+                return bySegments;
+            }
+            // Fewer brace variables is more specific: /h/~a/b before /h/{p:~a/b}.
+            return Integer.compare(braceVariables(a.template), braceVariables(b.template));
         }
 
         /** Orders ranks most specific first, then by template string, a total order. */
@@ -185,6 +197,15 @@ final class RoutePathSpecificity {
      */
     static Rank rankOf(String template) {
         return new Rank(template, keyOf(template, null));
+    }
+
+    private static int braceVariables(String template) {
+        int count = 0;
+        Matcher matcher = PathTemplateVariables.VARIABLE.matcher(template);
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
     }
 
     /** Segment-by-segment comparison of today's kinds; zero when the two tie. */
@@ -326,7 +347,7 @@ final class RoutePathSpecificity {
         }
         Map<Key, List<String>> groups = new LinkedHashMap<>();
         for (String alternative : alternatives) {
-            groups.computeIfAbsent(contribution(alternative), k -> new ArrayList<>())
+            groups.computeIfAbsent(contribution(alternative.trim()), k -> new ArrayList<>())
                     .add(alternative);
         }
         List<Choice> choices = new ArrayList<>();
@@ -369,11 +390,15 @@ final class RoutePathSpecificity {
     /**
      * Splits a constraint at each top-level {@code |}: one outside a character class and a group and
      * not escaped. Returns an empty list (no split) when the constraint has no such {@code |}, contains
-     * {@code \Q}, a numeric backreference or an inline flag group, or would produce an empty
-     * alternative, because splitting could then change what an alternative matches.
+     * {@code \Q}, a numeric backreference, an inline flag group or a named group of its own, has an
+     * unusual character class (a nested {@code [}, or a {@code ]} right after {@code [} or
+     * {@code [^}), has a blank alternative, or has an alternative that does not compile, because
+     * splitting could then change what an alternative matches. Alternatives keep their exact text.
      */
     private static List<String> alternatives(String constraint) {
-        if (constraint.indexOf("\\Q") >= 0 || INLINE_FLAG.matcher(constraint).find()) {
+        if (constraint.indexOf("\\Q") >= 0
+                || INLINE_FLAG.matcher(constraint).find()
+                || USER_NAMED_GROUP.matcher(constraint).find()) {
             return List.of();
         }
         List<String> alternatives = new ArrayList<>();
@@ -388,23 +413,43 @@ final class RoutePathSpecificity {
                 }
                 i++; // skip the escaped character
             } else if (inClass) {
+                if (c == '[') {
+                    return List.of();
+                }
                 inClass = c != ']';
             } else if (c == '[') {
                 inClass = true;
+                int next = i + 1;
+                if (next < constraint.length() && constraint.charAt(next) == '^') {
+                    next++;
+                }
+                if (next < constraint.length() && constraint.charAt(next) == ']') {
+                    return List.of();
+                }
             } else if (c == '(') {
                 groups++;
             } else if (c == ')') {
                 groups = Math.max(0, groups - 1);
             } else if (c == '|' && groups == 0) {
-                alternatives.add(constraint.substring(start, i).trim());
+                alternatives.add(constraint.substring(start, i));
                 start = i + 1;
             }
         }
         if (alternatives.isEmpty()) {
             return List.of();
         }
-        alternatives.add(constraint.substring(start).trim());
-        return alternatives.stream().anyMatch(String::isEmpty) ? List.of() : List.copyOf(alternatives);
+        alternatives.add(constraint.substring(start));
+        for (String alternative : alternatives) {
+            if (alternative.isBlank()) {
+                return List.of();
+            }
+            try {
+                Pattern.compile(alternative);
+            } catch (PatternSyntaxException e) {
+                return List.of();
+            }
+        }
+        return List.copyOf(alternatives);
     }
 
     /**

@@ -207,12 +207,15 @@ Two refinements apply:
   - an `OperationHandlerContributor` still sees one registration, and a handler it adds goes to every
     route of the operation.
 
-  Alternatives that rank equal stay together. A constraint containing `\Q`, a backreference or an
+  Alternatives that contribute equally to the key stay together. A constraint containing `\Q`, a backreference or an
   inline flag is not split. A template with *k* such variables of *n* distinct ranks each registers
   up to *n*<sup>*k*</sup> routes, and each one is tried in turn on every request that reaches it.
+  A variant route matches only paths the full template matches, and binds parameters exactly as the
+  full template does.
 
-A route without variables always outranks a variable route that matches the same path, because the
-variables use up some of the path's characters. If two templates still tie, the registrar orders
+A route without variables outranks a variable route that matches the same path, because the
+variables use up some of the path's characters — unless a variable can match an empty string
+(`{ext:(\.json)?}`, `{p:.*}`), which the ranking cannot see. If two templates still tie, the registrar orders
 them by segment shape: at the first differing segment, static text beats a regex variable, which
 beats a plain variable; then the longer template wins; then the template string decides. **Routes
 that rank equal have no guaranteed order:** when both can match one path, make them distinct.
@@ -226,7 +229,8 @@ comes later in the path win over a route with an earlier static or regex segment
 
 The route that wins decides which authentication runs, so give every pair of routes that can match
 one path the same security, or make them distinct. The startup log line `Registering handler for
-operationId=…` is printed in registration order and shows the order the registrar chose.
+operationId=…` is printed in registration order and shows the order the registrar chose; each extra alternative route logs `Registering alternative route for
+operationId=…`.
 
 ### One response path for success and failure
 

@@ -56,8 +56,26 @@ final class JaxRsPathTemplate {
     static JaxRsPathTemplate translate(String jaxRsPath) {
         boolean hasConstraint = hasRegexConstraint(jaxRsPath);
         return hasConstraint
-                ? new JaxRsPathTemplate(true, toAnchoredRegex(jaxRsPath))
+                ? new JaxRsPathTemplate(true, toAnchoredRegex(jaxRsPath, true))
                 : new JaxRsPathTemplate(false, toColonForm(jaxRsPath));
+    }
+
+    /**
+     * Translates one alternative variant of a regex-constrained template into a regex route that
+     * matches only paths the full template also matches and binds the full template's parameters.
+     * The route value is a lookahead on the variant's anchored body (its variable groups
+     * non-capturing) followed by the full template's own regex, so the named groups come only from
+     * the full template.
+     *
+     * @param fullTemplate    the operation's declared template, carrying a regex constraint
+     * @param variantTemplate the variant of {@code fullTemplate} with one alternative substituted
+     * @return the regex translation of the variant route
+     */
+    static JaxRsPathTemplate translateVariant(String fullTemplate, String variantTemplate) {
+        String full = toAnchoredRegex(fullTemplate, true);
+        String variant = toAnchoredRegex(variantTemplate, false);
+        String body = variant.substring(1, variant.length() - 1);
+        return new JaxRsPathTemplate(true, "^(?=" + body + "$)" + full.substring(1));
     }
 
     /**
@@ -124,9 +142,10 @@ final class JaxRsPathTemplate {
      * path must match.
      *
      * @param jaxRsPath the JAX-RS path template carrying at least one regex constraint
-     * @return the anchored regex with named capture groups
+     * @param capturing {@code false} to emit every variable as a non-capturing group
+     * @return the anchored regex with named capture groups (none when {@code capturing} is false)
      */
-    private static String toAnchoredRegex(String jaxRsPath) {
+    private static String toAnchoredRegex(String jaxRsPath, boolean capturing) {
         var matcher = VARIABLE.matcher(jaxRsPath);
         StringBuilder out = new StringBuilder("^");
         int last = 0;
@@ -134,8 +153,9 @@ final class JaxRsPathTemplate {
             out.append(Pattern.quote(jaxRsPath.substring(last, matcher.start())));
             String name = matcher.group(1);
             String constraint = matcher.group(2);
-            String body = constraint != null ? constraint.trim() : "[^/]+";
-            out.append("(?<").append(name).append('>').append(body).append(')');
+            // A variant keeps its alternative text exactly (a trailing space is part of it).
+            String body = constraint != null ? (capturing ? constraint.trim() : constraint) : "[^/]+";
+            out.append(capturing ? "(?<" + name + ">" : "(?:").append(body).append(')');
             last = matcher.end();
         }
         out.append(Pattern.quote(jaxRsPath.substring(last)));
