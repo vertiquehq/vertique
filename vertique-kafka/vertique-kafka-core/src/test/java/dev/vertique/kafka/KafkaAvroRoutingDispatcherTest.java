@@ -209,7 +209,7 @@ class KafkaAvroRoutingDispatcherTest {
         @DisplayName("a Void-only property router honors an explicit avro format (does not fall back to json)")
         void voidOnlyRouterHonorsExplicitFormat() {
             // Every route is a no-arg property handler (valueType Void) — there is no payload type to
-            // auto-detect from, but a global/endpoint format=avro must still apply (Codex finding).
+            // auto-detect from, but a global/endpoint format=avro must still apply.
             ResolvedKafkaConsumerConfig config = resolveConsumer("void-router", new JsonObject().put("format", "avro"));
             ConsumerEntry entry = KafkaConsumerValidation.validateAndBuild(
                     "void-router",

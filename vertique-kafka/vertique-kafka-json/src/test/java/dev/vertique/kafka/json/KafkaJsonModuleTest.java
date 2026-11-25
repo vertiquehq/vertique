@@ -48,7 +48,7 @@ import org.junit.jupiter.api.Test;
  * </ul>
  *
  * <p>This test deliberately avoids deploying a consumer or producer verticle to stay clear of the
- * cross-module {@code ContextLocal} SPI registration mismatch (see plan §13). It exercises the
+ * cross-module {@code ContextLocal} SPI registration mismatch. It exercises the
  * serde layer only.
  */
 class KafkaJsonModuleTest {

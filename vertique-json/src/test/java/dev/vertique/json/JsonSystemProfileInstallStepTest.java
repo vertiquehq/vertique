@@ -38,17 +38,16 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * Unit proof of the {@code CONFIGURE} step that installs the process JSON codec's mapper
- * (TP-004, TP-005).
+ * Unit proof of the {@code CONFIGURE} step that installs the process JSON codec's mapper.
  *
- * <p>TP-004 pins the ownership guard: constructed through its package-private constructor with a
+ * <p>The first test pins the ownership guard: constructed through its package-private constructor with a
  * {@link BooleanSupplier} that reports a foreign process codec, the step must fail the boot naming
  * the actual {@code Json.CODEC} class and the {@code META-INF/services} remedy, and must install
  * nothing. Its second case builds the step through the {@code @Inject} constructor and proves the
  * production supplier really is {@code VertiqueJson::ownsCodec} — in this fork Vertique owns
- * the codec, so the same step succeeds where the {@code () -> false} seam failed (ruling A7).
+ * the codec, so the same step succeeds where the {@code () -> false} seam failed.
  *
- * <p>TP-005 pins the mapper-shape guards. Two of the three profiles it needs ({@code nomodule},
+ * <p>The second test pins the mapper-shape guards. Two of the three profiles it needs ({@code nomodule},
  * {@code typed}) are ones {@link DefaultJsonMapperProfileRegistry} refuses to register at all — its
  * own construction-time guards are a different proof — so these cases resolve through a
  * {@link FakeRegistry}: the seam under test is the step's re-check, and it must fire for <em>any</em>
@@ -66,10 +65,10 @@ class JsonSystemProfileInstallStepTest {
         VertiqueJson.resetForTests();
     }
 
-    // --- TP-004 ---
+    // --- Ownership guard ---
 
     @Test
-    @DisplayName("TP-004: the step refuses to install when Vertique does not own the process codec")
+    @DisplayName("the step refuses to install when Vertique does not own the process codec")
     void failsWhenVertiqueDoesNotOwnTheProcessCodec() {
         JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
 
@@ -95,7 +94,7 @@ class JsonSystemProfileInstallStepTest {
                 VertiqueJson.profile().isEmpty(),
                 "a step that refused the install must leave the process codec uninstalled");
 
-        // --- Case 2 (ruling A7): the @Inject constructor's supplier is the real ownership check ---
+        // --- Case 2: the @Inject constructor's supplier is the real ownership check ---
         JsonSystemProfileInstallStep injected = new JsonSystemProfileInstallStep(JsonConfig.defaults(), registry);
 
         assertTrue(VertiqueJson.ownsCodec(), "this fork must own the process codec, otherwise case 2 proves nothing");
@@ -111,10 +110,10 @@ class JsonSystemProfileInstallStepTest {
                 "the step installs the registry's mapper instance for the effective system profile");
     }
 
-    // --- TP-005 ---
+    // --- Mapper-shape guards ---
 
     @Test
-    @DisplayName("TP-005: the step refuses a system profile without VertxModule, with default typing, or named vertx")
+    @DisplayName("the step refuses a system profile without VertxModule, with default typing, or named vertx")
     void refusesUnsafeSystemProfiles() {
         Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -341,7 +340,7 @@ class JsonSystemProfileInstallStepTest {
 
     /**
      * Minimal {@link JsonMapperProfileRegistry} that hands back exactly the mappers it was seeded
-     * with. It exists so TP-005 can present the step with profile shapes
+     * with. It exists so the shape-guard test can present the step with profile shapes
      * {@link DefaultJsonMapperProfileRegistry} would refuse to register — the step's guards must hold
      * for any application-bound registry implementation, which is the whole point of re-checking them.
      */

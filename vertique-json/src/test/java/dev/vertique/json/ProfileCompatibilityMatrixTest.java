@@ -26,8 +26,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-002 — pins the compatibility matrix across raw Vert.x ({@link DatabindCodec#mapper()}), the reserved {@code system} profile,
- * and the reserved {@code vertique} profile, both obtained from a {@link
+ * Pins the compatibility matrix across raw Vert.x ({@link DatabindCodec#mapper()}), the reserved
+ * {@code system} profile, and the reserved {@code vertique} profile, both obtained from a {@link
  * DefaultJsonMapperProfileRegistry} seeded with no application profiles.
  *
  * <p>{@code system} is byte-identical to raw for every previously-supported type ({@link
@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
  * comments are accepted by raw and {@code system} (inherited leniency) and rejected by {@code
  * vertique} (fresh-seeded, no comment leniency).
  *
- * <p>Sensitivity (T010 evidence § L00): registering {@code JavaTimeModule} in {@code
+ * <p>Sensitivity: registering {@code JavaTimeModule} in {@code
  * applyOpinionated} instead of {@code applySystem} flips {@link
  * #javaTimeOtherThanInstantFailsUnderRawWorksUnderSystemAndVertique()}'s {@code system} row; seeding
  * {@code vertique} from {@code system}'s copy instead of a fresh {@code ObjectMapper} flips {@link
@@ -67,7 +67,7 @@ class ProfileCompatibilityMatrixTest {
 
     record InstantCarrier(Instant t) {}
 
-    /** A POJO carrying a null-valued field and a numeric field, per TP-002's Given. */
+    /** A POJO carrying a null-valued field and a numeric field. */
     record PojoWithNullsAndNumbers(String name, Integer count, String nullable) {}
 
     record OptionalCarrier(Optional<String> v) {}
@@ -114,8 +114,7 @@ class ProfileCompatibilityMatrixTest {
         String systemBytes = system.writeValueAsString(new BytesCarrier(bytesSample));
         assertEquals(rawBytes, systemBytes, "system must serialize a byte[] byte-identically to raw");
 
-        // Instant — byte-identical under system AND vertique (NFR-JSON-012's guarantee extended to
-        // system).
+        // Instant — byte-identical under system AND vertique.
         Instant instantSample = Instant.parse("2024-01-15T08:30:00.123456789Z");
         String rawInstant = raw.writeValueAsString(new InstantCarrier(instantSample));
         String systemInstant = system.writeValueAsString(new InstantCarrier(instantSample));
@@ -152,7 +151,7 @@ class ProfileCompatibilityMatrixTest {
         assertEquals(
                 "{\"d\":\"1970-01-01T00:00:00.000+00:00\"}",
                 vertiqueJson,
-                "vertique must render java.util.Date as an ISO-8601 string, as it does today");
+                "vertique must render java.util.Date as an ISO-8601 string");
     }
 
     @Test
@@ -168,7 +167,7 @@ class ProfileCompatibilityMatrixTest {
         assertThrows(
                 JsonProcessingException.class,
                 () -> vertique.readValue(commented, Object.class),
-                "vertique must reject JSON comments (fresh-seeded ObjectMapper, no comment leniency), as today");
+                "vertique must reject JSON comments (fresh-seeded ObjectMapper, no comment leniency)");
     }
 
     @Test

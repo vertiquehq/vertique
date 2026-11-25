@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link VertxJsonSupport}, verifying that the re-exported Vert.x Jackson module
  * enables a plain {@link ObjectMapper} to round-trip {@link JsonObject}/{@link JsonArray} without
- * data loss (FR-JSON-015B).
+ * data loss.
  */
 class VertxJsonSupportTest {
 

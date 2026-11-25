@@ -60,11 +60,11 @@ import org.junit.jupiter.api.Test;
  *   <li>the projection is <em>precomputed</em> at registration, so the request path neither
  *       introspects nor throws;</li>
  *   <li>two properties claiming the same {@code @JsonAlias} fail composition instead of binding in
- *       an order the projection and Jackson resolve differently.</li>
+ *       an order the projection and Jackson resolve differently;</li>
  *   <li>two Java fields Jackson merged into one property fail composition rather than projecting
- *       onto the field Jackson never writes (GH-380);</li>
+ *       onto the field Jackson never writes;</li>
  *   <li>a case-insensitive mapper projects a differently-cased key onto the property Jackson binds
- *       it to, instead of resolving it to no property at all (GH-375).</li>
+ *       it to, instead of resolving it to no property at all.</li>
  * </ul>
  */
 class JacksonFieldNameResolverTest {
@@ -386,7 +386,7 @@ class JacksonFieldNameResolverTest {
                 "the repeated alias still projects onto its own property");
     }
 
-    // --- GH-380: two Java fields Jackson merged into one property ---
+    // --- two Java fields Jackson merged into one property ---
 
     /** DTO whose second field is renamed onto the first field's name; Jackson merges the two. */
     public static class MergedFieldsDto {
@@ -397,7 +397,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-380: a property Jackson merged across two fields fails composition, naming both")
+    @DisplayName("a property Jackson merged across two fields fails composition, naming both")
     void shouldRejectAPropertyJacksonMergedAcrossTwoFields() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
 
@@ -414,7 +414,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-380: an ordinary renamed field still composes — the rejection is not a blanket rename ban")
+    @DisplayName("an ordinary renamed field still composes — the rejection is not a blanket rename ban")
     void shouldStillComposeAnOrdinaryRenamedField() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
 
@@ -423,7 +423,7 @@ class JacksonFieldNameResolverTest {
                 "a field renamed onto a name no other field claims is projected, not refused");
     }
 
-    // --- GH-375: a mapper that matches wire keys case-insensitively ---
+    // --- a mapper that matches wire keys case-insensitively ---
 
     /** DTO used against a case-insensitive mapper; its wire key may arrive in any case. */
     public static class CaseFoldedDto {
@@ -437,14 +437,13 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-375: a case-insensitive mapper projects a differently-cased key onto its property")
+    @DisplayName("a case-insensitive mapper projects a differently-cased key onto its property")
     void shouldProjectADifferentlyCasedKeyWhenTheMapperFoldsCase() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(caseInsensitiveMapper());
         resolver.precompute(CaseFoldedDto.class);
 
         // Jackson binds every one of these into `secretValue`, so every one must select that field's
-        // declared policies. Before the fix the projection matched exactly, so all but the first
-        // resolved to no property and their declared @Sanitize was skipped.
+        // declared policies, including a declared @Sanitize.
         assertEquals("secretValue", resolver.logicalName(CaseFoldedDto.class, "secretValue"));
         assertEquals("secretValue", resolver.logicalName(CaseFoldedDto.class, "SECRETVALUE"));
         assertEquals("secretValue", resolver.logicalName(CaseFoldedDto.class, "SecretValue"));
@@ -456,7 +455,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-375: a differently-cased key against an exact-match mapper is still returned unchanged")
+    @DisplayName("a differently-cased key against an exact-match mapper is still returned unchanged")
     void shouldLeaveADifferentlyCasedKeyAloneWhenTheMapperMatchesExactly() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(CaseFoldedDto.class);
@@ -466,7 +465,7 @@ class JacksonFieldNameResolverTest {
         assertEquals("SECRETVALUE", resolver.logicalName(CaseFoldedDto.class, "SECRETVALUE"));
     }
 
-    // --- GH-376: keys the codec promotes out of an @JsonUnwrapped member ---
+    // --- keys the codec promotes out of an @JsonUnwrapped member ---
 
     /** Inner type whose fields arrive as keys of the enclosing object. */
     public static class Address {
@@ -555,7 +554,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: an unwrapped member's fields are reported as promoted keys, by wire name")
+    @DisplayName("an unwrapped member's fields are reported as promoted keys, by wire name")
     void shouldReportUnwrappedMembersAsPromotedKeys() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(UnwrappedDto.class);
@@ -577,7 +576,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: a setter-backed unwrapped member is promoted — the Lombok shape")
+    @DisplayName("a setter-backed unwrapped member is promoted — the Lombok shape")
     void shouldPromoteASetterBackedUnwrappedMember() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(SetterBackedDto.class);
@@ -592,7 +591,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: a prefix on @JsonUnwrapped is applied to the promoted key")
+    @DisplayName("a prefix on @JsonUnwrapped is applied to the promoted key")
     void shouldApplyThePrefixToPromotedKeys() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(PrefixedUnwrappedDto.class);
@@ -607,7 +606,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: nested unwrapping chains the transformers and records both levels")
+    @DisplayName("nested unwrapping chains the transformers and records both levels")
     void shouldChainTransformersThroughNestedUnwrapping() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(NestedUnwrappedDto.class);
@@ -619,12 +618,12 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: two prefixed members sharing an inner field name both compose")
+    @DisplayName("two prefixed members sharing an inner field name both compose")
     void shouldComposeTwoPrefixedMembersSharingAnInnerFieldName() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
 
         // Jackson binds h_street and w_street unambiguously, so refusing this would break a working
-        // application. Keying the promoted map by the inner Java name used to collide here.
+        // application. The promoted map must not be keyed by the inner Java name alone.
         assertDoesNotThrow(() -> resolver.precompute(TwoPrefixedDto.class));
         assertEquals(
                 new PromotedField(Home.class, "street", List.of("home")),
@@ -635,14 +634,14 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: a promoted key does not shadow a same-named field of the owner")
+    @DisplayName("a promoted key does not shadow a same-named field of the owner")
     void shouldNotLetAPromotedKeyShadowAnOwnerField() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(ShadowingDto.class);
 
-        // Two distinct wire keys must stay distinct. Injecting the promoted key into the projection
-        // collapsed both onto `street`, so the owner's metadata won and the inner field's policies
-        // never ran while the owner's were applied to a value never declared for them.
+        // Two distinct wire keys must stay distinct. The promoted key must not be injected into
+        // the projection, or both would collapse onto `street` and the owner's metadata would be applied
+        // to a value it never declared.
         assertEquals(
                 "street",
                 resolver.logicalName(ShadowingDto.class, "owner_street"),
@@ -659,7 +658,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: an owner property claiming a promoted key keeps it, because that is what Jackson binds")
+    @DisplayName("an owner property claiming a promoted key keeps it, because that is what Jackson binds")
     void shouldLeaveAContestedKeyToTheOwnersOwnProperty() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(UnwrappedDto.class);
@@ -669,7 +668,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: an alias on an unwrapped member's field is promoted too")
+    @DisplayName("an alias on an unwrapped member's field is promoted too")
     void shouldPromoteAnInnerFieldsAlias() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(AliasedUnwrappedDto.class);
@@ -683,7 +682,7 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("GH-376: a type with no unwrapped member reports no promoted keys")
+    @DisplayName("a type with no unwrapped member reports no promoted keys")
     void shouldReportNoPromotedKeysForAnOrdinaryType() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(PlainDto.class);

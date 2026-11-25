@@ -36,31 +36,27 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 2.4 RED tests for the {@code json.jsonProfile} global default tier in
+ * Tests for the {@code json.jsonProfile} global default tier in
  * {@link JsonSerdeProvider}: when the serde bag carries no (blank) {@code jsonProfile},
  * {@code resolveMapper} must fall to the {@code JsonConfig.jsonProfile()} global default before
  * the {@code vertx} floor.
  *
- * <p>The three given/when/then scenarios match the plan exactly:
+ * <p>The three given/when/then scenarios:
  * <ul>
  *   <li><em>globalAppliesWhenBagBlank</em> — bag absent, {@code json.jsonProfile="c"} ⇒
  *       uses the strict mapper registered as "c" (rejects string→int coercion)</li>
  *   <li><em>bagIdOverGlobal</em> — bag {@code jsonProfile="b"}, {@code json.jsonProfile="c"}
  *       ⇒ uses the mapper registered as "b" (rejects string→int coercion for "b"-profile)</li>
  *   <li><em>vertiqueFloor</em> — bag blank, no global ⇒ uses the registry's {@code vertique} mapper,
- *       which accepts string→int coercion (FR-JSON-057)</li>
+ *       which accepts string→int coercion</li>
  * </ul>
  *
  * <p>Observable distinction: the strict no-coercion profile registered as "b" and "c" disables
  * {@link MapperFeature#ALLOW_COERCION_OF_SCALARS}. Deserializing {@code {"count":"5"}} into a
  * {@code Counter} record succeeds with the permissive {@code vertx} mapper but throws
  * {@link DeserializationException} with the strict profiles.
- *
- * <p><strong>RED discipline:</strong> {@link JsonSerdeProvider#resolveMapper} currently does not
- * accept {@link JsonConfig} as a constructor parameter. All three tests will fail to compile until
- * the green step adds the {@link JsonConfig} constructor parameter and wires the global tier.
  */
-@DisplayName("JsonSerdeProvider global json.jsonProfile default tier (Slice 2.4)")
+@DisplayName("JsonSerdeProvider global json.jsonProfile default tier")
 class JsonSerdeProviderGlobalDefaultTest {
 
     // --- Fixtures ---
@@ -97,16 +93,11 @@ class JsonSerdeProviderGlobalDefaultTest {
     /**
      * Builds a {@link JsonSerdeProvider} wired with the given {@link JsonConfig}.
      *
-     * <p><strong>RED:</strong> {@link JsonSerdeProvider} does not yet accept a {@link JsonConfig}
-     * constructor parameter — this call will fail to compile until the green step adds it.
-     *
      * @param registry the profile registry
      * @param jsonConfig the global JSON config carrying {@code json.jsonProfile}
      * @return the wired provider
      */
     private static JsonSerdeProvider providerWith(DefaultJsonMapperProfileRegistry registry, JsonConfig jsonConfig) {
-        // RED: JsonSerdeProvider(registry, jsonConfig) does not compile yet.
-        // Green step changes the constructor to accept JsonConfig as a second parameter.
         return new JsonSerdeProvider(registry, jsonConfig);
     }
 
@@ -151,8 +142,7 @@ class JsonSerdeProviderGlobalDefaultTest {
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // When: bag has no jsonProfile but json.jsonProfile="c" (a strict profile)
-            // RED: provider does not accept JsonConfig yet — compile error. Once green, the strict
-            // mapper for "c" rejects string->int and throws DeserializationException.
+            // The strict mapper for "c" rejects string->int and throws DeserializationException.
             assertThrows(
                     DeserializationException.class,
                     () -> deserialize(provider, emptyBag()),
@@ -171,8 +161,7 @@ class JsonSerdeProviderGlobalDefaultTest {
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // When: bag carries "b"; global is "c". Both are strict, so coercion is rejected.
-            // This already works once JsonConfig is wired because the bag id wins by design.
-            // RED: compile error until the JsonConfig parameter is added.
+            // The bag id wins by design.
             assertThrows(
                     DeserializationException.class,
                     () -> deserialize(provider, bagWith("b")),
@@ -181,7 +170,7 @@ class JsonSerdeProviderGlobalDefaultTest {
     }
 
     @Nested
-    @DisplayName("vertiqueFloor: bag blank + no global → permissive vertique mapper accepts coercion (FR-JSON-057)")
+    @DisplayName("vertiqueFloor: bag blank + no global → permissive vertique mapper accepts coercion")
     class VertiqueFloor {
 
         @Test
@@ -194,8 +183,7 @@ class JsonSerdeProviderGlobalDefaultTest {
             // The permissive vertique mapper accepts string->int coercion, so deserialization succeeds.
             assertDoesNotThrow(
                     () -> deserialize(provider, emptyBag()),
-                    "bag blank + no global must use the permissive vertique mapper (accepts string->int coercion,"
-                            + " FR-JSON-057)");
+                    "bag blank + no global must use the permissive vertique mapper (accepts string->int coercion)");
         }
     }
 
@@ -221,10 +209,10 @@ class JsonSerdeProviderGlobalDefaultTest {
         }
     }
 
-    // --- TP-001 (T013): blank bag resolves vertique; bag system resolves the registry's system copy ---
+    // --- Blank bag resolves vertique; bag system resolves the registry's system copy ---
 
     /**
-     * TP-001 (T013): a blank serde bag must resolve the registry's {@code vertique} mapper — not the
+     * A blank serde bag must resolve the registry's {@code vertique} mapper — not the
      * raw {@link DatabindCodec#mapper()} floor — and an explicit bag {@code jsonProfile="system"} must
      * resolve the registry's {@code system} mapper copy, never {@code DatabindCodec.mapper()} itself.
      * Supporting structural check: {@link JsonSerdeProvider}, {@link JacksonKafkaSerializer} and
@@ -241,17 +229,10 @@ class JsonSerdeProviderGlobalDefaultTest {
      * {@code DatabindCodec.mapper()} directly; and no production file in this package mentions
      * {@code DatabindCodec}.
      *
-     * <p><strong>Expected initial (RED) result:</strong> today {@link JsonSerdeProvider}'s constructor
-     * reads the raw {@code jsonConfig.jsonProfile()} (blank ⇒ {@code null} {@code globalDefaultMapper}),
-     * so a blank bag falls through to {@code DatabindCodec.mapper()} — the first {@code assertSame}
-     * fails. {@code resolveMapper} also short-circuits an explicit {@code "system"} bag id straight to
-     * {@code DatabindCodec.mapper()} (the raw singleton, not the registry's {@code system} copy) — the
-     * second {@code assertSame} fails and the {@code assertNotSame} also fails (the resolved mapper IS
-     * {@code DatabindCodec.mapper()} today). The structural check is already green (both files still
-     * reference {@code DatabindCodec} today, so it stays red for the token-removal half until L03).
-     *
-     * <p><strong>Sensitivity proof:</strong> restoring the null/raw floor makes the first assertion
-     * fail again — the test cannot pass vacuously.
+     * <p><strong>Sensitivity proof:</strong> a blank bag that fell through to the raw
+     * {@code DatabindCodec.mapper()} floor would fail the first assertion, and an explicit
+     * {@code "system"} bag id short-circuited to the raw singleton would fail the second and the
+     * {@code assertNotSame} — the test cannot pass vacuously.
      */
     @Test
     @DisplayName("blankBagResolvesVertiqueAndBagSystemResolvesSystem: blank bag -> registry vertique mapper; "
@@ -282,11 +263,11 @@ class JsonSerdeProviderGlobalDefaultTest {
     }
 
     /**
-     * Structural backstop for TP-001: scans the production source of {@link JsonSerdeProvider},
+     * Structural backstop for the identity assertions above: scans the production source of {@link JsonSerdeProvider},
      * {@link JacksonKafkaSerializer} and {@link JacksonKafkaDeserializer} for the {@code DatabindCodec}
      * token. A backstop, not a behavior test — the {@code assertSame}/{@code assertNotSame} assertions
      * above are the primary proof; this guards against a straggler reference re-introducing the direct
-     * {@code DatabindCodec} coupling once the mapper-identity assertions go green.
+     * {@code DatabindCodec} coupling.
      *
      * @throws IOException if a production source file cannot be read
      */
@@ -302,11 +283,11 @@ class JsonSerdeProviderGlobalDefaultTest {
             assertFalse(
                     contents.contains("DatabindCodec"),
                     fileName + " must not reference DatabindCodec — profiles (via the registry) are the only"
-                            + " mapper source (T013)");
+                            + " mapper source");
         }
     }
 
-    // --- Precedence regression guards (review findings) ---
+    // --- Precedence guards ---
 
     /**
      * Regression guard: an explicit bag {@code jsonProfile="system"} must resolve to the registry's

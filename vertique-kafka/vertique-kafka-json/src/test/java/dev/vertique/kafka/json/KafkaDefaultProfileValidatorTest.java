@@ -28,7 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 2.4 RED tests for {@link KafkaDefaultProfileValidator} — the kafka-json per-boundary
+ * Tests for {@link KafkaDefaultProfileValidator} — the kafka-json per-boundary
  * fail-fast seam for {@code kafka.jsonProfile}.
  *
  * <p>Mirrors the {@code JaxRsDefaultProfileValidatorTest} pattern: a real Dagger component installs
@@ -41,19 +41,13 @@ import org.junit.jupiter.api.Test;
  * <p>Verifies that:
  * <ul>
  *   <li>an unknown {@code kafka.jsonProfile} fails fast at VALIDATE even with zero
- *       consumers/producers configured (inert boundary — FR-JSON-050);</li>
+ *       consumers/producers configured (inert boundary);</li>
  *   <li>shadowing: a bad {@code kafka.jsonProfile} still fails fast even when a
  *       per-binding profile could shadow it at runtime;</li>
  *   <li>a known id ({@code vertx}) constructs cleanly;</li>
  *   <li>an unset {@code kafka.jsonProfile} constructs cleanly (the validator no-ops on
  *       blank/absent).</li>
  * </ul>
- *
- * <p><strong>RED discipline:</strong> the {@link KafkaDefaultProfileValidator} stub currently does
- * NOT call {@code registry.profile(...)} — its constructor is a no-op. The <em>unknown</em> and
- * <em>shadowing</em> tests below will fail because the stub never throws
- * {@link JsonProfileConfigurationException}. The <em>known</em> and <em>unset</em> tests will pass
- * (the stub no-ops cleanly). This mix of red and passing tests is correct for a RED commit.
  */
 @DisplayName("KafkaDefaultProfileValidator")
 class KafkaDefaultProfileValidatorTest {
@@ -66,8 +60,6 @@ class KafkaDefaultProfileValidatorTest {
         // Forcing the Set<ComposeValidator> constructs KafkaDefaultProfileValidator, whose @Inject
         // ctor must resolve kafka.jsonProfile through the registry — an unregistered id throws.
         // No consumers or producers are configured here: the validator is inert of any binding state.
-        // RED: the stub ctor is a no-op, so this assertThrows will FAIL until the green step adds
-        // the validation call in KafkaDefaultProfileValidator.
         assertThrows(
                 JsonProfileConfigurationException.class,
                 component::composeValidators,
@@ -84,7 +76,6 @@ class KafkaDefaultProfileValidatorTest {
         // validator set must still throw.
         ShadowComponent component = DaggerKafkaDefaultProfileValidatorTest_ShadowComponent.create();
 
-        // RED: the stub ctor is a no-op, so this assertThrows will FAIL until the green step.
         assertThrows(
                 JsonProfileConfigurationException.class,
                 component::composeValidators,

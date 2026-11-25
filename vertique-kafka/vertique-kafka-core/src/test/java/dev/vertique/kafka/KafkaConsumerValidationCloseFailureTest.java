@@ -45,8 +45,8 @@ import org.slf4j.LoggerFactory;
  *       {@code null} (the rejection is unchanged), AND a WARN must be logged.</li>
  * </ol>
  *
- * <p>Both tests are RED before the fix (no WARN is emitted — the exception is swallowed
- * silently) and GREEN after ({@code log.warn(..., closeFailure)} is added).
+ * <p>In both cases the failure is logged with {@code log.warn(..., closeFailure)} rather than
+ * swallowed silently.
  *
  * <p>Log capture uses a Logback {@link ListAppender} attached to the
  * {@code KafkaConsumerValidation} class logger, mirroring the pattern in

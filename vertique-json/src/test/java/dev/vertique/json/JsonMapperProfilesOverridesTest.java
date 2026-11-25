@@ -21,9 +21,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the {@link JsonMapperProfiles#of(JsonProfileId, ObjectMapper, java.util.Collection)}
- * overload, verifying the defensive-copy, null-rejection, and unmodifiable/stable-list contracts
- * (FR-JSON-088), and that the pre-amendment two-argument {@code of(id, mapper)} factory keeps its
- * exact prior empty-overrides behavior.
+ * overload, verifying the defensive-copy, null-rejection, and unmodifiable/stable-list contracts,
+ * and that the two-argument {@code of(id, mapper)} factory yields empty overrides.
  */
 class JsonMapperProfilesOverridesTest {
 
@@ -72,8 +71,7 @@ class JsonMapperProfilesOverridesTest {
     }
 
     @Test
-    @DisplayName(
-            "of(id, mapper) — the pre-amendment two-arg factory — still yields an empty, unmodifiable override list")
+    @DisplayName("of(id, mapper) — the two-arg factory — still yields an empty, unmodifiable override list")
     void ofTwoArgBehaviorUnchangedEmptyOverrides() {
         JsonMapperProfile profile = JsonMapperProfiles.of(JsonProfileId.of("payments"), new ObjectMapper());
 

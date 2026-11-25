@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * (1) unknown-enum fallback enabled, (2) ISO-8601 java.time with offset preserved,
  * (3) BigDecimal for floats, (4) NON_NULL inclusion. Also verifies that BigDecimal serialization
  * stays as a JSON number (stock behavior), JsonObject round-trips correctly, and that Instant
- * output is byte-identical to the raw Vert.x mapper (NFR-JSON-012).
+ * output is byte-identical to the raw Vert.x mapper.
  */
 class JacksonDefaultsTest {
 
@@ -176,7 +176,7 @@ class JacksonDefaultsTest {
         }
 
         @Test
-        @DisplayName("ZonedDateTime serializes to a textual ISO-8601 node that parses back (FR-JSON Phase 1)")
+        @DisplayName("ZonedDateTime serializes to a textual ISO-8601 node that parses back")
         void zonedDateTime_serializesToIso8601() throws Exception {
             ObjectMapper mapper = applyDefaults();
             ZonedDateTime zdt = ZonedDateTime.parse("2024-01-15T10:30:00+02:00");
@@ -265,10 +265,10 @@ class JacksonDefaultsTest {
         }
     }
 
-    // --- Instant compatibility test (NFR-JSON-012) ---
+    // --- Instant compatibility test ---
 
     @Nested
-    @DisplayName("Instant serialization compatibility with the raw Vert.x mapper (NFR-JSON-012)")
+    @DisplayName("Instant serialization compatibility with the raw Vert.x mapper")
     class InstantCompat {
 
         @Test
@@ -286,11 +286,11 @@ class JacksonDefaultsTest {
             assertEquals(
                     vertxJson,
                     vertiqueJson,
-                    "vertique mapper Instant output must equal the vertx mapper's ISO_INSTANT output (NFR-JSON-012)");
+                    "vertique mapper Instant output must equal the vertx mapper's ISO_INSTANT output");
         }
 
         /**
-         * Reusable-helper guarantee (FR-JSON-047): when {@code apply()} is invoked on a caller-owned
+         * Reusable-helper guarantee: when {@code apply()} is invoked on a caller-owned
          * mapper that <em>already</em> had {@link VertxJsonSupport#module()} registered, the final
          * re-registration of {@code VertxModule} must still take effect so Vert.x's serializers stay
          * authoritative.

@@ -24,7 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Slice 2.1 RED tests for {@link JsonDefaultProfileValidator} — the global-default fail-fast seam.
+ * Tests for {@link JsonDefaultProfileValidator} — the global-default fail-fast seam.
  *
  * <p>Mirrors {@code EagerValidationTest} / {@code ComposeValidationStepTest}: a real Dagger component
  * installs {@link JsonRuntimeModule} plus a test module supplying {@code @VertxConfig JsonObject} and a
@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
  *
  * <ul>
  *   <li>an unregistered {@code json.jsonProfile} id throws {@link JsonProfileConfigurationException}
- *       when the validator set is forced (FR-JSON-050);
+ *       when the validator set is forced;
  *   <li>a known id ({@code vertique}) constructs cleanly;
  *   <li>an unset {@code json.jsonProfile} constructs cleanly (the validator no-ops on blank/absent).
  * </ul>

@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests proving {@link KafkaConsumerValidation#validateAndBuild} validates the
  * {@code jsonProfile} on <strong>both</strong> the enabled and disabled paths (fail-fast
- * parity, finding W-D).
+ * parity).
  *
  * <p>An ENABLED consumer builds the deserializer via {@link KafkaSerdeRegistry#deserializer}, which
  * for the JSON format runs {@code JsonSerdeProvider.resolveMapper(serdeConfig)} and throws
@@ -226,8 +226,8 @@ class KafkaConsumerValueJsonProfileValidationTest {
     void disabledConsumerWithUnknownValueJsonProfileFailsValidation() {
         // Given: a DISABLED consumer whose jsonProfile is an unknown id.
         // When: validateAndBuild runs. Then: the entry is rejected (null) with a recorded violation
-        // naming the format — the disabled path now validates the profile via a build-then-close
-        // probe, instead of skipping it until the consumer is later enabled.
+        // naming the format — the disabled path validates the profile via a build-then-close
+        // probe, rather than skipping it until the consumer is later enabled.
         List<String> violations = new ArrayList<>();
         ConsumerEntry entry = buildBinding(
                 "off-bad-profile",

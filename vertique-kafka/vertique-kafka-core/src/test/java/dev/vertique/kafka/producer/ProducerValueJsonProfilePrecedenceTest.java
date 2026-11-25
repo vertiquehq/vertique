@@ -23,17 +23,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the producer {@code jsonProfile} precedence (slice 4.3): the resolved profile
+ * Unit tests for the producer {@code jsonProfile} precedence: the resolved profile
  * is threaded into the merged {@code serdeConfig} bag handed to {@link KafkaSerdeProvider#serializer}.
  *
- * <p>Precedence (FR-JSON-036C): per-method config {@code jsonProfile} &gt; per-producer config
+ * <p>Precedence: per-method config {@code jsonProfile} &gt; per-producer config
  * {@code jsonProfile} &gt; {@code @JsonProfile} annotation &gt;
  * {@code vertx} default. The cleanest observable for the resolution logic is the top-level
  * {@code "jsonProfile"} key on the serde bag the JSON provider receives (present only when
  * non-null/non-blank), so a bag-capturing fake JSON provider records what each method's serializer
  * was built with.
  *
- * <p>The {@code explicitSerializer_stillWins} case asserts the non-JSON-format path (FR-JSON-036D/037):
+ * <p>The {@code explicitSerializer_stillWins} case asserts the non-JSON-format path:
  * a method that resolves to a non-JSON format is built by that format's provider, which never sees
  * (and never consults) the JSON {@code jsonProfile} key.
  */
@@ -203,7 +203,7 @@ class ProducerValueJsonProfilePrecedenceTest {
         assertEquals(Boolean.FALSE, json.keyPresent.get());
     }
 
-    // --- Slice 2.4: kafka.jsonProfile boundary tier ---
+    // --- kafka.jsonProfile boundary tier ---
 
     /**
      * Builds a typed {@link KafkaConfig} whose top-level {@code kafka.jsonProfile} is set,
@@ -233,8 +233,6 @@ class ProducerValueJsonProfilePrecedenceTest {
         KafkaProducerFactory.resolveMethodSerializers(
                 PlainProducer.class, "p", typed.producerIndex().get("p"), typed, new KafkaSerdeRegistry(Set.of(json)));
 
-        // RED: KafkaConfig.jsonProfile field does not exist yet AND the chain is not extended,
-        // so the serde bag will NOT carry "b" — this assertion will fail red.
         assertEquals(
                 "b",
                 json.capturedProfile.get(),
@@ -277,7 +275,7 @@ class ProducerValueJsonProfilePrecedenceTest {
     }
 
     @Test
-    @DisplayName("producerVertiqueFloor: nothing set leaves the bag key absent (FR-JSON-057)")
+    @DisplayName("producerVertiqueFloor: nothing set leaves the bag key absent")
     void producerVertiqueFloor() {
         CapturingJsonProvider json = new CapturingJsonProvider();
 
@@ -287,7 +285,7 @@ class ProducerValueJsonProfilePrecedenceTest {
         assertEquals(Boolean.FALSE, json.keyPresent.get());
     }
 
-    // --- Non-JSON format ignores the profile (FR-JSON-036D/037) ---
+    // --- Non-JSON format ignores the profile ---
 
     @Test
     @DisplayName("explicitSerializer_stillWins: a non-JSON format method ignores the JSON jsonProfile")
@@ -302,7 +300,7 @@ class ProducerValueJsonProfilePrecedenceTest {
 
         // The avro provider built the serializer; the JSON capturing provider was never invoked.
         assertNull(json.capturedProfile.get());
-        // The resolved profile IS threaded into the serde bag regardless of format (FR-JSON-036D/037):
+        // The resolved profile IS threaded into the serde bag regardless of format:
         // the producer threads effectiveProfile="B" into the bag via buildSerdeConfig; a non-JSON
         // provider simply ignores the key. Asserting key presence pins that the routing stays
         // transparent to the provider — the framework never strips the key before dispatch.
@@ -310,6 +308,6 @@ class ProducerValueJsonProfilePrecedenceTest {
                 Boolean.TRUE,
                 avro.sawProfileKey.get(),
                 "jsonProfile key must be present in the serde bag even for non-JSON providers"
-                        + " (FR-JSON-036D) — providers that do not need it simply ignore it");
+                        + " — providers that do not need it simply ignore it");
     }
 }

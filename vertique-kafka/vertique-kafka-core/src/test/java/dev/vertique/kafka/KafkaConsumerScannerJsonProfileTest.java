@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
  * handler path and the router path as the sole per-binding profile selector, matching the codegen
  * lane (parity), and fails fast at BOOT time (a {@link ConfigurationException}; concretely the
  * registrar's {@link KafkaRegistrationException}, which extends it) when {@code @JsonProfile} is
- * placed at method level (FR-JSON-066).
+ * placed at method level.
  */
 @DisplayName("KafkaConsumerScanner @JsonProfile reflective lane")
 class KafkaConsumerScannerJsonProfileTest {
@@ -194,10 +194,10 @@ class KafkaConsumerScannerJsonProfileTest {
     @DisplayName(
             "methodLevelJsonProfileOnInheritedHandlerMethod_failsAtBoot: inherited method-level @JsonProfile throws naming method + TYPE")
     void methodLevelJsonProfileOnInheritedHandlerMethod_failsAtBoot() {
-        // FR-JSON-066 parity: the handler-read uses cls.getMethods() (inherited-inclusive), so the
+        // The handler read uses cls.getMethods() (inherited-inclusive), so the
         // method-level reject must scan the SAME member set. A @JsonProfile on a @KafkaHandler method
         // declared on the SUPER-interface must fail fast even though the @KafkaListener type (the
-        // Child) does not declare it. cls.getDeclaredMethods() misses it → currently no throw.
+        // Child) does not declare it. cls.getDeclaredMethods() would miss it.
         ConfigurationException ex = assertThrows(
                 ConfigurationException.class, () -> scanReflective(RouterInheritsMethodLevelJsonProfile.class));
         String message = ex.getMessage();
@@ -212,12 +212,12 @@ class KafkaConsumerScannerJsonProfileTest {
     @Test
     @DisplayName("generatedVsReflectiveParity_resolveSameProfileFromJsonProfile: reflective lane resolves 'parity-v2'")
     void generatedVsReflectiveParity_resolveSameProfileFromJsonProfile() {
-        // The reflective lane must resolve the @JsonProfile id "parity-v2"; the S2 golden test pins
-        // the codegen side to the same id, so equality of the two ids establishes lane parity.
+        // The reflective lane must resolve the @JsonProfile id "parity-v2"; the generated-binding golden test
+        // pins the codegen side to the same id, so equality of the two ids establishes lane parity.
         assertEquals("parity-v2", resolvedProfile(RouterParity.class));
     }
 
-    // --- Legacy attribute removal (Phase 3 contract) ---
+    // --- Legacy attribute removal ---
 
     @Test
     @DisplayName("kafkaListenerValueJsonProfileAttribute_noLongerExists: the legacy attribute method is gone")

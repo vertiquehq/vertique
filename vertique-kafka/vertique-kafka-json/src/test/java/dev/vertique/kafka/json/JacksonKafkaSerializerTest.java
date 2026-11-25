@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link JacksonKafkaSerializer}: successful serialization to JSON bytes
  * and custom {@link ObjectMapper} configuration propagation.
  *
- * <p>TP-002 (T013) additionally proves the no-arg {@link JacksonKafkaSerializer}/
+ * <p>Additionally proves the no-arg {@link JacksonKafkaSerializer}/
  * {@link JacksonKafkaDeserializer} constructors resolve {@link VertiqueJson#mapper()} lazily, per
  * call — not eagerly at construction — by building the no-arg serde <em>before</em>
  * {@link VertiqueJson#install} and exercising it <em>after</em>. {@code @AfterEach} restores the raw
@@ -42,10 +42,10 @@ class JacksonKafkaSerializerTest {
 
     record TestEvent(String name, int count) {}
 
-    /** TP-002 serializer fixture: {@code note} is left {@code null} to observe NON_NULL omission. */
+    /** Serializer fixture: {@code note} is left {@code null} to observe NON_NULL omission. */
     record NullableNoteEvent(String name, String note) {}
 
-    /** TP-002 deserializer mirror fixture: bound against a payload carrying an unknown property. */
+    /** Deserializer mirror fixture: bound against a payload carrying an unknown property. */
     record BoundEvent(String name, int count) {}
 
     @AfterEach
@@ -53,10 +53,10 @@ class JacksonKafkaSerializerTest {
         VertiqueJson.resetForTests();
     }
 
-    // --- TP-002: no-arg serializer/deserializer resolve the process mapper at use time ---
+    // --- No-arg serializer/deserializer resolve the process mapper at use time ---
 
     /**
-     * TP-002 (T013): {@code new JacksonKafkaSerializer<>()} is built <strong>before</strong>
+     * {@code new JacksonKafkaSerializer<>()} is built <strong>before</strong>
      * {@link VertiqueJson#install}. Serializing a record with a {@code null} property
      * <strong>after</strong> the install must omit that property — proof that the no-arg
      * constructor resolved {@link VertiqueJson#mapper()} lazily, at serialize time, not eagerly at
@@ -72,10 +72,9 @@ class JacksonKafkaSerializerTest {
      * property, after the install.
      * Then: the serialized bytes omit the {@code note} property entirely.
      *
-     * <p><strong>Expected initial (RED) result:</strong> today's no-arg constructor is
-     * {@code this(DatabindCodec.mapper())} — it captures the raw mapper eagerly at construction,
-     * before the install ever runs. The raw mapper has no {@code NON_NULL} inclusion, so
-     * {@code note} is emitted as JSON {@code null} and the assertion fails.
+     * <p>A no-arg constructor that captured the raw {@code DatabindCodec.mapper()} eagerly at
+     * construction, before the install runs, would emit {@code note} as JSON {@code null}, because
+     * the raw mapper has no {@code NON_NULL} inclusion, and the assertion would fail.
      *
      * <p><strong>Sensitivity proof:</strong> capturing {@code VertiqueJson.mapper()} eagerly in the
      * constructor (instead of resolving it per call) still fails this assertion — the timing, not
@@ -103,7 +102,7 @@ class JacksonKafkaSerializerTest {
     }
 
     /**
-     * TP-002 mirror case (T013): the no-arg {@link JacksonKafkaDeserializer} constructor.
+     * Mirror case: the no-arg {@link JacksonKafkaDeserializer} constructor.
      *
      * <p>Given: {@code new JacksonKafkaDeserializer<>(BoundEvent.class)} constructed before
      * {@code VertiqueJson.install(JsonProfileId.of("kafka-test"), lenientMapper)}, where
@@ -111,10 +110,9 @@ class JacksonKafkaSerializerTest {
      * When: the deserializer binds a payload carrying an unknown property, after the install.
      * Then: the deserialization succeeds and the known properties bind correctly.
      *
-     * <p><strong>Expected initial (RED) result:</strong> today's no-arg constructor is
-     * {@code this(type, DatabindCodec.mapper())} — captured eagerly, before the install. The raw
-     * Vert.x mapper has {@code FAIL_ON_UNKNOWN_PROPERTIES} enabled (Jackson default), so the unknown
-     * property is rejected and {@link DeserializationException} is thrown instead of binding.
+     * <p>A no-arg constructor that captured the raw {@code DatabindCodec.mapper()} eagerly, before
+     * the install, would reject the unknown property with {@link DeserializationException}, because
+     * the raw Vert.x mapper has {@code FAIL_ON_UNKNOWN_PROPERTIES} enabled (Jackson default).
      *
      * <p><strong>Sensitivity proof:</strong> eagerly capturing {@code VertiqueJson.mapper()} in the
      * constructor still fails this assertion — only per-call resolution (after the install has run)

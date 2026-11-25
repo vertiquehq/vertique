@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the {@link JsonMapperProfiles} factory, verifying that {@code of(...)} pairs the
- * given id with the given mapper, never mutates or copies the mapper (FR-JSON-009), and rejects
+ * given id with the given mapper, never mutates or copies the mapper, and rejects
  * null arguments.
  */
 class JsonMapperProfilesTest {

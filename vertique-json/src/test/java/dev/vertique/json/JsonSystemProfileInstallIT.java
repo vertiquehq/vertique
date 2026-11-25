@@ -56,7 +56,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.LoggerFactory;
 
 /**
- * Integration proof (TP-002) that a booted application installs the process JSON codec's mapper at
+ * Integration proof that a booted application installs the process JSON codec's mapper at
  * {@code CONFIGURE}, and that {@code json.systemProfile} either switches the whole process or fails
  * the boot.
  *
@@ -100,7 +100,7 @@ public class JsonSystemProfileInstallIT {
     }
 
     @Test
-    @DisplayName("TP-002: defaults install system, a second boot swaps, vertique switches the process, vertx fails")
+    @DisplayName("defaults install system, a second boot swaps, vertique switches the process, vertx fails")
     void defaultsInstallSystemVertiqueSwitchesAndVertxFails() throws Exception {
         Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();

@@ -166,14 +166,12 @@ class DefaultJsonMapperProfileRegistryTest {
     }
 
     /**
-     * GH-240 — an application profile built on {@link JacksonDefaults#apply(ObjectMapper)} is
+     * An application profile built on {@link JacksonDefaults#apply(ObjectMapper)} is
      * accepted.
      *
      * <p>The module document offers that helper as a sanctioned seed for an
-     * application profile, while the probe used to round-trip a {@link JsonObject} carrying an
-     * explicit null field. {@code apply} sets {@code NON_NULL} inclusion, so the field was dropped
-     * and structural equality failed — the registry rejected exactly the seed the module document
-     * promise. The probe now carries no null field, because omitting nulls is a
+     * application profile. {@code apply} sets {@code NON_NULL} inclusion, so the probe must not
+     * round-trip a {@link JsonObject} carrying an explicit null field: omitting nulls is a
      * serialization-inclusion policy rather than structural corruption.
      */
     @Test
@@ -195,7 +193,7 @@ class DefaultJsonMapperProfileRegistryTest {
     }
 
     /**
-     * GH-240 — a mapper that really does corrupt structure is still rejected, so dropping the null
+     * A mapper that really does corrupt structure is still rejected, so dropping the null
      * field from the payload did not disarm the probe.
      */
     @Test
@@ -223,7 +221,7 @@ class DefaultJsonMapperProfileRegistryTest {
     }
 
     /**
-     * TP-003 — the registry seeds exactly the reserved trio {@code system}/{@code vertique}/{@code
+     * The registry seeds exactly the reserved trio {@code system}/{@code vertique}/{@code
      * vertique-strict}; {@code system} differs from {@code vertique} only by the opinions {@code
      * applyOpinionated} sets plus comment leniency; {@code system} caches one stable mapper instance;
      * both reserved factories copy the raw Vert.x factory's {@link StreamReadConstraints}; and the
