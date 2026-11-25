@@ -109,6 +109,39 @@ class FilesRouteShadowingIT {
         }
     }
 
+    /** Open optional-suffix route beside a secured static route with the same literal text. */
+    @Path("/")
+    public static class OptionalSuffixResource {
+
+        /**
+         * Open route whose variable can match an empty string.
+         *
+         * @param ext the bound suffix
+         * @return the bound suffix echoed back
+         */
+        @GET
+        @Path("/opt{ext:(\\.json)?}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "optionalSuffixOpen")
+        public String open(@PathParam("ext") String ext) {
+            return "open=" + ext;
+        }
+
+        /**
+         * Secured static route.
+         *
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/opt")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "optionalSuffixStatic")
+        public String staticRoute() {
+            return "static";
+        }
+    }
+
     /** Open two-variable route beside a secured route whose constraint spans a path separator. */
     @Path("/repos")
     public static class SpanningConstraintResource {
@@ -441,6 +474,18 @@ class FilesRouteShadowingIT {
                     return body(client, port, "/files/other");
                 })
                 .andThen(r -> ctx.verify(() -> assertEquals("regex=other", r.result()))));
+    }
+
+    @Test
+    @DisplayName("A secured /opt is not shadowed by an open /opt{ext:(\\.json)?} whose variable can be empty")
+    void staticNotShadowedByEmptyMatchingVariable(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new OptionalSuffixResource(), port -> status(client, port, "/opt")
+                .compose(code -> {
+                    ctx.verify(() -> assertEquals(401, code, "anonymous /opt must hit the auth handler"));
+                    return body(client, port, "/opt.json");
+                })
+                .andThen(r -> ctx.verify(() -> assertEquals("open=.json", r.result()))));
     }
 
     @Test

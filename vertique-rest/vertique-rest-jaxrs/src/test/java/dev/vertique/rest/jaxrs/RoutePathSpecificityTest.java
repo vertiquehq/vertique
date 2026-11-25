@@ -398,4 +398,16 @@ class RoutePathSpecificityTest {
             assertMoreSpecific("/h/~a/b", "/h/{p:~a/b}");
         }
     }
+
+    @Nested
+    @DisplayName("a template without variables at equal literal characters")
+    class VariableFreeTemplate {
+
+        @Test
+        @DisplayName("a static route beats a variable route with the same literal text whose variable can be empty")
+        void staticBeatsEmptyMatchingVariable() {
+            assertMoreSpecific("/files", "/files{ext:(\\.json)?}");
+            assertMoreSpecific("/a/b", "/a/b{p:.*}");
+        }
+    }
 }

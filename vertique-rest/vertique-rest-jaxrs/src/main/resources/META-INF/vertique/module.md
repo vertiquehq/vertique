@@ -190,8 +190,9 @@ method and does not depend on declaration order:
 
 1. more literal characters first: every character of the template outside a `{…}` variable,
    separators included;
-2. then more path variables;
-3. then more variables that declare a regular expression (`{id:\d+}`, even `{x:[^/]+}`).
+2. at equal literal characters, a template without variables first;
+3. then more path variables;
+4. then more variables that declare a regular expression (`{id:\d+}`, even `{x:[^/]+}`).
 
 Two refinements apply:
 
@@ -207,17 +208,19 @@ Two refinements apply:
   - an `OperationHandlerContributor` still sees one registration, and a handler it adds goes to every
     route of the operation.
 
-  Alternatives that contribute equally to the key stay together. A constraint containing `\Q`, a backreference or an
-  inline flag is not split. A template with *k* such variables of *n* distinct ranks each registers
+  Alternatives that contribute equally to the key stay together. A constraint is not split when it
+  contains `\Q`, a backreference, an inline flag, its own named group or a nested character class,
+  or when an alternative does not compile on its own. A template with *k* such variables of *n* distinct ranks each registers
   up to *n*<sup>*k*</sup> routes, and each one is tried in turn on every request that reaches it.
   A variant route matches only paths the full template matches, and binds parameters exactly as the
   full template does.
 
-A route without variables outranks a variable route that matches the same path, because the
-variables use up some of the path's characters — unless a variable can match an empty string
-(`{ext:(\.json)?}`, `{p:.*}`), which the ranking cannot see. If two templates still tie, the registrar orders
-them by segment shape: at the first differing segment, static text beats a regex variable, which
-beats a plain variable; then the longer template wins; then the template string decides. **Routes
+A route without variables always outranks a variable route that matches the same path. It has at
+least as many literal characters, and at equal literal characters (a variable that can match an
+empty string, such as `/files{ext:(\.json)?}` beside `/files`) rule 2 puts it first. If two
+templates still tie, the registrar orders them by segment shape: at the first differing segment,
+static text beats a regex variable, which beats a plain variable; then the longer template wins;
+then the template with fewer `{…}` variables; then the template string decides. **Routes
 that rank equal have no guaranteed order:** when both can match one path, make them distinct.
 
 **Overlapping routes with different security.** This ranking can let a route whose literal text

@@ -109,12 +109,21 @@ final class RoutePathSpecificity {
                     literals + other.literals, variables + other.variables, regexVariables + other.regexVariables);
         }
 
-        /** Orders the more specific key first: L descending, then V, then R. */
+        /**
+         * Orders the more specific key first: L descending; at equal L a key without variables first,
+         * because such a template matches only its own path while a variable that can match an empty
+         * string ({@code /files{ext:(\.json)?}}) would otherwise outrank it there; then V descending,
+         * then R descending.
+         */
         @Override
         public int compareTo(Key other) {
             int byLiterals = Integer.compare(other.literals, literals);
             if (byLiterals != 0) {
                 return byLiterals;
+            }
+            boolean fixed = variables == 0;
+            if (fixed != (other.variables == 0)) {
+                return fixed ? -1 : 1;
             }
             int byVariables = Integer.compare(other.variables, variables);
             if (byVariables != 0) {
