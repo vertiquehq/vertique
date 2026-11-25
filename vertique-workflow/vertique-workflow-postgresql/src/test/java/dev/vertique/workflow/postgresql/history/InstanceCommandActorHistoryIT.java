@@ -79,6 +79,7 @@ public class InstanceCommandActorHistoryIT {
             scenario.cancel(service("ops"), named);
             WorkflowInstanceId nobody = scenario.start(null, "actor-nobody", Map.of());
             scenario.runToIdle(nobody);
+            scenario.cancel(null, nobody);
             WorkflowInstanceId anonymous =
                     scenario.start(dev.vertique.security.SecurityIdentity.anonymous(), "actor-anonymous", Map.of());
             scenario.runToIdle(anonymous);
@@ -94,8 +95,9 @@ public class InstanceCommandActorHistoryIT {
             WorkflowHistoryEntry cancelled = only(namedLog, WorkflowEntryType.CANCELLED);
             assertThat(cancelled.actor()).isEqualTo(new WorkflowActor.Service("ops"));
 
-            // And a start with no security context is logged with no actor
+            // And a start and a cancellation with no security context are logged with no actor
             assertThat(only(nobodyLog, WorkflowEntryType.START).actor()).isNull();
+            assertThat(only(nobodyLog, WorkflowEntryType.CANCELLED).actor()).isNull();
 
             // And a start by an anonymous caller is logged with the anonymous actor
             assertThat(only(anonymousLog, WorkflowEntryType.START).actor()).isEqualTo(new WorkflowActor.Anonymous());
@@ -127,6 +129,32 @@ public class InstanceCommandActorHistoryIT {
             assertThat(retried.actor()).isEqualTo(new WorkflowActor.User("r-1"));
             WorkflowHistoryEntry migrated = only(log, WorkflowEntryType.WORKFLOW_MIGRATED);
             assertThat(migrated.actor()).isEqualTo(new WorkflowActor.Service("deployer"));
+        } finally {
+            reading.close();
+        }
+    }
+
+    @Test
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
+    @DisplayName("a retry and a migration with no identity are logged with no actor")
+    void aRetryAndAMigrationWithNoIdentityNameNobody(Vertx vertx) {
+        PgConnectOptions options = HistoryGraph.options(db);
+        Pool reading = HistoryGraph.pool(vertx, options);
+        try (MigrationScenario scenario = MigrationScenario.atReplyWait(db.toPoolConfig())) {
+            WorkflowInstanceHistoryService history =
+                    HistoryGraph.reading(vertx, options, reading).historyService();
+
+            // Given an instance that failed at its wait, retried and then migrated by callers with no identity
+            scenario.failAtWait();
+            scenario.retry();
+            scenario.migrate();
+
+            // When its log is read through the history service
+            List<WorkflowHistoryEntry> log = await(history.entries(scenario.id(), 0, 500));
+
+            // Then neither the retry entry nor the migration entry names an actor
+            assertThat(only(log, WorkflowEntryType.RETRIED).actor()).isNull();
+            assertThat(only(log, WorkflowEntryType.WORKFLOW_MIGRATED).actor()).isNull();
         } finally {
             reading.close();
         }

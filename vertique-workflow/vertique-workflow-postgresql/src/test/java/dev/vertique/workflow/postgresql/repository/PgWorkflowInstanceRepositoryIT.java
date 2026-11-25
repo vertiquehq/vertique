@@ -228,6 +228,46 @@ public class PgWorkflowInstanceRepositoryIT {
                     assertEquals(1L, stored.definitionVersion());
                     assertEquals(WorkflowStatus.RUNNING, stored.status());
                     assertEquals("start", stored.currentStepId());
+                    assertNull(stored.metadata(), "a null durable context reads back as null");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("insert + findById reads a null state, step and metadata back as null")
+    void insertAndFindByIdReadsNullStateStepAndMetadataAsNull(VertxTestContext ctx) {
+        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
+        Instant now = Instant.now();
+        WorkflowInstance pending = new WorkflowInstance(
+                id,
+                "order-fulfillment",
+                1L,
+                "abc123hash",
+                0L,
+                WorkflowStatus.PENDING,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now,
+                now,
+                null);
+
+        pool.withTransaction(tx -> repository.insert(pending, tx))
+                .compose(v -> repository.findById(id))
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent(), "findById must return the inserted instance");
+                    WorkflowInstance stored = found.get();
+                    assertEquals(WorkflowStatus.PENDING, stored.status());
+                    assertNull(stored.currentStepId(), "a null step reads back as null");
+                    assertNull(stored.stateJson(), "a null state reads back as null, not as an empty document");
+                    assertNull(stored.metadata(), "a null durable context reads back as null");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

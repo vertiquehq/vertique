@@ -111,6 +111,8 @@ public class UpgradeConversionIT {
 
     static final PostgresContainer timersDb = new PostgresContainer().withDatabaseName("wf_upgrade_timers_it");
 
+    static final PostgresContainer timerOrderDb = new PostgresContainer().withDatabaseName("wf_upgrade_order_it");
+
     static final PostgresContainer holdBackDb = new PostgresContainer().withDatabaseName("wf_upgrade_holdback_it");
 
     static final PostgresContainer branchesDb = new PostgresContainer().withDatabaseName("wf_upgrade_branches_it");
@@ -448,6 +450,77 @@ public class UpgradeConversionIT {
                             SELECT status || '|' || current_step_id || '|' || wait_type
                             FROM workflow_instances WHERE id = '%s'
                             """.formatted(instanceC))).containsExactly("WAITING|review|TASK");
+        }
+    }
+
+    @Test
+    void severalScheduledTimersOfOneInstanceKeepTheirFireOrderAndKinds() throws Exception {
+        // Given a database at the previous release's schema holding one instance with four scheduled timers (one of
+        // each purpose), a cancelled timer and a failed timer, written in an order unlike their fire times
+        flyway(timerOrderDb).target("1").load().migrate();
+        UUID instance = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID standalone = UUID.randomUUID();
+        UUID reminder = UUID.randomUUID();
+        UUID timeout = UUID.randomUUID();
+        UUID due = UUID.randomUUID();
+        UUID cancelled = UUID.randomUUID();
+        UUID failed = UUID.randomUUID();
+        Instant base = Instant.parse("2026-06-01T10:00:00Z");
+        Instant fireStandalone = base.plusSeconds(120);
+        Instant fireReminder = base.plusSeconds(60);
+        Instant fireTimeout = base.plusSeconds(180);
+        Instant fireDue = base.plusSeconds(240);
+        try (Connection connection = connection(timerOrderDb)) {
+            ReleasedRows.instanceAtTimer(connection, TIMERS_ID, instance, "pause", standalone, "order-plan-hash");
+            ReleasedRows.timer(
+                    connection, standalone, instance, "pause", "SCHEDULED", fireStandalone, "STANDALONE", null, null);
+            ReleasedRows.timer(connection, due, instance, "review", "SCHEDULED", fireDue, "TASK_DUE", taskId, null);
+            ReleasedRows.timer(
+                    connection,
+                    timeout,
+                    instance,
+                    "await-ship",
+                    "SCHEDULED",
+                    fireTimeout,
+                    "SIGNAL_TIMEOUT",
+                    null,
+                    null);
+            ReleasedRows.timer(
+                    connection, reminder, instance, "review", "SCHEDULED", fireReminder, "TASK_REMINDER", taskId, null);
+            ReleasedRows.timer(connection, cancelled, instance, "pause", "CANCELLED", base, "STANDALONE", null, null);
+            ReleasedRows.timer(
+                    connection, failed, instance, "review", "FAILED", base.plusSeconds(30), "TASK_DUE", taskId, null);
+        }
+
+        // When the database is migrated to the latest version
+        flyway(timerOrderDb).load().migrate();
+
+        // Then each scheduled timer has one command of the kind its purpose maps to, in ascending fire order
+        try (Connection connection = connection(timerOrderDb)) {
+            assertThat(timerCommand(connection, reminder))
+                    .containsExactly("TIMER|REMINDER|PENDING|1|" + taskId + "|" + fireReminder + "|" + fireReminder);
+            assertThat(timerCommand(connection, standalone))
+                    .containsExactly("TIMER|FIRE|PENDING|2|-|" + fireStandalone + "|" + fireStandalone);
+            assertThat(timerCommand(connection, timeout))
+                    .containsExactly("TIMER|TIMEOUT|PENDING|3|-|" + fireTimeout + "|" + fireTimeout);
+            assertThat(timerCommand(connection, due))
+                    .containsExactly("TIMER|DUE|PENDING|4|" + taskId + "|" + fireDue + "|" + fireDue);
+
+            // And a cancelled timer and a failed timer get no command
+            assertThat(rows(connection, """
+                            SELECT coalesce(command_id::text, '-') FROM workflow_timers
+                            WHERE timer_id IN ('%s', '%s')
+                            """.formatted(cancelled, failed))).containsExactly("-", "-");
+            assertThat(rows(connection, "SELECT count(*) FROM workflow_commands"))
+                    .containsExactly("4");
+
+            // And the instance's queue counts the four converted commands
+            assertThat(rows(
+                            connection,
+                            "SELECT next_seq FROM workflow_command_queues WHERE workflow_id = '%s'"
+                                    .formatted(instance)))
+                    .containsExactly("5");
         }
     }
 

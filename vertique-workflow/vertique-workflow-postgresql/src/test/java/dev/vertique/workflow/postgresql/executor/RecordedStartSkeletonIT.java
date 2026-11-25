@@ -25,8 +25,10 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.util.Collections;
 import java.util.List;
@@ -72,6 +74,15 @@ class RecordedStartSkeletonIT {
             assertThat(recorded.stateJson()).isNull();
             assertThat(recorded.currentStepId()).isNull();
             assertThat(recorded.businessKey()).isEqualTo("order-1");
+            Row subject = await(fixture.observer()
+                            .preparedQuery("SELECT subject_type, subject_id, subject_version FROM workflow_instances"
+                                    + " WHERE id = $1")
+                            .execute(Tuple.of(id.value())))
+                    .iterator()
+                    .next();
+            assertThat(subject.getValue("subject_type")).isNull();
+            assertThat(subject.getValue("subject_id")).isNull();
+            assertThat(subject.getValue("subject_version")).isNull();
             CommandRow command = fixture.commandOf(id);
             assertThat(command.kind()).isEqualTo("START");
             assertThat(command.state()).isEqualTo("PENDING");
@@ -141,6 +152,57 @@ class RecordedStartSkeletonIT {
             assertThat(fixture.initialStates).isEmpty();
             assertThat(fixture.intentCalls).isEmpty();
             assertThat(fixture.intentsOf(id)).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a cancel recorded in a caller transaction follows that transaction: rollback undoes it, commit shows it")
+    void cancelInACallerTransactionFollowsTheCallersCommitOrRollback() {
+        try (ExecutorFixture fixture = ExecutorFixture.open(db.toPoolConfig())) {
+            // Given a pending instance recorded and committed with the executor stopped
+            Node node = fixture.node("engine").build();
+            WorkflowInstanceId id = node.record(startOf("cancelled-by-caller"));
+            List<String> historyBefore = fixture.historyOf(id);
+
+            // When a caller cancels it in its transaction and then rolls the transaction back
+            Throwable rolledBack = failureOf(
+                    node.pool.withTransaction(tx -> node.engine
+                            .cancel(id, "rolled back", tx)
+                            .compose(done -> Future.failedFuture(new IllegalStateException("the caller rolls back")))),
+                    AWAIT);
+
+            // Then the instance, its start command and its history are as they were
+            assertThat(rolledBack).hasMessageContaining("the caller rolls back");
+            assertThat(fixture.instanceOf(id).status()).isEqualTo("PENDING");
+            assertThat(fixture.commandOf(id).state()).isEqualTo("PENDING");
+            assertThat(fixture.historyOf(id)).isEqualTo(historyBefore);
+
+            // When a caller cancels it in its transaction and, before committing, another connection reads
+            CompletableFuture<Void> recorded = new CompletableFuture<>();
+            Promise<Void> commit = Promise.promise();
+            Future<Void> cancelled = node.pool.withTransaction(
+                    tx -> node.engine.cancel(id, "cancelled by the caller", tx).compose(done -> {
+                        recorded.complete(null);
+                        return commit.future();
+                    }));
+            await(Future.fromCompletionStage(recorded));
+
+            // Then the cancel is not visible yet: no status change, no command change, no history entry
+            assertThat(fixture.instanceOf(id).status()).isEqualTo("PENDING");
+            assertThat(fixture.commandOf(id).state()).isEqualTo("PENDING");
+            assertThat(fixture.historyOf(id)).isEqualTo(historyBefore);
+
+            // When the caller commits
+            commit.complete();
+            await(cancelled);
+
+            // Then the instance and its start command are cancelled, and each is logged once
+            assertThat(fixture.instanceOf(id).status()).isEqualTo("CANCELLED");
+            assertThat(fixture.commandOf(id).state()).isEqualTo("CANCELLED");
+            List<String> history = fixture.historyOf(id);
+            assertThat(Collections.frequency(history, "CANCELLED")).isEqualTo(1);
+            assertThat(Collections.frequency(history, "COMMAND_CANCELLED")).isEqualTo(1);
         }
     }
 

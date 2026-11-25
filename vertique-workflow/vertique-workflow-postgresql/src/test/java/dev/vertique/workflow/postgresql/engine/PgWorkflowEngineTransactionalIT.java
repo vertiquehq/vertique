@@ -42,7 +42,9 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -360,6 +362,20 @@ public class PgWorkflowEngineTransactionalIT {
 
         simpleEngine
                 .start(cmd)
+                .compose(started -> pool.preparedQuery("SELECT (SELECT COUNT(*) FROM workflow_instances WHERE id = $1)"
+                                + " AS instances, (SELECT COUNT(*) FROM workflow_dedup WHERE workflow_id = $1)"
+                                + " AS dedups")
+                        .execute(Tuple.of(started.value()))
+                        .map(rs -> {
+                            // Right after the call returns, before the executor is awaited: the start's own
+                            // transaction has already committed the instance and its dedup row.
+                            Row row = rs.iterator().next();
+                            ctx.verify(() -> {
+                                assertEquals(1L, row.getLong("instances"), "the instance row is committed on return");
+                                assertEquals(1L, row.getLong("dedups"), "the dedup row is committed on return");
+                            });
+                            return started;
+                        }))
                 .compose(started -> simpleEngine
                         .executionProbe()
                         .awaitIdle(started, IDLE_TIMEOUT)

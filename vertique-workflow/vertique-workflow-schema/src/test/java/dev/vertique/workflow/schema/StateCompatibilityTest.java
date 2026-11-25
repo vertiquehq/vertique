@@ -381,4 +381,40 @@ class StateCompatibilityTest {
         assertThat(unchanged).isEmpty();
         assertThat(changed).contains("root.label");
     }
+
+    @Test
+    @DisplayName("a source with alternatives needs a target with an equal composition under the same keyword")
+    void sourceCompositionNeedsAnEqualCompositionInTheTarget() {
+        // Given: a source whose property v is one of a string or an integer (anyOf), and four targets read from JSON
+        // text: an equal composition, other alternatives, the same alternatives under oneOf, and no composition
+        String property = "{\"type\":\"object\",\"properties\":{\"v\":%s}}";
+        Map<Class<?>, String> schemas = Map.of(
+                Forest.class, property.formatted("{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"),
+                ForestPlus.class, property.formatted("{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"),
+                ForestRetypedLabel.class,
+                        property.formatted("{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"boolean\"}]}"),
+                Order.class, property.formatted("{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"),
+                OrderPlus.class, property.formatted("{}"));
+        PayloadSchemaGenerator generator =
+                new PayloadSchemaGenerator(
+                        new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults(), Optional.empty()) {
+                    @Override
+                    JsonObject describe(Type type) {
+                        return new JsonObject(schemas.get(type));
+                    }
+                };
+        WorkflowStateCompatibility comparison = new SchemaStateCompatibility(generator);
+
+        // When: the source is compared with each target
+        Optional<String> equal = comparison.firstIncompatibility(Forest.class, ForestPlus.class);
+        Optional<String> otherAlternatives = comparison.firstIncompatibility(Forest.class, ForestRetypedLabel.class);
+        Optional<String> otherKeyword = comparison.firstIncompatibility(Forest.class, Order.class);
+        Optional<String> none = comparison.firstIncompatibility(Forest.class, OrderPlus.class);
+
+        // Then: only the equal composition is compatible, and each refusal names the property
+        assertThat(equal).isEmpty();
+        assertThat(otherAlternatives).contains("v");
+        assertThat(otherKeyword).contains("v");
+        assertThat(none).contains("v");
+    }
 }
