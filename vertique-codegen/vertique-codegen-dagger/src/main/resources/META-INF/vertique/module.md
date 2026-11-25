@@ -157,13 +157,16 @@ Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elem
 ### `RegistrationCollector` and `RegistrationModuleEmitter`
 
 `RegistrationCollector` reads direct and compiler-generated container annotation mirrors for
-`@RegisterAs` and `@RegisterIntoSet`. It suppresses opted-out types, rejects non-concrete types,
-requires exactly one Jakarta or Javax `@Inject` constructor, and checks implementation
-assignability to every declared target. `RegistrationModuleEmitter` writes valid registrations as
+`@RegisterAs` and `@RegisterIntoSet`. It suppresses opted-out types. A non-concrete type, a type
+without exactly one Jakarta or Javax `@Inject` constructor, and an implementation that is not
+assignable to a declared target are each a compile **error** (unlike a marker-found type with no
+`@Inject` constructor, which is skipped with a note). `RegistrationModuleEmitter` writes valid registrations as
 abstract `@Binds` methods in `GeneratedRegistrationsModule`, adding `@IntoSet` for set
 registrations. A required registration (a signal source class) is bound as its target parameterized with wildcards,
 adds its transport module to the module's `includes` once, and is an error rather than a skipped warning when the
-generated package cannot reference it. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
+generated package cannot reference its implementation, its target or its transport module. For `@RegisterAs` and
+`@RegisterIntoSet` the same cause skips the registration with a mandatory compiler warning, which `-nowarn`
+does not silence. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
 contributions are supported.
 
 ### `SignalSourceCollector`
@@ -171,14 +174,16 @@ contributions are supported.
 Collects classes annotated `@WorkflowSignalSource` and turns each into a required `Registration` per
 `@SignalSourceType` interface it implements, directly or through a supertype, carrying that marker's `module()`. It
 honors `@NoAutoWire`, rejects a class that is not concrete, requires exactly one `@Inject` constructor, and reports an
-error naming a class that implements no marked interface.
+error naming a class that implements no marked interface, or whose `@SignalSourceType(module = ...)` does not name a
+class.
 
 ### `GeneratedSignalSourceCollector`
 
 Predicts the class generated for a form-annotated interface and turns it into a required
 `Registration` that carries the target's `@SignalSourceType` module. It keeps the predicted names so the final round can
 report each one no processor generated, unless `RoundEnvironment.errorRaised()` is true. It honors `@NoAutoWire` and
-reads the form from the annotation types present in the round.
+reads the form from the annotation types present in the round. A form annotation that does not name a source interface,
+and a target that is not a `@SignalSourceType` interface with a module, are compile errors.
 
 ### `MultibindingModuleEmitter`
 
@@ -186,13 +191,13 @@ Emits `Generated{Qualifier}Module` for the two `@IntoSet` qualifiers (`@KafkaCon
 
 Each generated provider method is named after the implementation type's **simple** name, decapitalized, with `Binding` appended — `UserServiceImpl` → `userServiceImplBinding`. A leading acronym keeps its casing (`URLProvider` → `URLProviderBinding`), and a name that would otherwise be a Java keyword gets a trailing underscore.
 
-Detects same-simple-name collisions across packages before emitting: two types with the same simple name in different packages would produce duplicate method names. The emitter calls `Diagnostics.error` rather than writing a malformed module.
+Detects same-simple-name collisions across packages before emitting: two types with the same simple name in different packages would produce duplicate method names. The emitter reports an error and writes no `Generated{Qualifier}Module` at all for that qualifier, so none of its bindings are generated until the collision is resolved.
 
 ### `RestClientModuleEmitter`
 
 Emits `GeneratedRestClientsModule` using `DaggerModuleWriter.named(...).addSingletonProvides(interfaceType, methodName, body)` where `body = factory.builder().build(Interface.class)`. One `@Provides @Singleton {Interface}` method per `@RestClient` interface found in the round.
 
-Applies the same same-simple-name collision detection as `MultibindingModuleEmitter`.
+Applies the same same-simple-name collision detection as `MultibindingModuleEmitter`, including that no `GeneratedRestClientsModule` is written while a collision stands.
 
 ### `@NoAutoWire` (in `vertique-codegen-core`)
 
@@ -326,6 +331,10 @@ public class AdminResource { ... }
 ---
 
 ## Pitfalls
+
+### Same module name from two compilation units
+
+Two compilation units that resolve to the same output package each write `<package>.Generated{Qualifier}Module` (and `GeneratedRegistrationsModule`). The processor does not detect this: it checks only the classes it writes itself, so a clash inside one compilation fails with `Failed to write ...` and the underlying reason, while a copy from a dependency or another module is not reported and only one copy is visible to the component. Give each compilation unit its own output package with `-Avertique.codegen.package`.
 
 ### Multi-round emission limitation
 
