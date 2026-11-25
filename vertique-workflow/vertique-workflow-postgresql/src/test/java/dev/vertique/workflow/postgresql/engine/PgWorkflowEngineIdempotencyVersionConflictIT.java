@@ -46,8 +46,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests verifying idempotency-version conflict detection at workflow start
- * (FR-WF-DEF-070, AC #14).
+ * Integration tests verifying idempotency-version conflict detection at workflow start.
  *
  * <p>Registers both v1 and v2 of the same definition id, then asserts that:
  * <ul>
@@ -198,7 +197,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
 
     /**
      * Same idempotency key + different requested version → {@link WorkflowIdempotencyConflictException}
-     * with {@code kind="start"} and correct existing/incoming fingerprints (AC #14).
+     * with {@code kind="start"} and correct existing/incoming fingerprints.
      */
     @Test
     @DisplayName("same idempotency key + different requested version → WorkflowIdempotencyConflictException")

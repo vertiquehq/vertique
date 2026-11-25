@@ -320,7 +320,7 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
     /**
      * Runs a test's async chain on a duplicated Vert.x context — required because the engine's
-     * branch drive binds durable context via {@code bindFrom}, which is strict per FR-CTX-157b.
+     * branch drive binds durable context via {@code bindFrom}, which is strict about running on a duplicated context.
      *
      * @param body the test chain to run
      */
@@ -353,7 +353,7 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
     @Test
     @DisplayName("branch-targeted signal with explicit carrier drives the branch and the carrier wins over"
-            + " token metadata (AC-4 headline branch case)")
+            + " token metadata")
     void branchTargetedSignal_explicitCarrier_drivesBranchAndCarrierWinsOverTokenMetadata(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("headline");
         StartCommand cmd = new StartCommand(
@@ -459,7 +459,7 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
     @Test
     @DisplayName("branch-targeted signal with explicit carrier on a NULL-metadata instance binds exactly the"
-            + " carrier's namespaces — no token-metadata fallback (FR-WF-CTX-012 branch-targeted variant)")
+            + " carrier's namespaces — no token-metadata fallback")
     void branchTargetedSignal_nullInstanceMetadataExplicitCarrier_carrierNamespacesOnlyNoTokenFallback(
             VertxTestContext ctx) {
         StartFanout payload = new StartFanout("null-instance");

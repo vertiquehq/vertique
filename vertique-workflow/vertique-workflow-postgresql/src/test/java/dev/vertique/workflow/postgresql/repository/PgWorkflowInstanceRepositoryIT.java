@@ -329,7 +329,7 @@ public class PgWorkflowInstanceRepositoryIT {
     }
 
     @Test
-    @DisplayName("migratePinAndState leaves metadata untouched (AC-6)")
+    @DisplayName("migratePinAndState leaves metadata untouched")
     void migratePinAndState_leavesMetadataUntouched(VertxTestContext ctx) {
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
         DurableMetadata metadata = DurableMetadata.of("tenant", new JsonObject().put("id", "T1"));
@@ -362,16 +362,14 @@ public class PgWorkflowInstanceRepositoryIT {
                 .onSuccess(found -> ctx.verify(() -> {
                     assertTrue(found.isPresent());
                     assertEquals(
-                            metadata,
-                            found.get().metadata(),
-                            "migratePinAndState must leave metadata byte-identical (AC-6 immutability)");
+                            metadata, found.get().metadata(), "migratePinAndState must leave metadata byte-identical");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
     }
 
     @Test
-    @DisplayName("updateOptimistic leaves metadata untouched (AC-6)")
+    @DisplayName("updateOptimistic leaves metadata untouched")
     void updateOptimistic_leavesMetadataUntouched(VertxTestContext ctx) {
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
         DurableMetadata metadata = DurableMetadata.of("tenant", new JsonObject().put("id", "T1"));
@@ -404,9 +402,7 @@ public class PgWorkflowInstanceRepositoryIT {
                 .onSuccess(found -> ctx.verify(() -> {
                     assertTrue(found.isPresent());
                     assertEquals(
-                            metadata,
-                            found.get().metadata(),
-                            "updateOptimistic must leave metadata byte-identical (AC-6 immutability)");
+                            metadata, found.get().metadata(), "updateOptimistic must leave metadata byte-identical");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
@@ -415,10 +411,10 @@ public class PgWorkflowInstanceRepositoryIT {
     // =========================================================================
     // RowMappers blank-tolerance for subject columns
     //
-    // The cycle-5 WorkflowSubjectRef compact constructor rejects blank values, so
+    // The WorkflowSubjectRef compact constructor rejects blank values, so
     // RowMappers.workflowInstance() normalizes blank columns to null on the read path.
     // These tests inject rows directly via SQL to exercise the tolerance branch (the
-    // write path through repository.insert can no longer produce blank values).
+    // write path through repository.insert cannot produce blank values).
     // =========================================================================
 
     /** Inserts a minimal {@code workflow_instances} row directly via SQL with raw subject column values. */

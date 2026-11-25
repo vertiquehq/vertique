@@ -62,8 +62,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       {@code FAN_IN_EVALUATED}, and {@code FAN_IN_COMPLETED} entries.</li>
  * </ul>
  *
- * <p>This is the AC #1 happy path. Service-dispatch branches, branch waits, and race joins land
- * in subsequent slices and have their own ITs.
+ * <p>This is the happy path. Service-dispatch branches, branch waits, and race joins have their
+ * own ITs.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -189,7 +189,7 @@ public class PgWorkflowEngineForkJoinIT {
     }
 
     @Test
-    @DisplayName("AC #1 — ALL_REQUIRED fan-out completes when every branch reaches a terminal Complete")
+    @DisplayName("ALL_REQUIRED fan-out completes when every branch reaches a terminal Complete")
     void allRequiredHappyPath(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("o1");
         StartCommand cmd = new StartCommand(

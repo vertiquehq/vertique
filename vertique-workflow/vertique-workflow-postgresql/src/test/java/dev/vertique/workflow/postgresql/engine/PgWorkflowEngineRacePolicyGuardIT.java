@@ -47,17 +47,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies the engine's race-policy guard.
+ * Verifies the engine's race-policy handling.
  *
  * <p>The DSL and {@link WorkflowPlanValidator} accept {@code FirstSuccessJoinPolicy} and
- * {@code FirstFailureJoinPolicy} (so plans validate cleanly), but the engine currently only implements
- * {@code AllRequiredJoinPolicy} evaluation. The engine guards {@code evaluateJoin} against
- * non-{@code AllRequired} policies and fails the workflow with a
- * {@link WorkflowDefinitionException} that names the unimplemented policy. Without this guard, a
- * validated {@code FIRST_SUCCESS} workflow would silently execute with all-required semantics.
- *
- * <p>This test guards against the regression risk and is the canonical failure-mode contract
- * until race-join evaluation lands.
+ * {@code FirstFailureJoinPolicy}. A validated {@code FIRST_SUCCESS} workflow must not silently
+ * execute with all-required semantics: the join completes with a winning branch as soon as the first
+ * branch completes.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -187,7 +182,7 @@ public class PgWorkflowEngineRacePolicyGuardIT {
     }
 
     @Test
-    @DisplayName("AC #11 — FIRST_SUCCESS advances on the first branch to reach COMPLETED; siblings become SUPERSEDED")
+    @DisplayName("FIRST_SUCCESS advances on the first branch to reach COMPLETED; siblings become SUPERSEDED")
     void firstSuccessAdvancesOnFirstCompletion(VertxTestContext ctx) {
         StartRace payload = new StartRace("r1");
         StartCommand cmd = new StartCommand(

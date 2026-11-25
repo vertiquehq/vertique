@@ -730,7 +730,7 @@ public class PgTaskStoreIT {
     class FindByFilter {
 
         /**
-         * Regression for the cycle-3 review finding: {@code findByFilter} must execute on the
+         * Regression guard: {@code findByFilter} must execute on the
          * caller-supplied {@code SqlClient tx} so that read-your-own-writes works inside a single
          * {@code withTransaction(...)} block. If the impl silently routes through the pool, the
          * just-inserted task is invisible (separate connection, no commit yet).
@@ -1063,14 +1063,13 @@ public class PgTaskStoreIT {
                 .onFailure(ctx::failNow);
     }
 
-    // Note: cycle 3 stores actor identity as a single JSONB column ({"kind","value"}) per
-    // workflow-design feedback — there are no kind/value column-pair CHECK constraints to
-    // validate. Schema-level validation lives in the JSONB writer (see actorJson() in
-    // PgTaskStore) which can never produce an inconsistent shape; round-trip coverage is in
-    // markCompleted/markCancelled/reassign tests above.
+    // Note: actor identity is stored as a single JSONB column ({"kind","value"}), so there are no
+    // kind/value column-pair CHECK constraints to validate. Schema-level validation lives in the
+    // JSONB writer (see actorJson() in PgTaskStore) which can never produce an inconsistent shape;
+    // round-trip coverage is in markCompleted/markCancelled/reassign tests above.
 
     // =========================================================================
-    //                             incrementRemindersFiredCount (cycle 4)
+    //                             incrementRemindersFiredCount
     // =========================================================================
 
     @Nested

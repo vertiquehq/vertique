@@ -46,8 +46,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * migration.
  *
  * <p>These columns are nullable for backward compatibility with single-path workflows, but the
- * V1 implementation of {@code insertOpen}/{@code mapRow} dropped the values silently. AC #4
- * (branch-owned human tasks) requires that the values flow end-to-end.
+ * V1 implementation of {@code insertOpen}/{@code mapRow} dropped the values silently. Branch-owned
+ * human tasks require that the values flow end-to-end.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

@@ -46,11 +46,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Integration tests for {@link PgWorkflowInstanceQueryService} against a real PostgreSQL instance.
  *
- * <p>Verifies the cycle-5 public query surface:
+ * <p>Verifies the public query surface:
  * <ul>
  *   <li>{@code list(...)} narrows by subject ref (type+id+version), subject type only, definition
- *       id, and respects the {@code includeArchived} flag (cycle-4 retention behavior preserved
- *       through the new public surface).</li>
+ *       id, and respects the {@code includeArchived} flag (retention behavior preserved
+ *       through the public surface).</li>
  *   <li>{@code getById(...)} returns a populated {@link Optional} for known ids and an empty
  *       {@link Optional} for unknown ids.</li>
  * </ul>
@@ -151,7 +151,7 @@ public class PgWorkflowInstanceQueryServiceIT {
     }
 
     // =========================================================================
-    // list — subject ref filtering (FR-WF-123)
+    // list — subject ref filtering
     // =========================================================================
 
     @Test
@@ -266,7 +266,7 @@ public class PgWorkflowInstanceQueryServiceIT {
     }
 
     // =========================================================================
-    // includeArchived — cycle-4 retention behavior preserved
+    // includeArchived — retention behavior preserved
     // =========================================================================
 
     @Test

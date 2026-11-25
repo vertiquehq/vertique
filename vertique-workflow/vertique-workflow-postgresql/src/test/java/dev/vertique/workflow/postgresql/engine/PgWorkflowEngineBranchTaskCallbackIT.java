@@ -83,9 +83,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       branch only.</li>
  * </ul>
  *
- * <p>Rows are inserted directly via the stores (bypassing the plan validator gate, which still
- * blocks branch-owned {@code HumanTaskNode} plans in slice 3). This mirrors the pattern established
- * by {@link PgWorkflowEngineCancelBranchOwnedWaitsIT}.
+ * <p>Rows are inserted directly via the stores (bypassing the plan validator gate). This mirrors
+ * the pattern established by {@link PgWorkflowEngineCancelBranchOwnedWaitsIT}.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)

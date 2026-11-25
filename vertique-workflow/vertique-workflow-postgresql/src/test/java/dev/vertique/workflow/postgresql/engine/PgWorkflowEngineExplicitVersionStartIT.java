@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests verifying explicit version pinning at workflow start (FR-WF-DEF-069, AC #13).
+ * Integration tests verifying explicit version pinning at workflow start.
  *
  * <p>Registers both v1 and v2 of the same definition id, then asserts that:
  * <ul>
@@ -198,7 +198,7 @@ public class PgWorkflowEngineExplicitVersionStartIT {
 
     /**
      * Requesting {@code requestedDefinitionVersion=1} after both v1 and v2 are registered must
-     * create an instance pinned to v1 (AC #13).
+     * create an instance pinned to v1.
      */
     @Test
     @DisplayName("requestedDefinitionVersion=1 pins instance to v1 even when v2 is registered")

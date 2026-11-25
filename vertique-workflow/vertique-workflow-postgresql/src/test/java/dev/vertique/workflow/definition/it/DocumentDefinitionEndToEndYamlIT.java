@@ -105,10 +105,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Assertions verified:
  * <ul>
- *   <li>AC #1 — document-defined workflow executes end-to-end via the same engine as code-first.</li>
- *   <li>AC #4 — instance reaches {@link WorkflowStatus#COMPLETED}.</li>
- *   <li>AC #9 — engine never imports the definition schema or parser packages (verified by a
- *       grep gate documented in the commit message).</li>
+ *   <li>A document-defined workflow executes end-to-end via the same engine as code-first.</li>
+ *   <li>The instance reaches {@link WorkflowStatus#COMPLETED}.</li>
  * </ul>
  *
  * <p>This IT uses an independent Dagger component (component A) from
@@ -449,8 +447,8 @@ public class DocumentDefinitionEndToEndYamlIT {
      * Drives the YAML-defined order-fulfillment saga from start to COMPLETED by manually sending
      * the three expected signals.
      *
-     * <p>Verifies AC #1 (document-defined workflow executes via the engine), AC #4 (instance
-     * reaches COMPLETED), and that the definition version recorded in the DB matches the
+     * <p>Verifies that a document-defined workflow executes via the engine, that the instance
+     * reaches COMPLETED, and that the definition version recorded in the DB matches the
      * YAML-declared version (1).
      */
     @Test

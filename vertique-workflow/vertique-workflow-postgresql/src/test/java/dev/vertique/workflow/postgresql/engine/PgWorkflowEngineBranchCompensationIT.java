@@ -79,15 +79,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>In <strong>reverse declaration order across branches</strong>, then for each branch in
  *       <strong>LIFO order within branch</strong>.</li>
  *   <li>Branch {@code b} is FAILED but still gets compensated because it recorded a forward
- *       SIDE_EFFECT_RECORDED entry (FR-WF-PAR-063 explicitly allows this).</li>
+ *       SIDE_EFFECT_RECORDED entry.</li>
  * </ol>
  *
  * <p>Captured compensation order: {@code cancel-b-1}, {@code cancel-a-2}, {@code cancel-a-1}.
  * Two {@code BRANCH_COMPENSATING_START}/{@code BRANCH_COMPENSATED} pairs (one per branch with
  * committed compensable dispatches), three {@code BRANCH_COMPENSATING_STEP} entries.
  *
- * <p>This IT closes the 0% gap on {@link BranchCompensationOrchestrator#emitOneCompensation}
- * and the 28% gap on {@code compensateBranch}.
+ * <p>This IT exercises {@link BranchCompensationOrchestrator#emitOneCompensation}
+ * and {@code compensateBranch} end to end.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -276,7 +276,7 @@ public class PgWorkflowEngineBranchCompensationIT {
     }
 
     @Test
-    @DisplayName("AC #2 — failed ALL_REQUIRED fork compensates committed branch dispatches in reverse order")
+    @DisplayName("failed ALL_REQUIRED fork compensates committed branch dispatches in reverse order")
     void allRequiredFailedBranch_compensatesCommittedDispatches(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("o-comp");
         StartCommand cmd = new StartCommand(

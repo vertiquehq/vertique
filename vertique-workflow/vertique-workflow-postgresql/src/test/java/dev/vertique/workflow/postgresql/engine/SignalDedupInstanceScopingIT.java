@@ -65,14 +65,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>The {@code WorkflowSignalContributor.handleSignal} method composes
  * {@code pool.withTransaction} → {@code InboxService.processOnce(inboxMessageId, "workflow-signals",
  * tx, work)} → {@code txOps.signal(...)}. The {@code inboxMessageId} is {@code workflowId + ":"
- * + dedupKey}, which is the fix under test.
+ * + dedupKey}, which is the scoping under test.
  *
- * <p>Before the fix, only {@code dedupKey} was used as the inbox message id. Two unrelated workflow
- * instances that reuse the same caller-supplied dedup string would collide in the inbox table
+ * <p>Were only {@code dedupKey} used as the inbox message id, two unrelated workflow instances
+ * that reuse the same caller-supplied dedup string would collide in the inbox table
  * ({@code PRIMARY KEY (message_id, source)}), silently swallowing the second instance's signal.
  *
- * <p>After the fix, the inbox {@code messageId} is {@code workflowId + ":" + dedupKey}, so the
- * two instances produce distinct inbox rows, and both signals are applied independently.
+ * <p>Because the inbox {@code messageId} is {@code workflowId + ":" + dedupKey}, the two
+ * instances produce distinct inbox rows, and both signals are applied independently.
  *
  * <p>This test directly replicates the {@code handleSignal} dispatch logic inline so that it can
  * verify both the engine behavior and the inbox state without depending on a package-private
@@ -88,8 +88,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       history entry; the inbox table contains exactly two distinct rows.</li>
  * </ol>
  *
- * <p>As a regression guard, the test also verifies that calling with the SAME composite message id
- * twice (simulating the old non-scoped behavior applied to one instance) returns
+ * <p>The test also verifies that calling with the SAME composite message id twice (one instance
+ * receiving a duplicate delivery) returns
  * {@link InboxResult.Duplicate} on the second call and does NOT re-apply the signal.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
@@ -312,9 +312,8 @@ public class SignalDedupInstanceScopingIT {
     /**
      * Two independent instances with the same dedupKey must each receive the signal.
      *
-     * <p>Previously, the second signal was swallowed because both instances produced the same
-     * inbox {@code (message_id, source)} primary key. After the fix (messageId = workflowId +
-     * ":" + dedupKey), both inbox rows have distinct message_ids.
+     * <p>With messageId = workflowId + ":" + dedupKey, both inbox rows have distinct message_ids,
+     * so the second signal is not swallowed by the {@code (message_id, source)} primary key.
      */
     @Test
     @DisplayName("two instances with shared dedupKey both receive signal — inbox has two distinct rows")

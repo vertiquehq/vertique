@@ -118,7 +118,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Assertions verified:
  * <ul>
- *   <li>AC #2 — a document-defined approval workflow uses parallel legal/finance review branches
+ *   <li>A document-defined approval workflow uses parallel legal/finance review branches
  *       (demonstrated here with three parallel pre-fulfillment checks).</li>
  *   <li>After {@code start()}, the instance is in {@link WorkflowStatus#RUNNING} (parked at the
  *       fork join with {@code waitType=JOIN}) with all three branch tokens present in
@@ -129,8 +129,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>All three branch state fields are populated in the final workflow state.</li>
  * </ul>
  *
- * <p>This IT uses an independent Dagger component ({@code FanOutTestComponent}) from the Slice H
- * components so that the two registry populations never collide.
+ * <p>This IT uses an independent Dagger component ({@code FanOutTestComponent}) from the YAML and
+ * JSON end-to-end ITs' components so that the registry populations never collide.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -383,7 +383,7 @@ public class DocumentDefinitionFanOutIT {
     }
 
     /**
-     * Dagger component for the fan-out IT — independent from the Slice H components.
+     * Dagger component for the fan-out IT — independent from the YAML and JSON end-to-end components.
      *
      * <p>Installing {@link WorkflowDefinitionModule} (which auto-bootstraps definitions from the
      * registered {@link WorkflowDefinitionSource} set) with {@link WorkflowPostgresqlModule}
@@ -528,7 +528,7 @@ public class DocumentDefinitionFanOutIT {
      * Drives the document-defined fan-out workflow from start to COMPLETED by manually sending
      * three branch signals (one per branch) and asserting intermediate and final state.
      *
-     * <p>Verifies AC #2: a document-defined workflow uses parallel branches.
+     * <p>Verifies that a document-defined workflow uses parallel branches.
      * After start, the instance is in RUNNING (parked at the fork join with waitType=JOIN)
      * with all three branch tokens present. Delivering each branch signal one at a time keeps
      * the instance in RUNNING until all three branches are done and the join fires.
@@ -536,7 +536,7 @@ public class DocumentDefinitionFanOutIT {
      * are populated.
      */
     @Test
-    @DisplayName("AC #2 — document-defined fan-out drives ALL_REQUIRED branches to COMPLETED via branch signals")
+    @DisplayName("document-defined fan-out drives ALL_REQUIRED branches to COMPLETED via branch signals")
     void documentDefinedFanOut_allRequiredBranches_completesAfterThreeSignals(VertxTestContext ctx) {
         PlaceFanOutOrder payload = new PlaceFanOutOrder("fanout-" + UUID.randomUUID());
         StartCommand cmd = new StartCommand(
@@ -556,7 +556,7 @@ public class DocumentDefinitionFanOutIT {
         // dispatch entries (event-bus consumer, Kafka per-record, cron callback, service-method
         // invoker) always reach the engine via a duplicate; this IT calls the engine directly
         // from a JUnit thread so it must establish the duplicate itself before the substrate
-        // write guard would otherwise reject the bind (FR-CTX-157b).
+        // write guard would otherwise reject the bind.
         io.vertx.core.internal.ContextInternal dup =
                 ((io.vertx.core.internal.ContextInternal) vertxRef.getOrCreateContext()).duplicate();
         dup.runOnContext(unused -> engine.start(cmd)
