@@ -149,6 +149,10 @@ public class RecordedRecoveryIT {
             List<CommandRow> commands = fixture.commandsOf(id);
             assertThat(commands).extracting(CommandRow::kind).containsExactly("START", "RETRY");
             assertThat(commands).extracting(CommandRow::state).containsExactly("SUPERSEDED", "COMPLETE");
+            assertThat(fixture.historyOf(id))
+                    .as("the superseded start is logged once")
+                    .filteredOn("COMMAND_SUPERSEDED"::equals)
+                    .hasSize(1);
         }
     }
 
@@ -270,6 +274,59 @@ public class RecordedRecoveryIT {
             assertThat(retries).extracting(CommandRow::state).containsExactly("COMPLETE", "STALE");
             assertThat(f.fixture.instanceOf(b).status()).isEqualTo("WAITING");
             assertThat(f.fixture.historyOf(b)).contains("COMMAND_STALE");
+        }
+    }
+
+    @Test
+    @DisplayName("a retry offers a dead-lettered signal again, and the signal it applies ends the instance")
+    void retryEndsTheInstanceThroughTheSignalOfferedAgain() {
+        try (SignalFixture f =
+                new SignalFixture(db.toPoolConfig(), new OrderSignalFixture(), List.of("paid", "shipped", "note"))) {
+            // Given instance A, which its paid signal ends, waiting for paid, and that signal dead-lettered
+            CommandFaults faults = new CommandFaults();
+            Node node = f.node("engine")
+                    .leaseSeconds(5)
+                    .maxAttempts(2)
+                    .commands(faults.decorator())
+                    .build();
+            WorkflowInstanceId a = f.waiting(node, "end-by-retry");
+            faults.crashSegmentsOf(a, 2).lapseCrashedClaims(f.fixture.observer());
+            f.record(node, a, "paid", signal("one"), "k1");
+            node.startExecutor();
+            try {
+                awaitCondition("the paid signal to be dead-lettered", DEAD_LETTERED, () -> f.signal(a, "k1")
+                        .state()
+                        .equals("DEAD"));
+            } finally {
+                faults.crashSegmentsOf(a, 0);
+                node.stopExecutor();
+            }
+            assertThat(f.fixture.instanceOf(a).status()).isEqualTo("WAITING");
+            long position = f.signal(a, "k1").seq();
+
+            // When a retry is recorded and the executor runs until idle
+            retry(f, node, a);
+            node.startExecutor();
+            try {
+                node.awaitIdle(a);
+            } finally {
+                node.stopExecutor();
+            }
+
+            // Then the signal offered again ended the instance, applied once, in its old place in the queue
+            assertThat(f.fixture.instanceOf(a).status()).isEqualTo("COMPLETED");
+            CommandRow signal = f.signal(a, "k1");
+            assertThat(signal.state()).isEqualTo("COMPLETE");
+            assertThat(signal.attempts()).isEqualTo(1);
+            assertThat(signal.seq()).isEqualTo(position);
+            assertThat(f.history(a))
+                    .filteredOn(h -> h.type().equals("SIGNAL_APPLIED"))
+                    .hasSize(1);
+            assertThat(f.fixture.commandsOf(a))
+                    .filteredOn(row -> row.kind().equals("RETRY"))
+                    .extracting(CommandRow::state)
+                    .containsExactly("COMPLETE");
+            assertThat(f.openSignals(a)).isZero();
         }
     }
 

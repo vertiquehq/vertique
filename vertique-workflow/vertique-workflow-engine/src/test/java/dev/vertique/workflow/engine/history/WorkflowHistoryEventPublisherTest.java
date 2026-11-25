@@ -745,6 +745,36 @@ class WorkflowHistoryEventPublisherTest {
     }
 
     @Test
+    @DisplayName("around takes the execution lock before it reads the sequence, and the work runs after both")
+    void lockPrecedesTheSequenceRead() {
+        // Given a listener, a lock and a sequence read that each note when they run, and a work that does the same
+        List<String> order = new ArrayList<>();
+        when(history.nextSequence(ID, tx)).thenAnswer(invocation -> {
+            order.add("sequence");
+            return Future.succeededFuture(3L);
+        });
+        WorkflowHistoryEventPublisher publisher = new WorkflowHistoryEventPublisher(
+                Set.of(recorder),
+                history,
+                readClient,
+                (id, client) -> {
+                    order.add("lock");
+                    return Future.succeededFuture();
+                },
+                () -> Optional.of(new WorkflowActor.User("alice")),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        // When an action runs through the locking wrapper
+        publisher.around(Action.SIGNAL, ID, tx, () -> {
+            order.add("work");
+            return Future.succeededFuture("a");
+        });
+
+        // Then the lock came first, and the work ran after the first sequence read and before the second
+        assertThat(order).containsExactly("lock", "sequence", "work", "sequence");
+    }
+
+    @Test
     @DisplayName("a commit-only wrapper announces commits, reports no failure and captures no actor")
     void commitOnlyReportsNoFailure() {
         // Given a commit-only wrapper whose work fails

@@ -61,6 +61,7 @@ public class RecordingOnlyExecutorStartIT {
                     .build();
 
             // When its executor is started
+            Set<String> deploymentsBefore = Set.copyOf(vertx.deploymentIDs());
             var start = engine.executor().start();
             start.toCompletionStage()
                     .toCompletableFuture()
@@ -70,6 +71,9 @@ public class RecordingOnlyExecutorStartIT {
             // Then the start fails with the node-role error and the executor stays stopped
             assertThat(start.failed()).isTrue();
             assertThat(start.cause()).isInstanceOf(WorkflowNodeRoleException.class);
+            assertThat(vertx.deploymentIDs())
+                    .as("the refused start deploys no executor")
+                    .containsExactlyInAnyOrderElementsOf(deploymentsBefore);
             assertThat(engine.executor().stop().succeeded()).isTrue();
         } finally {
             pool.close().toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);

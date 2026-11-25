@@ -56,6 +56,15 @@ class DecisionLogSizeGuardTest {
             return new JsonObject().put("ref", "guard").put("items", items);
         }
 
+        /** A state of {@code count} integer fields, every one holding {@code value}. */
+        static JsonObject fieldsOf(int count, int value) {
+            JsonObject state = new JsonObject().put("ref", "guard");
+            for (int i = 0; i < count; i++) {
+                state.put("k" + i, value);
+            }
+            return state;
+        }
+
         /** A state of about one KiB. */
         static JsonObject oneKiB() {
             return new JsonObject().put("ref", "guard").put("note", "x".repeat(1000));
@@ -186,5 +195,28 @@ class DecisionLogSizeGuardTest {
                                     .put("path", "/count")
                                     .put("value", 2)));
         });
+    }
+
+    @Test
+    @DisplayName("a patch over the size bound is replaced by a baseline although both states are under it")
+    void patchOverTheSizeBoundIsLoggedAsABaseline() throws Exception {
+        // Given two states under the bound whose every field differs, so the patch is larger than either state
+        JsonObject before = States.fieldsOf(2000, 1);
+        JsonObject after = States.fieldsOf(2000, 2);
+        assertThat(States.bytes(before)).isLessThan(SIZE_BOUND_BYTES);
+        assertThat(States.bytes(after)).isLessThan(SIZE_BOUND_BYTES);
+
+        // When the decision is logged
+        List<DecisionEntry> logged = logDecision(before, after);
+
+        // Then the diff was asked for once, and its encoded patch over the bound is dropped
+        assertThat(diff.calls).isEqualTo(1);
+        assertThat(logged)
+                .extracting(DecisionEntry::entryType)
+                .containsExactly(WorkflowEntryType.DECISION, WorkflowEntryType.STATE_BASELINE);
+        assertThat(logged.get(0).patchJson()).isNull();
+
+        // And the baseline holds the after state
+        assertThat(new JsonObject(logged.get(1).stateJson())).isEqualTo(after);
     }
 }

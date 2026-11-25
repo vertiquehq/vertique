@@ -178,9 +178,16 @@ class WorkflowTransactionClientGuardTest {
                         "signalByKey",
                         (engine, client) -> engine.signalByKey(
                                 CorrelatedSignal.of(Contract.class, "approve", "K-1", Map.of(), "d-1"), client)),
+                new EngineOperation(
+                        "signalByBusinessKey",
+                        (engine, client) -> engine.signalByBusinessKey(
+                                CorrelatedSignal.of(Contract.class, "approve", "B-1", Map.of(), "d-2"), client)),
                 new EngineOperation("cancel", (engine, client) -> engine.cancel(INSTANCE, "reason", client)),
                 new EngineOperation("retry", (engine, client) -> engine.retry(INSTANCE, client)),
                 new EngineOperation("migrate", (engine, client) -> engine.migrate(INSTANCE, 2L, client)),
+                new EngineOperation(
+                        "migrate with a target scope",
+                        (engine, client) -> engine.migrate(INSTANCE, "other-scope", 2L, client)),
                 new EngineOperation(
                         "taskCompleted",
                         (engine, client) -> engine.taskCompleted(
