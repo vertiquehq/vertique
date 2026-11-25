@@ -1807,8 +1807,8 @@ interface.
 
 - **`@PermitAll` under document-level security** fails startup, as `@PermitAll` with a declared
   requirement always has: a document level that carries scopes fails with a `RestConfigurationException`
-  naming the operation, and a scopeless one with the security module's `CONFLICTING_SEMANTICS`
-  violation. Add `@SecurityRequirements({})` to keep the operation anonymous (login and health
+  naming the operation, and a scopeless one, when the rest-security validator is wired, with the security module's
+  `CONFLICTING_SEMANTICS` violation. Add `@SecurityRequirements({})` to keep the operation anonymous (login and health
   routes), or remove `@PermitAll`.
 - **The marker must be declared on the resource itself.** Annotation resolution merges the resource's
   superclasses and interfaces, so a marker found only on a superclass, an interface or an inherited

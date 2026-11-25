@@ -61,9 +61,11 @@ public final class EffectiveSecurityPolicy {
      *   <li><strong>{@code @PermitAll} with scopes</strong> — the base policy is {@link
      *       SecurityPolicy.PermitAll} <em>and</em> a set carries scopes. {@code @PermitAll} skips
      *       authorization, so the scopes would never be checked. The requirement may be declared on the
-     *       operation or class, or inherited from the application's document-level security; an empty
-     *       {@code @SecurityRequirements({})} marker on the operation or its class makes the operation
-     *       public instead. A scopeless requirement with {@code @PermitAll} is not rejected here.</li>
+     *       operation or class, or inherited from the application's document-level security. The fix is to
+     *       remove {@code @PermitAll} or the scopes; when the requirement comes from the document level, an
+     *       empty {@code @SecurityRequirements({})} marker on the operation or its resource class opts the
+     *       operation out of it, but a requirement declared on the class or the method itself is not cleared
+     *       by the marker. A scopeless requirement with {@code @PermitAll} is not rejected here.</li>
      * </ol>
      *
      * @param operationId the operationId named in the diagnostic; must not be {@code null}
@@ -108,10 +110,11 @@ public final class EffectiveSecurityPolicy {
         if (anySetHasScopes && policy instanceof SecurityPolicy.PermitAll) {
             throw new RestConfigurationException(String.format(
                     "Operation '%s' declares @PermitAll together with a scoped security requirement, so its "
-                            + "scopes would not be enforced. Remove @PermitAll, or declare "
-                            + "@SecurityRequirements({}) on the operation or its resource class to make the "
-                            + "operation public. If the requirement comes from the application's "
-                            + "@OpenAPIDefinition(security), the empty marker opts the operation out of it.",
+                            + "scopes would not be enforced. Remove @PermitAll or the scopes. If the requirement comes "
+                            + "from the application's document-level security (@OpenAPIDefinition(security)), "
+                            + "declare @SecurityRequirements({}) on the operation or its resource class to opt out "
+                            + "of it; a requirement declared on the class or method itself is not cleared by the "
+                            + "marker.",
                     operationId));
         }
     }

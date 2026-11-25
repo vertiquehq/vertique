@@ -53,6 +53,10 @@ import org.junit.jupiter.params.provider.MethodSource;
  * an operation whose document lists no {@code security} must admit all three. The published value of
  * every operation is also checked against a fixed literal, so a document and a router that drift
  * together are still caught. Every operation of the document must be covered by a case.
+ *
+ * <p>Known limits: every operation is a {@code GET}, all requirements name one scheme, hidden operations
+ * are not served and so not probed, and the probe cannot tell whether the router needs any or all of
+ * the listed scopes.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 30, unit = TimeUnit.SECONDS)

@@ -342,6 +342,44 @@ class DocumentLevelSecurityTest {
         }
 
         @Test
+        @DisplayName("The marker does not clear a scoped requirement declared on the class: @PermitAll still fails")
+        void markerDoesNotClearClassLevelScopes() {
+            JaxRsRouterMount mount = applicationMount(
+                    factory(new RecordingContributor()), NoDefinitionApi.class, new ClassScopedPermitAllResource());
+            Throwable failure = failureOf(() -> mount.createRouter(vertx));
+            assertTrue(failure instanceof RestConfigurationException, String.valueOf(failure));
+            assertTrue(failure.getMessage().contains("'login'"), failure.getMessage());
+            assertTrue(
+                    failure.getMessage().contains("declared on the class or method itself is not cleared"),
+                    failure.getMessage());
+        }
+
+        @Test
+        @DisplayName(
+                "One resource on two applications is secured where the document level applies and anonymous where it does not")
+        void sameResourceOnTwoMountsDiffersPerMount() {
+            RecordingContributor contributor = new RecordingContributor();
+            JaxRsRouterMount.Factory factory = factory(contributor);
+            Object resource = new PlainResource();
+            JaxRsRouterMount secured =
+                    factory.createApplicationMount("/secured/*", null, Set.of(resource), "secured", BearerApi.class);
+            secured.markValidated();
+            JaxRsRouterMount open =
+                    factory.createApplicationMount("/open/*", null, Set.of(resource), "open", NoDefinitionApi.class);
+            open.markValidated();
+            Router root = Router.router(vertx);
+            root.route(secured.mountPath()).subRouter(await(secured.createRouter(vertx)));
+            root.route(open.mountPath()).subRouter(await(open.createRouter(vertx)));
+            listen(root);
+
+            assertAll(
+                    () -> assertEquals(
+                            401, get("/secured/get", null), "the mount whose application declares the document level"),
+                    () -> assertEquals(200, get("/secured/get", "Bearer ok"), "the same operation, authenticated"),
+                    () -> assertEquals(200, get("/open/get", null), "the mount whose application declares none"));
+        }
+
+        @Test
         @DisplayName("requireExplicitPolicy accepts an operation covered only by the document level")
         void documentLevelCountsAsExplicit() {
             JaxRsRouterMount.Factory strict = TestFactories.builder()
@@ -650,6 +688,22 @@ class DocumentLevelSecurityTest {
         @Produces(MediaType.TEXT_PLAIN)
         @Operation(operationId = "login")
         @jakarta.annotation.security.PermitAll
+        public String login() {
+            return "ok";
+        }
+    }
+
+    @Path("")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(
+            name = BEARER,
+            scopes = {"read"})
+    public static class ClassScopedPermitAllResource {
+        @GET
+        @Path("/login")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "login")
+        @jakarta.annotation.security.PermitAll
+        @SecurityRequirements({})
         public String login() {
             return "ok";
         }
