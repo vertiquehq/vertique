@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * §11.3 constructor-normalization cases for {@link LocalizationContext}. The companion propagation
+ * Constructor-normalization cases for {@link LocalizationContext}. The companion propagation
  * adapters (holder facade, service-dispatch codec, durable codec) are covered by their own tests in
  * this package; this class focuses on the record's own invariants.
  */
@@ -26,7 +26,7 @@ class LocalizationContextTest {
     private static final ZoneId ZONE = ZoneId.of("Europe/Helsinki");
 
     @Test
-    @DisplayName("FR-LOC-200: type is annotated with @DispatchContextValue")
+    @DisplayName("type is annotated with @DispatchContextValue")
     void annotatedAsDispatchContextValue() {
         assertTrue(LocalizationContext.class.isAnnotationPresent(DispatchContextValue.class));
     }

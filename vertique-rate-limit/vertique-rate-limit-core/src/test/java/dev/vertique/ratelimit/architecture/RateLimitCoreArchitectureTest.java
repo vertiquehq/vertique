@@ -28,9 +28,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-004: no Bucket4j type may appear in a public method, field, or constructor signature under
+ * No Bucket4j type may appear in a public method, field, or constructor signature under
  * {@code dev.vertique.ratelimit} (and its {@code .exception}/{@code .spi}/{@code .spi.event}/
- * {@code .dagger} sub-packages), per FR-002/FR-003.
+ * {@code .dagger} sub-packages).
  */
 class RateLimitCoreArchitectureTest {
 

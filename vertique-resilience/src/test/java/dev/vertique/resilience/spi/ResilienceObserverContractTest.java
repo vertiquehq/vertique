@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** T005 proof for synchronous observer ordering and per-observer failure isolation. */
+/** Proof for synchronous observer ordering and per-observer failure isolation. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 15, unit = TimeUnit.SECONDS)
 class ResilienceObserverContractTest {

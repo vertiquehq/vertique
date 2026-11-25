@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * Hand-written stand-in for the generated companion of the nested {@link NestedHolder.Inner}
- * contract (CG-015 §4.1). Its name uses the flattened {@code Outer_Inner} form (matching
+ * contract. Its name uses the flattened {@code Outer_Inner} form (matching
  * {@link dev.vertique.core.util.GeneratedNames#companionFqn}), so
  * {@link ServiceClientFactory#create(Class)} only selects it when it derives the lookup name via
  * {@code GeneratedNames.companionFqn} rather than {@code Class.getName() + suffix} — the latter
@@ -22,7 +22,7 @@ import java.util.Map;
  *
  * <p>Mimics what {@code ClientProxyEmitter} emits: a {@code public final} class implementing
  * the contract, the frozen 3-arg constructor, per-operation metadata resolved eagerly at
- * construction (a missing operation fails loudly with the §4.2-pinned mismatch prefix), and
+ * construction (a missing operation fails loudly with the pinned mismatch prefix), and
  * dispatch delegated to {@link ServiceRequestSender}. Used by
  * {@link ServiceClientFactoryCompanionTest} to prove that nested-contract companion selection
  * composes through the factory, without depending on the real emitter — this module cannot run

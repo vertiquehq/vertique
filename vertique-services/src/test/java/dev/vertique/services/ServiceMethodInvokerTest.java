@@ -995,8 +995,7 @@ class ServiceMethodInvokerTest {
     }
 
     @Test
-    @DisplayName(
-            "already-decoded typed CorrelationContext at FQCN key survives the decoder loop (P1.1 relay regression)")
+    @DisplayName("already-decoded typed CorrelationContext at FQCN key survives the decoder loop")
     void shouldPreserveAlreadyDecodedTypedDispatchContextValue(Vertx vertx, VertxTestContext ctx) throws Exception {
         // The relay paths (delayed-job poller, outbox-service handler, workflow-timer dispatch)
         // run the durable decoder up-front and put the resulting TYPED value into the

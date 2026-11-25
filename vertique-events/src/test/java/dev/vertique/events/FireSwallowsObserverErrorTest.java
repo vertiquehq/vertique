@@ -19,14 +19,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Behavior test proving that {@link Event#fire(Object)} isolates an observer that throws an
  * {@link Error} (or any {@link Throwable} that is not a {@link RuntimeException}).
  *
- * <p>RED: with the current {@code catch (RuntimeException)} swallow step in {@link Event#fire}, an
- * observer throwing an {@code Error} escapes the catch block. {@code Combinators.foldSequential}
- * propagates the uncaught {@code Error} as a failed future, and the remaining observers are
- * short-circuited — violating the documented "never fails" contract.
- *
- * <p>GREEN: once the swallow step is widened to {@code catch (Throwable)}, the {@code Error} is
- * caught, logged at warn, and swallowed, so the future completes successfully and the sibling
- * observer still runs.
+ * <p>The swallow step in {@link Event#fire} catches {@code Throwable}, so an {@code Error} is
+ * caught, logged at warn, and swallowed: the future completes successfully and the sibling
+ * observer still runs, as the documented "never fails" contract requires.
  */
 @ExtendWith(VertxExtension.class)
 class FireSwallowsObserverErrorTest {

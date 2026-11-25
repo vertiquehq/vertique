@@ -20,12 +20,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 4: the failure-recovery path (a backend that rejects its returned
- * future, or a fenced consume) emitted {@code backendLatencyNanos=0} unconditionally, discarding
- * the elapsed time actually spent waiting on the backend before it failed — unlike the successful
- * path, which already threads real elapsed time through {@code completeDecision}. Observability
- * consumers (metrics, tracing) lose real backend latency data specifically on the failure path,
- * the one case where it matters most for diagnosing a slow-then-failing backend.
+ * The failure-recovery path (a backend that rejects its returned future, or a fenced consume)
+ * reports the elapsed time actually spent waiting on the backend before it failed as {@code
+ * backendLatencyNanos}, like the successful path, which threads real elapsed time through {@code
+ * completeDecision}. Observability consumers (metrics, tracing) therefore see real backend
+ * latency on the failure path too, the case where it matters most for diagnosing a slow-then-failing
+ * backend.
  */
 class RateLimiterBackendFailureLatencyTest {
 

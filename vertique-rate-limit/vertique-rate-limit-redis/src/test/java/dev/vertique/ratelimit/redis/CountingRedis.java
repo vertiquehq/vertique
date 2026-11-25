@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Transparent pass-through decorator that counts how many times a chosen {@link Command} is sent,
  * used to prove Vertique never issues an extra logical attempt of its own around Bucket4j's
- * internal loop (TP-002).
+ * internal loop.
  */
 final class CountingRedis implements Redis {
 

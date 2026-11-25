@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** T003 TP-002 proof for explicit adapter-context and prebuilt-component ownership. */
+/** Proof for explicit adapter-context and prebuilt-component ownership. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
 class ResilienceAdapterContextTest {

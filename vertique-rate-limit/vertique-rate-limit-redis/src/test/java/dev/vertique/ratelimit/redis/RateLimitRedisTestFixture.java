@@ -74,7 +74,7 @@ final class RateLimitRedisTestFixture {
                 redis, vertx, namespace, SECRET, operationTimeoutMs, expirationSlackMs);
     }
 
-    /** Full application configuration for the real-Dagger-graph tests (TP-003, TP-004, TP-006). */
+    /** Full application configuration for the real-Dagger-graph tests. */
     static JsonObject configuration(
             String host,
             int port,

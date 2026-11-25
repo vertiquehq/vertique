@@ -553,7 +553,7 @@ class ServiceClientFactoryTest {
      * Tests for outbound {@link SecurityContext} propagation semantics.
      *
      * <p>Covers the four cases: ambient-only, explicit-only, both-present (ambient wins, no
-     * encoder-vs-override collision — FR-CTX-063), and neither-present. All cases that involve
+     * encoder-vs-override collision), and neither-present. All cases that involve
      * binding ambient SC run on a duplicated Vert.x context so {@link ContextValues#bind} succeeds.
      *
      * <p>A dedicated service contract ({@code sc-prop-test}) is used with a consumer that reads
@@ -726,14 +726,14 @@ class ServiceClientFactoryTest {
         /**
          * Both present: ambient SC bound AND caller passes an explicit SC arg. The ambient SC must
          * win (encoder captures it; factory skips {@code callerOverrides} for SC). The call must
-         * NOT throw, proving the encoder-vs-override collision (FR-CTX-063) is avoided.
+         * NOT throw, proving the encoder-vs-override collision is avoided.
          *
          * @param vertx the Vert.x instance
          * @param ctx   the test context
          * @throws Throwable if the test times out or the assertion fails
          */
         @Test
-        @DisplayName("Both present — ambient SC wins; no encoder-vs-override collision (FR-CTX-063)")
+        @DisplayName("Both present — ambient SC wins; no encoder-vs-override collision")
         void bothPresentAmbientWins(Vertx vertx, VertxTestContext ctx) throws Throwable {
             SecurityContext ambientSc = testSecurityContext("ambient-user");
             SecurityContext explicitSc = testSecurityContext("explicit-user");
@@ -745,9 +745,7 @@ class ServiceClientFactoryTest {
                 try (ContextHolder.Scope scope = ContextValues.bind(SecurityContext.class, ambientSc)) {
                     proxy.withSc(explicitSc, "z").onComplete(ctx.succeeding(result -> {
                         ctx.verify(() -> assertEquals(
-                                "ambient-user",
-                                result,
-                                "Ambient SC must win over explicit arg; call must not throw (FR-CTX-063)"));
+                                "ambient-user", result, "Ambient SC must win over explicit arg; call must not throw"));
                         ctx.completeNow();
                     }));
                 } catch (Throwable t) {
@@ -786,10 +784,10 @@ class ServiceClientFactoryTest {
         }
     }
 
-    // --- create()-time Completeness Check Tests (CG-015 S2) ---
+    // --- create()-time Completeness Check Tests ---
 
     /**
-     * Tests for the §4.2 step-2 {@code create()}-time completeness check (CG-015 S2).
+     * Tests for the {@code create()}-time completeness check.
      *
      * <p>Entries are hand-built via {@link ServiceContractEntries#deployable()} and registered
      * through the {@link ServiceContractContributor} SPI — the cleanest existing path for
@@ -838,15 +836,15 @@ class ServiceClientFactoryTest {
         }
 
         /**
-         * §4.2 step 2: an entry that omits one of the contract's client-dispatchable operations
+         * An entry that omits one of the contract's client-dispatchable operations
          * must fail {@code create()} fast with an {@link IllegalStateException} whose message
-         * begins with the §4.2-pinned literal {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX}
+         * begins with the pinned literal {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX}
          * and names both the contract FQCN and the missing operation id ({@code opB}).
          *
-         * <p>{@code create()} now runs {@code requireCompleteContract()} immediately after
-         * {@code registry.resolve(contract)} and before proxy construction, superseding the prior
-         * per-invocation {@code Future.failedFuture} behavior — the missing operation is caught at
-         * {@code create()} time rather than only surfacing when {@code opB} is actually called. The
+         * <p>{@code create()} runs {@code requireCompleteContract()} immediately after
+         * {@code registry.resolve(contract)} and before proxy construction — the missing operation
+         * is caught at {@code create()} time rather than only surfacing when {@code opB} is
+         * actually called. The
          * prefix constant equality is pinned separately by {@code prefixConstantMatchesPinnedLiteral}.
          *
          * @param vertx the Vert.x instance
@@ -874,7 +872,7 @@ class ServiceClientFactoryTest {
                     assertThrows(IllegalStateException.class, () -> factory.create(PartialContract.class));
             assertTrue(
                     ex.getMessage().startsWith("Service client contract mismatch: "),
-                    "Message must start with the §4.2-pinned mismatch prefix, was: " + ex.getMessage());
+                    "Message must start with the pinned mismatch prefix, was: " + ex.getMessage());
             assertTrue(
                     ex.getMessage().contains(PartialContract.class.getName()),
                     "Message must name the contract FQCN, was: " + ex.getMessage());
@@ -882,10 +880,9 @@ class ServiceClientFactoryTest {
         }
 
         /**
-         * Ordering guard (§4.2 step 1 precedes step 2): an unregistered contract must still fail
-         * with {@link IllegalArgumentException} from {@link ServiceContractRegistry#resolve}, never
-         * reaching the completeness check. This test already passes today (the registry lookup is
-         * unchanged) and must keep passing once step 2 lands.
+         * Ordering guard (registry resolution precedes the completeness check): an unregistered
+         * contract must fail with {@link IllegalArgumentException} from {@link
+         * ServiceContractRegistry#resolve}, never reaching the completeness check.
          */
         @Test
         @DisplayName(
@@ -959,13 +956,13 @@ class ServiceClientFactoryTest {
         }
 
         /**
-         * §4.2 protocol pin: {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX} must equal the
-         * exact literal frozen by the plan. The emitter-side twin assertion lives in
+         * Protocol pin: {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX} must equal the
+         * exact literal the emitter bakes into generated companions. The emitter-side twin assertion lives in
          * {@code ServiceClientProxyEmissionTest} (codegen-services) — drift in either
          * implementation breaks a test.
          */
         @Test
-        @DisplayName("Prefix constant must match the §4.2-pinned literal")
+        @DisplayName("Prefix constant must match the pinned literal")
         void prefixConstantMatchesPinnedLiteral() {
             assertEquals("Service client contract mismatch: ", ServiceClientFactory.CONTRACT_MISMATCH_PREFIX);
         }

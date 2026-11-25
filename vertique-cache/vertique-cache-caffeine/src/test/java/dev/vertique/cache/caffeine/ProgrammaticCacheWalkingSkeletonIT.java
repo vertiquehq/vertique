@@ -3,7 +3,7 @@
 
 package dev.vertique.cache.caffeine;
 
-import static dev.vertique.cache.aop.T011CacheCompositionFixtures.await;
+import static dev.vertique.cache.aop.CacheCompositionFixtures.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dagger.Component;
@@ -13,7 +13,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.cache.Cache;
 import dev.vertique.cache.CacheBuilder;
 import dev.vertique.cache.CacheIdentity;
-import dev.vertique.cache.aop.T011CacheCompositionFixtures;
+import dev.vertique.cache.aop.CacheCompositionFixtures;
 import dev.vertique.cache.spi.CacheObserver;
 import jakarta.inject.Singleton;
 import java.util.concurrent.TimeUnit;
@@ -27,7 +27,7 @@ class ProgrammaticCacheWalkingSkeletonIT {
     @Test
     void scalarProgrammaticAndAnnotationCallsShareCaffeineExecution() throws Exception {
         LocalComponent component = DaggerProgrammaticCacheWalkingSkeletonIT_LocalComponent.builder()
-                .configModule(new T011CacheCompositionFixtures.ConfigModule(new io.vertx.core.json.JsonObject()))
+                .configModule(new CacheCompositionFixtures.ConfigModule(new io.vertx.core.json.JsonObject()))
                 .build();
         Cache<String, String> cache = component
                 .cacheBuilder()
@@ -52,7 +52,7 @@ class ProgrammaticCacheWalkingSkeletonIT {
             modules = {
                 CacheCaffeineModule.class,
                 dev.vertique.config.parser.ConfigParsingModule.class,
-                T011CacheCompositionFixtures.ConfigModule.class,
+                CacheCompositionFixtures.ConfigModule.class,
                 ObserverModule.class
             })
     interface LocalComponent {
@@ -63,7 +63,7 @@ class ProgrammaticCacheWalkingSkeletonIT {
     static final class ObserverModule {
         @Provides
         @IntoSet
-        static CacheObserver cacheObserver(T011CacheCompositionFixtures.RecordingObserver observer) {
+        static CacheObserver cacheObserver(CacheCompositionFixtures.RecordingObserver observer) {
             return observer;
         }
     }

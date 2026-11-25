@@ -18,11 +18,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * §11.1 LocaleResolver tests for RFC 5646 language tag list resolution.
+ * LocaleResolver tests for RFC 5646 language tag list resolution.
  * The whitespace-separated tag list is normalized by trimming and replacing whitespace runs
  * with commas before delegating to the language-range matcher. Every throw row asserts
- * {@code reason()}, {@code value()}, and {@code getCause()} per "Universal field-population
- * invariants".
+ * {@code reason()}, {@code value()}, and {@code getCause()}.
  */
 class DefaultLocaleResolverLanguageTagsTest {
 
@@ -39,7 +38,7 @@ class DefaultLocaleResolverLanguageTagsTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-110..114: resolveLanguageTags(value, fi)")
+    @DisplayName("resolveLanguageTags(value, fi)")
     class WithFallbackFi {
 
         @Test
@@ -68,7 +67,7 @@ class DefaultLocaleResolverLanguageTagsTest {
     }
 
     @Nested
-    @DisplayName("FR-LOC-115/116: requireLanguageTags(value) without fallback throws")
+    @DisplayName("requireLanguageTags(value) without fallback throws")
     class RequireWithoutFallback {
 
         @Test
@@ -122,7 +121,7 @@ class DefaultLocaleResolverLanguageTagsTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-105 tag path: malformed tag without fallback → MALFORMED_LANGUAGE_TAG with cause")
+    @DisplayName("malformed tag without fallback → MALFORMED_LANGUAGE_TAG with cause")
     void malformedTagWithoutFallback() {
         // q-values do not belong in raw language tags. After whitespace→comma the parse fails.
         LocaleResolutionException ex =
@@ -133,7 +132,7 @@ class DefaultLocaleResolverLanguageTagsTest {
     }
 
     @Test
-    @DisplayName("FR-LOC-095: resolveLanguageTags(value) uses configured defaultLocale as fallback")
+    @DisplayName("resolveLanguageTags(value) uses configured defaultLocale as fallback")
     void resolveDelegatesToDefaultFallback() {
         // No-match input falls back to defaultLocale (FI per resolver config)
         assertEquals(FI, resolver.resolveLanguageTags("de-DE  fr  es     lv"));

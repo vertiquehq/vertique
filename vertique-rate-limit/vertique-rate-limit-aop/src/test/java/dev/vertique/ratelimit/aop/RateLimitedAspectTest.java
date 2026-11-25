@@ -47,7 +47,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 /**
- * TP-001: {@link RateLimitedAspect} resolves its target {@link RateLimiter} handle exactly once,
+ * {@link RateLimitedAspect} resolves its target {@link RateLimiter} handle exactly once,
  * at interceptor-build time (fails application startup on an unknown policy name rather than at
  * the first request), and at invocation time resolves the ordered {@code key()} selector paths
  * against the live arguments, derives the key through {@link RateLimitAdapterSupport#subjectKey},
@@ -59,7 +59,7 @@ class RateLimitedAspectTest {
     private static final String KNOWN_POLICY = "search-quota";
     private static final String UNKNOWN_POLICY = "unknown-policy";
 
-    static Stream<MatrixRow> t007ContractMatrix() {
+    static Stream<MatrixRow> contractMatrix() {
         return Stream.of(
                 new MatrixRow(
                         "shouldResolveTheHandleOnceAtConstructionTime",
@@ -79,9 +79,9 @@ class RateLimitedAspectTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t007ContractMatrix")
-    @DisplayName("enforces the T007 contract matrix")
-    void shouldEnforceT007ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("contractMatrix")
+    @DisplayName("enforces the contract matrix")
+    void shouldEnforceContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 

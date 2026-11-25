@@ -96,30 +96,30 @@ import org.mockito.ArgumentCaptor;
  *       initializer reconstructs a {@link SecurityContext} whose actor is the service identity and
  *       whose subject is the original captured user (subject-of-record).</li>
  *   <li>{@link #forgedSnapshotDegradesAndGateFails} / {@link #forgedSnapshotDegradesAndGateContinues} —
- *       the reconstruction-re-verification path (case 3b) with <em>no</em> {@link DeferredExecutionOrigin}
- *       bound (an app-forged snapshot bound out of band, exactly the F5/A9 attack shape): a
+ *       the reconstruction-re-verification path with <em>no</em> {@link DeferredExecutionOrigin}
+ *       bound (an app-forged snapshot bound out of band, exactly the forged-snapshot attack shape): a
  *       verified-shaped snapshot is hand-bound onto the holder but its integrity tag fails the
  *       initializer's re-verification, so the initializer binds only a
  *       {@link SnapshotDegradationMarker} — no {@link SecurityContext} — per the origin-or-verified
- *       mint evidence rule (A9), and that marker drives {@link SnapshotDegradationGate} end to end
+ *       mint evidence rule, and that marker drives {@link SnapshotDegradationGate} end to end
  *       under both {@code FAIL} and {@code CONTINUE_WITHOUT_IDENTITY} policies.</li>
- *   <li>{@link #tamperedDurableBytesEmitDegradationAndFail} — the durable-decode path (case 3a):
+ *   <li>{@link #tamperedDurableBytesEmitDegradationAndFail} — the durable-decode path:
  *       corrupted durable snapshot bytes are decoded by the <em>real</em>
  *       {@link IdentitySnapshotDurableDecoder}, which binds a present-but-unverifiable
  *       {@link IdentitySnapshotContext}; the real initializer degrades it to a marker and the real
  *       gate {@code FAIL}s the dispatch. This is the end-to-end regression proof that a tampered
- *       durable snapshot can no longer silently bypass the degradation gate.</li>
- *   <li>{@link #ordinaryContextEmptyDispatchFailsClosed} — the W2 bounded-mint security boundary,
- *       fail-closed side (case 5): a context-empty dispatch with no snapshot and no
+ *       durable snapshot cannot silently bypass the degradation gate.</li>
+ *   <li>{@link #ordinaryContextEmptyDispatchFailsClosed} — the bounded-mint security boundary,
+ *       fail-closed side: a context-empty dispatch with no snapshot and no
  *       {@link DeferredExecutionOrigin} runs through the <em>real</em>
  *       {@link IdentitySnapshotReconstructionInitializer} (which binds nothing) and then the
  *       <em>real</em> {@link ServiceAuthorizationInterceptor} on a {@code @RequiresAction}-gated
  *       operation — the PEP denies the dispatch closed with
  *       {@link AuthzReasonCodes#AUTHENTICATION_REQUIRED} and never authorizes anonymously. This is the
- *       permanent falsification test that case 5 actually <em>denies</em>, not merely "binds
+ *       permanent falsification test that this case actually <em>denies</em>, not merely "binds
  *       nothing".</li>
- *   <li>{@link #deferredOriginDispatchRunsAsSystem} — the W2 bounded-mint security boundary,
- *       minted side (case 4): the same setup but with a {@link DeferredExecutionOrigin} bound as the
+ *   <li>{@link #deferredOriginDispatchRunsAsSystem} — the bounded-mint security boundary,
+ *       minted side: the same setup but with a {@link DeferredExecutionOrigin} bound as the
  *       receive-path context decoder would — the initializer mints a bounded SYSTEM context and the
  *       real PEP permits the gated dispatch, authorizing against the minted SYSTEM actor whose
  *       {@code system.reason} is the origin reference.</li>
@@ -134,11 +134,11 @@ class IdentitySnapshotRoundTripTest {
     private static final PrincipalRef USER =
             new PrincipalRef(PrincipalType.USER, "user-77", Map.of("realm", "acme-realm"));
 
-    // Capture projects free-form attributes out (W2 credential-free enforcement); only type/id (+
+    // Capture projects free-form attributes out (credential-free enforcement); only type/id (+
     // allowlisted system.reason) survive the durable round trip.
     private static final PrincipalRef PROJECTED_USER = new PrincipalRef(PrincipalType.USER, "user-77", Map.of());
 
-    /** Action value gating the operation exercised by the W2 bounded-mint boundary tests. */
+    /** Action value gating the operation exercised by the bounded-mint boundary tests. */
     private static final String GATED_ACTION_VALUE = "svc.resource.exec";
 
     private static SnapshotHmac hmac() {
@@ -147,8 +147,8 @@ class IdentitySnapshotRoundTripTest {
 
     /**
      * Builds a minimal valid {@link IdentitySnapshotConfig} with no {@code carriageRequirements}
-     * entries — every target-kind resolves to {@code OPTIONAL}, matching this test class's
-     * pre-P2.S0-commit-5b behavior (none of these scenarios exercise a REQUIRED target-kind).
+     * entries — every target-kind resolves to {@code OPTIONAL} (none of
+     * these scenarios exercise a REQUIRED target-kind).
      *
      * @return the config fixture
      */
@@ -218,10 +218,10 @@ class IdentitySnapshotRoundTripTest {
                     "capture must preserve the subject-of-record with free-form attributes projected out");
 
             // --- durable carriage: encode to DurableMetadata, decode back on a fresh holder ---
-            // F5/F3a row binding: mirrors DelayedJobService.toExecution / DelayedJobPoller.dispatch,
+            // Row binding: mirrors DelayedJobService.toExecution / DelayedJobPoller.dispatch,
             // which thread a real per-row DurableCarrierDescriptor rather than the carrier-less
             // overloads. The delayed-job boundary is wired with a real carrier, so its snapshot is NOT
-            // sentinel-signed and must still reconstruct under the F3a fail-closed sentinel backstop.
+            // sentinel-signed and must still reconstruct under the fail-closed sentinel backstop.
             DurableCarrierDescriptor rowCarrier = new DurableCarrierDescriptor(
                     "execution-1", new DurableTarget("delayed-job", "job.delayed.test-handler", Optional.empty()));
             IdentitySnapshotContext toEncode = IdentitySnapshotContext.of(captured);
@@ -281,7 +281,7 @@ class IdentitySnapshotRoundTripTest {
             assertTrue(
                     holder.current(SecurityContext.class).isEmpty(),
                     "an unverifiable snapshot with no DeferredExecutionOrigin must not mint a fallback "
-                            + "SecurityContext (origin-or-verified mint evidence rule, A9)");
+                            + "SecurityContext (origin-or-verified mint evidence rule)");
 
             SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
             when(emitter.emit(any(IdentitySnapshotDegradationEvent.class))).thenReturn(Future.succeededFuture());
@@ -327,7 +327,7 @@ class IdentitySnapshotRoundTripTest {
             assertTrue(
                     holder.current(SecurityContext.class).isEmpty(),
                     "with no DeferredExecutionOrigin proving deferred execution, the continued dispatch must "
-                            + "carry no SecurityContext at all (origin-or-verified mint evidence rule, A9) — "
+                            + "carry no SecurityContext at all (origin-or-verified mint evidence rule) — "
                             + "not merely a subject-less one");
 
             verify(emitter, times(1)).emit(any(IdentitySnapshotDegradationEvent.class));
@@ -346,7 +346,7 @@ class IdentitySnapshotRoundTripTest {
 
             // Produce a valid signed snapshot and carry it as durable metadata exactly as the
             // producer side does, then corrupt the encoded snapshot bytes so the receiver can no
-            // longer verify them — the F2 threat: a tampered/unverifiable durable snapshot.
+            // longer verify them — the tampered/unverifiable durable snapshot threat.
             dev.vertique.security.IdentitySnapshotContent captured =
                     new DefaultIdentitySnapshotFactory(new DefaultContextHolder()).capture(liveUserContext());
             DurableMetadata metadata =
@@ -354,14 +354,14 @@ class IdentitySnapshotRoundTripTest {
             DurableMetadata tamperedMetadata = tamperEncodedSnapshot(metadata);
 
             // Real decode of the tampered bytes: a present-but-unverifiable snapshot must bind an
-            // unverifiable context, not silently drop to the no-snapshot (case 4) path.
+            // unverifiable context, not silently drop to the no-snapshot path.
             ContextDecodeResult<IdentitySnapshotContext> decodeResult =
                     decoder.decode(tamperedMetadata, new DurableDecodeContext("delayed-job"));
 
             ContextHolder holder = new DefaultContextHolder();
             decodeResult.value().ifPresent(bound -> holder.bind(IdentitySnapshotContext.class, bound));
 
-            // Real receive-side initializer: must fall to the degradation (case 3) path and bind a marker.
+            // Real receive-side initializer: must fall to the degradation path and bind a marker.
             dev.vertique.security.IdentityReconstruction reconstruction = new DefaultIdentityReconstruction(codec);
             dev.vertique.security.ServiceIdentityResolver resolver =
                     origin -> dev.vertique.security.SystemIdentities.scheduledJob(origin.reference());
@@ -406,18 +406,18 @@ class IdentitySnapshotRoundTripTest {
             ContextHolder holder = new DefaultContextHolder();
 
             // Receive-side reconstruction with NO live SecurityContext, NO IdentitySnapshotContext,
-            // and NO DeferredExecutionOrigin bound — the initializer's case 5 (fail closed) binds
+            // and NO DeferredExecutionOrigin bound — the initializer fails closed and binds
             // nothing at all.
             try (ContextHolder.Scope scope = reconstructionInitializer(holder)
                     .initialize(new InboundContextInitializationContext("services/svc/exec"))) {
                 assertTrue(
                         holder.current(SecurityContext.class).isEmpty(),
-                        "case 5 must bind no SecurityContext for a context-empty dispatch with no "
+                        "The initializer must bind no SecurityContext for a context-empty dispatch with no "
                                 + "deferred-execution provenance");
 
                 // Drive the real @RequiresAction PEP against the same holder: an unbound identity must
                 // fail the gated dispatch closed with AUTHENTICATION_REQUIRED, never authorizing an
-                // anonymous stand-in. This is the security OUTCOME the fail-closed case 5 must produce.
+                // anonymous stand-in. This is the security OUTCOME the fail-closed path must produce.
                 Authorizer authorizer = mock(Authorizer.class);
                 SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
                 when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
@@ -459,8 +459,7 @@ class IdentitySnapshotRoundTripTest {
                     // Case 4: proven deferred execution mints a bounded SYSTEM context.
                     SecurityContext minted =
                             holder.current(SecurityContext.class).orElseThrow();
-                    assertEquals(
-                            PrincipalType.SYSTEM, minted.identity().actor().type(), "case 4 must mint a SYSTEM actor");
+                    assertEquals(PrincipalType.SYSTEM, minted.identity().actor().type(), "must mint a SYSTEM actor");
                     assertEquals(
                             "order-77",
                             minted.identity().actor().attributes().get("system.reason"),
@@ -507,7 +506,7 @@ class IdentitySnapshotRoundTripTest {
         }));
     }
 
-    // --- W2 bounded-mint boundary helpers ---
+    // --- bounded-mint boundary helpers ---
 
     /**
      * Builds the real receive-side {@link IdentitySnapshotReconstructionInitializer} wired against
@@ -613,10 +612,10 @@ class IdentitySnapshotRoundTripTest {
      * Binds a tampered (HMAC-invalid) {@link IdentitySnapshotContext} directly on {@code holder}
      * (simulating a decode that already failed verification once and was resurfaced, or an
      * app-forged snapshot bound out of band) with <em>no</em> {@link DeferredExecutionOrigin} bound
-     * — the F5/A9 attack shape — and runs the real {@link IdentitySnapshotReconstructionInitializer}
+     * — the forged-snapshot attack shape — and runs the real {@link IdentitySnapshotReconstructionInitializer}
      * against it, returning the {@link SnapshotDegradationMarker} it binds. The initializer's own
-     * re-verification is what fails here (case 3b): the snapshot decodes structurally but its
-     * integrity tag does not match. Per the origin-or-verified mint evidence rule (A9), the initializer
+     * re-verification is what fails here: the snapshot decodes structurally but its
+     * integrity tag does not match. Per the origin-or-verified mint evidence rule, the initializer
      * binds only the marker — never a fallback {@link SecurityContext} — since no origin proves the
      * dispatch is deferred execution.
      *

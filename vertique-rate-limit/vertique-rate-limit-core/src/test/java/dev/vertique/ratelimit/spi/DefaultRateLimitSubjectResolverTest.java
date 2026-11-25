@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-002: the framework-default {@link RateLimitSubjectResolver} —
+ * The framework-default {@link RateLimitSubjectResolver} —
  * {@link DefaultRateLimitSubjectResolver} — reads the current {@link SecurityIdentity} off the
  * {@link SecurityContext} bound in the framework {@link ContextHolder}, mirroring
  * {@code dev.vertique.cache.DefaultCacheIdentityResolver}.

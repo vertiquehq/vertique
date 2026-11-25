@@ -21,14 +21,13 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 5: {@code RateLimitCoreModule} read {@code rateLimit.enabled}/
- * {@code rateLimit.defaultMode}/{@code rateLimit.local.maxTrackedKeys}/{@code cleanupIntervalMs}
- * via raw {@code JsonObject} scalar getters ({@code getBoolean}, {@code getString}, {@code
- * getLong}) instead of the canonical injected {@code dev.vertique.core.config.ConfigParser}
- * (docs/standards/config.md rule R10). Vert.x's {@code JsonObject#getLong}/{@code #getBoolean}
- * throw a raw {@link ClassCastException} when the underlying value is a coercible {@link String}
- * (e.g. {@code "maxTrackedKeys": "5"}), unlike {@code ConfigParser}'s dedicated, coercion-lenient
- * mapper.
+ * {@code RateLimitCoreModule} reads {@code rateLimit.enabled}/{@code rateLimit.defaultMode}/
+ * {@code rateLimit.local.maxTrackedKeys}/{@code cleanupIntervalMs} through the canonical injected
+ * {@code dev.vertique.core.config.ConfigParser} rather than raw {@code JsonObject} scalar getters
+ * ({@code getBoolean}, {@code getString}, {@code getLong}). Vert.x's {@code JsonObject#getLong}/
+ * {@code #getBoolean} throw a raw {@link ClassCastException} when the underlying value is a
+ * coercible {@link String} (e.g. {@code "maxTrackedKeys": "5"}), unlike {@code ConfigParser}'s
+ * dedicated, coercion-lenient mapper.
  */
 class RateLimitCoreModuleConfigParserComplianceTest {
 

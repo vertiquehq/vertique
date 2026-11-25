@@ -25,12 +25,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * message comes from an explicit {@code Objects.requireNonNull} guard, so the call site has an
  * unambiguous diagnosis.
  *
- * <p>RED: without an explicit {@code requireNonNull} guard, {@link Event#fire(Object)} currently
- * throws an NPE from the JVM (via {@code event.getClass()}), but its message is a JVM-generated
- * string such as {@code "Cannot invoke ... because 'event' is null"} rather than the explicit
- * contract message {@code "event must not be null"}. GREEN: once {@link Event#fire(Object)} calls
- * {@code Objects.requireNonNull(event, "event must not be null")} at the top of the method, the
- * message assertion below passes.
+ * <p>{@link Event#fire(Object)} calls {@code Objects.requireNonNull(event, "event must not be null")}
+ * at the top of the method, so the NPE carries the explicit contract message rather than a
+ * JVM-generated description such as {@code "Cannot invoke ... because 'event' is null"}.
  */
 @ExtendWith(VertxExtension.class)
 class FireRejectsNullEventTest {
@@ -48,9 +45,6 @@ class FireRejectsNullEventTest {
      * Given a {@code null} event argument, when {@code fire(null)} is called, then a
      * {@link NullPointerException} is thrown synchronously (not wrapped in a failed {@link Future})
      * with the explicit message {@code "event must not be null"}.
-     *
-     * <p>RED: without {@code requireNonNull}, the NPE message is a JVM-synthesized description
-     * (e.g. {@code "Cannot invoke ... because 'event' is null"}), not {@code "event must not be null"}.
      */
     @Test
     @DisplayName(

@@ -14,13 +14,13 @@ import javax.crypto.spec.SecretKeySpec;
 /**
  * Independent JDK-primitive reference computations for this module's decisive assertions, written
  * separately from {@link Bucket4jRedisTranslation}/{@link RedisPhysicalKey} so the tests that use
- * this helper do not check themselves (TP-003, TP-007's "Test readability" notes).
+ * this helper do not check themselves.
  */
 final class IndependentRedisReference {
 
     private IndependentRedisReference() {}
 
-    /** Independently recomputes the {@code CLUSTERED} physical key from JDK primitives (§6.1). */
+    /** Independently recomputes the {@code CLUSTERED} physical key from JDK primitives. */
     static String physicalKey(String namespace, String secret, String canonicalInput) {
         byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
         String fingerprint = toLowerHex(sha256(secretBytes)).substring(0, 8);

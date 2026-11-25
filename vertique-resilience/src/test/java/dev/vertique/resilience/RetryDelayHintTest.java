@@ -77,7 +77,7 @@ class RetryDelayHintTest {
     }
 
     /**
-     * AC-052: a hint within the maximum lengthens the delay to {@code max(sampled backoff, hint)},
+     * A hint within the maximum lengthens the delay to {@code max(sampled backoff, hint)},
      * observers see the chosen delay, and the first hint in the cause chain is the one used.
      */
     @Test
@@ -194,7 +194,7 @@ class RetryDelayHintTest {
     }
 
     /**
-     * AC-053: with the maximum left at 0 the hint is ignored, delays and the known budget are the
+     * With the maximum left at 0 the hint is ignored, delays and the known budget are the
      * ones recorded before the change, and the previous constructors still resolve the same policy.
      */
     @Test
@@ -263,7 +263,7 @@ class RetryDelayHintTest {
     }
 
     /**
-     * AC-054: a hint above the maximum refuses the retry, surfaces the original failure after one
+     * A hint above the maximum refuses the retry, surfaces the original failure after one
      * invocation with no wait, and emits {@code RetryExhausted} without {@code RetryScheduled}. A
      * hint accessor that throws or returns nothing usable counts as no hint.
      */
@@ -330,7 +330,7 @@ class RetryDelayHintTest {
     }
 
     /**
-     * AC-055: the known budget counts the hint maximum for fixed and exponential backoff, and a
+     * The known budget counts the hint maximum for fixed and exponential backoff, and a
      * custom backoff stays unknown.
      */
     @Test

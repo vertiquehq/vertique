@@ -32,7 +32,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * TP-001: multi-client CAS contention for the same physical key, driven through a deterministic
+ * Multi-client CAS contention for the same physical key, driven through a deterministic
  * barrier-fake ({@link ControllableRedis}) in front of the shared Redis connection — at most
  * {@code capacity} clients commit, every remaining client's outcome is exactly {@code
  * QUOTA_EXCEEDED} or {@code TIMEOUT} (never {@code CONTENTION_EXHAUSTED}), and a client held past

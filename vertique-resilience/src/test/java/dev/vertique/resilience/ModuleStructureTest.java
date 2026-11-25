@@ -27,7 +27,7 @@ class ModuleStructureTest {
     private static final String SOURCE_ROOT = "src/main/java";
 
     @Test
-    @DisplayName("T011 public types remain in the canonical resilience packages")
+    @DisplayName("public types remain in the canonical resilience packages")
     void publicTypesRemainInCanonicalPackages() {
         assertPackage("dev.vertique.resilience.Resilience", "dev.vertique.resilience");
         assertPackage("dev.vertique.resilience.ResiliencePipeline", "dev.vertique.resilience");
@@ -76,7 +76,7 @@ class ModuleStructureTest {
         }
 
         if (!violations.isEmpty()) {
-            fail("T011 must not publish an internal or generic provider/stage surface:\n  "
+            fail("The resilience module must not publish an internal or generic provider/stage surface:\n  "
                     + String.join("\n  ", violations));
         }
 
@@ -118,7 +118,7 @@ class ModuleStructureTest {
         try {
             return Class.forName(typeName, false, ModuleStructureTest.class.getClassLoader());
         } catch (ClassNotFoundException e) {
-            throw new AssertionError("Required T011 type is absent: " + typeName, e);
+            throw new AssertionError("Required type is absent: " + typeName, e);
         }
     }
 }

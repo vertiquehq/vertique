@@ -79,7 +79,7 @@ class ServiceResilienceNamedPolicyTest {
     }
 
     @Test
-    @DisplayName("TP-001: layers operation overrides over named tiers and rejects unknown policies")
+    @DisplayName("layers operation overrides over named tiers and rejects unknown policies")
     void layersOperationOverrideOverNamedTierAndRejectsUnknownPolicies(Vertx vertx) throws Exception {
         Resilience resilience = Resilience.create(vertx);
         try {
@@ -162,7 +162,7 @@ class ServiceResilienceNamedPolicyTest {
     }
 
     @Test
-    @DisplayName("TP-002: activates a named tier and retries once on a transient failure")
+    @DisplayName("activates a named tier and retries once on a transient failure")
     void activatesNamedTierAndRetriesOnceOnATransientFailure(Vertx vertx) throws Exception {
         Resilience resilience = Resilience.create(vertx);
         ServiceResiliencePipelineFactory factory = null;

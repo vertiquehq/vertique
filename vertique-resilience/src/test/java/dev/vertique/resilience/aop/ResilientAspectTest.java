@@ -45,21 +45,21 @@ import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** TP-001 proof for the ResilientAspect construction, execution, and lifecycle contract. */
+/** Proof for the ResilientAspect construction, execution, and lifecycle contract. */
 @Timeout(value = 15, unit = TimeUnit.SECONDS)
 class ResilientAspectTest {
 
     private static final String PAYMENTS = "payments";
     private static final String UNKNOWN = "unknown-policy";
 
-    @DisplayName("enforces the T010 contract matrix")
+    @DisplayName("enforces the contract matrix")
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t010ContractMatrix")
-    void shouldEnforceT010ContractMatrix(MatrixRow row) throws Throwable {
+    @MethodSource("contractMatrix")
+    void shouldEnforceContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
     }
 
-    static List<MatrixRow> t010ContractMatrix() {
+    static List<MatrixRow> contractMatrix() {
         return List.of(
                 new MatrixRow("resolve once", ResilientAspectTest::shouldResolveThePipelineOnceAtConstructionTime),
                 new MatrixRow(

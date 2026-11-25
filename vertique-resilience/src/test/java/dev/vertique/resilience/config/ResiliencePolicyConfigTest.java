@@ -22,7 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** TP-002 proof for named policy bounds, required fields, empty-policy rejection, and config parsing. */
+/** Proof for named policy bounds, required fields, empty-policy rejection, and config parsing. */
 @DisplayName("ResiliencePolicyConfig")
 class ResiliencePolicyConfigTest {
 

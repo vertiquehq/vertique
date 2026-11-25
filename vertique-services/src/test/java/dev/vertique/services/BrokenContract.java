@@ -10,7 +10,7 @@ import io.vertx.core.Future;
  * constructor that unconditionally throws, used by {@link ServiceClientFactoryCompanionTest} to
  * prove {@link ServiceClientFactory#create(Class)} fails loudly — rather than silently falling
  * back to the JDK dynamic proxy — when a generated companion is present but cannot be
- * instantiated (CG-015 §4.2, {@code brokenCompanion} unwrap).
+ * instantiated.
  */
 @ServiceContract("broken")
 interface BrokenContract {

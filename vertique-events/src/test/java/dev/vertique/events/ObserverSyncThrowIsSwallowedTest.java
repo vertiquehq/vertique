@@ -18,8 +18,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Behavior test proving a single synchronously-throwing observer is isolated from the others and
  * does not fail {@link Event#fire(Object)}.
  *
- * <p>RED in slice 3.1: {@link Event#fire(Object)} is a failing stub. The green step turns this test
- * green by catching the sync throw per observer, logging it, and continuing the fan-out.
+ * <p>{@link Event#fire(Object)} catches the synchronous throw per observer, logs it, and continues the
+ * fan-out.
  */
 @ExtendWith(VertxExtension.class)
 class ObserverSyncThrowIsSwallowedTest {

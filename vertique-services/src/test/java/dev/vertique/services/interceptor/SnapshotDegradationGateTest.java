@@ -46,7 +46,7 @@ import org.mockito.ArgumentCaptor;
  * emission-<em>ordering</em> guarantee, not an acknowledged-delivery one. Most of this class mocks
  * {@link SecurityEventEmitter} to pin the gate's own compose-propagation wiring in isolation; see
  * {@code continueWithoutIdentityProceedsWhenRealEmitterObserverFails} for a real-emitter characterization
- * test proving that an observer failure is isolated (identity-001 AC-SE-6) and never trips the
+ * test proving that an observer failure is isolated and never trips the
  * mocked-only fail-closed branch exercised elsewhere in this class.
  */
 class SnapshotDegradationGateTest {
@@ -165,7 +165,7 @@ class SnapshotDegradationGateTest {
          * that returns a failed future propagates that failure as the dispatch outcome, regardless
          * of the configured policy. This state is a mocking artifact — the concrete
          * {@link SecurityEventEmitter} shipped by the framework structurally never returns a failed
-         * future (its fan-out isolates every per-observer failure per identity-001 AC-SE-6), so this
+         * future (its fan-out isolates every per-observer failure), so this
          * branch is unreachable with the default emitter. See
          * {@code continueWithoutIdentityProceedsWhenRealEmitterObserverFails} for the real-emitter
          * characterization of the actually-shipped behavior.
@@ -173,7 +173,7 @@ class SnapshotDegradationGateTest {
         @Test
         @DisplayName(
                 "[white-box] CONTINUE_WITHOUT_IDENTITY still fails the dispatch closed if the emitter future itself"
-                        + " fails (mocked-only state; the concrete emitter never produces it — see AC-SE-6)")
+                        + " fails (mocked-only state; the concrete emitter never produces it)")
         void continueWithoutIdentityModeFailsWhenEmitFails() {
             ContextHolder holder = mock(ContextHolder.class);
             SnapshotDegradationMarker marker =
@@ -247,18 +247,18 @@ class SnapshotDegradationGateTest {
         }
     }
 
-    // --- Real emitter: observer failure isolation (identity-001 AC-SE-6) ---
+    // --- Real emitter: observer failure isolation ---
 
     @Nested
     @DisplayName("real SecurityEventEmitter — observer failure isolation")
     class RealEmitterCharacterization {
 
         /**
-         * Pins the honest V1 contract with a real {@link SecurityEventEmitter} rather than a mock: a
+         * Pins the current contract with a real {@link SecurityEventEmitter} rather than a mock: a
          * single registered observer whose {@code onIdentitySnapshotDegradation} returns a failed
          * future — simulating a failing asynchronous observer — never surfaces as an emitter-level
          * failure, because {@link SecurityEventEmitter}'s per-observer {@code safe()} wrapper
-         * isolates both synchronous throws and asynchronous failures (identity-001 AC-SE-6). The
+         * isolates both synchronous throws and asynchronous failures. The
          * gate's {@code CONTINUE_WITHOUT_IDENTITY} policy therefore proceeds: the guarantee this gate makes
          * is emission ordering (the emit future is awaited before the decision), not acknowledged
          * observer delivery — an absent or misbehaving observer does not block or fail the
@@ -291,7 +291,7 @@ class SnapshotDegradationGateTest {
 
             assertTrue(
                     result.succeeded(),
-                    "observer failure must be isolated (AC-SE-6): CONTINUE_WITHOUT_IDENTITY must still proceed");
+                    "observer failure must be isolated: CONTINUE_WITHOUT_IDENTITY must still proceed");
             assertSame(ctx, result.result(), "context must be returned unchanged");
         }
 

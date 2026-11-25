@@ -10,7 +10,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
-/** TP-002: {@link RateLimitDecision#permitted()} must distinguish admitting from denying outcomes. */
+/** {@link RateLimitDecision#permitted()} must distinguish admitting from denying outcomes. */
 class RateLimitDecisionTest {
 
     @Test

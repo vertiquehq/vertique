@@ -12,13 +12,13 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-003, TP-004: {@link RateLimitStorageIdentity}'s {@code LOCAL} and {@code CLUSTERED} storage
+ * {@link RateLimitStorageIdentity}'s {@code LOCAL} and {@code CLUSTERED} storage
  * identity derivation.
  */
 class RateLimitStorageIdentityTest {
 
     /**
-     * Golden vectors (D015 compatibility-contract requirement, matching D008's own requirement):
+     * Golden vectors (a compatibility contract):
      * canonical input {@code "policy-a:r1:Scaller-1"} (policy {@code "policy-a"}, revision
      * {@code "r1"}, one-component key {@code "caller-1"}).
      *

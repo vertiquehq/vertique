@@ -63,7 +63,7 @@ class ResilienceExecutionOutcomeTest {
     }
 
     /**
-     * Supporting FR-030: an execution is reported with the category of how it ended, whether or not it
+     * An execution is reported with the category of how it ended, whether or not it
      * carries a cancellation, and only an execution that ended with its own cancellation's reason is
      * reported as an application failure whatever the reason's type.
      */
@@ -187,7 +187,7 @@ class ResilienceExecutionOutcomeTest {
     }
 
     /**
-     * Supporting FR-030: an execution whose cancellation is already cancelled fails with the reason
+     * An execution whose cancellation is already cancelled fails with the reason
      * before the circuit breaker is consulted, so it is not reported as a rejection by an open breaker.
      */
     @Test
@@ -230,7 +230,7 @@ class ResilienceExecutionOutcomeTest {
     }
 
     /**
-     * Supporting FR-032 and AC-092: a pipeline built through the adapter path from a policy, a breaker and a
+     * A pipeline built through the adapter path from a policy, a breaker and a
      * bulkhead runs with them, and refuses a configuration that enables nothing.
      */
     @Test

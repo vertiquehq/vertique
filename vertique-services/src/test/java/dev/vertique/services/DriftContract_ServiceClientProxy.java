@@ -9,7 +9,7 @@ import io.vertx.core.Future;
 
 /**
  * Hand-written stand-in for a <em>stale</em> generated companion of {@link DriftContract}
- * (CG-015 §4.2 narrow unwrap, baked-id-drift fixture).
+ * (baked-id-drift fixture for the narrow unwrap).
  *
  * <p>Simulates a companion jar built against an earlier interface version that declared an
  * {@code "opGhost"} operation no longer present on {@link DriftContract} — a baked-id vs.

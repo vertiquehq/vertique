@@ -18,11 +18,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * P02/P03 review repair (T017, item 1): {@link RateLimitRedisModule#clusteredRateLimitBackend} —
- * and, underneath it, {@link RateLimitRedisConfig} — eagerly validates {@code rateLimit.redis.*}
- * at this provider's own construction, rather than silently defaulting an omitted {@code
- * operationTimeoutMs}/{@code expirationSlackMs} to {@code 0L} (which previously built a 1 ms-
- * deadline backend instead of failing startup). {@code vertx}/{@code clients} are never
+ * {@link RateLimitRedisModule#clusteredRateLimitBackend} — and, underneath it, {@link
+ * RateLimitRedisConfig} — eagerly validates {@code rateLimit.redis.*} at this provider's own
+ * construction, rather than silently defaulting an omitted {@code
+ * operationTimeoutMs}/{@code expirationSlackMs} to {@code 0L} (which would build a 1 ms-deadline
+ * backend instead of failing startup). {@code vertx}/{@code clients} are never
  * dereferenced before this validation runs, so every row below passes {@code null} for both.
  */
 class RateLimitRedisModuleEagerValidationTest {

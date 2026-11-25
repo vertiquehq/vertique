@@ -20,7 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** TP-003 proof for complete and partial operation-supplied exponential backoff tuples. */
+/** Proof for complete and partial operation-supplied exponential backoff tuples. */
 @DisplayName("ResiliencePolicyResolver backoff")
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
 class ResiliencePolicyResolverBackoffTest {

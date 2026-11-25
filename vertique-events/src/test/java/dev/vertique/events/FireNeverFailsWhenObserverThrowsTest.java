@@ -15,8 +15,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Behavior test proving {@link Event#fire(Object)} never fails even when every observer throws.
  *
- * <p>RED in slice 3.1: {@link Event#fire(Object)} is a failing stub. The green step turns this test
- * green by swallowing-and-logging each observer throw so the returned future still completes.
+ * <p>{@link Event#fire(Object)} swallows and logs each observer throw, so the returned future still
+ * completes.
  */
 @ExtendWith(VertxExtension.class)
 class FireNeverFailsWhenObserverThrowsTest {

@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-001/TP-002/TP-006: {@link LocalRateLimitRegistry}'s bounded eviction, {@code
+ * {@link LocalRateLimitRegistry}'s bounded eviction, {@code
  * CAPACITY_EXHAUSTED} classification through policy {@code failureMode}, and per-policy budget
  * isolation.
  */
@@ -64,7 +64,7 @@ class LocalRateLimitRegistryTest {
         registryLogger.setLevel(previousLevel);
     }
 
-    // --- TP-001 ---
+    // --- bounded eviction ---
 
     @Test
     void shouldEvictOnlySafelyReclaimableEntriesNeverActiveState() {
@@ -98,7 +98,7 @@ class LocalRateLimitRegistryTest {
                 .isEqualTo(6L);
     }
 
-    // --- TP-002 ---
+    // --- CAPACITY_EXHAUSTED classification ---
 
     @Test
     void shouldClassifyCapacityExhaustedThroughPolicyFailureMode() {
@@ -141,7 +141,7 @@ class LocalRateLimitRegistryTest {
         }
     }
 
-    // --- TP-006 ---
+    // --- per-policy isolation ---
 
     @Test
     void shouldIsolateCapacityExhaustionPerPolicyRegistry() {
@@ -166,12 +166,11 @@ class LocalRateLimitRegistryTest {
         }
     }
 
-    // --- T021 W2: sweep throttling ---
+    // --- sweep throttling ---
 
     /**
-     * External deep-review finding 2 (sweep cost bounding): before T021 W2, every at-capacity
-     * admission ran a full {@code O(maxTrackedKeys)} scan of this registry unconditionally. This
-     * amortizes that cost to at most once per {@code cleanupIntervalMs}: a second at-capacity
+     * Sweep cost bounding: the full {@code O(maxTrackedKeys)} scan of this registry is amortized
+     * to at most once per {@code cleanupIntervalMs}: a second at-capacity
      * admission that lands within the interval of the previous sweep must skip the scan and return
      * {@code CAPACITY_EXHAUSTED} immediately, <em>even when an entry would in fact be reclaimable</em>
      * if the scan ran — the throttle, not "nothing was reclaimable", is what this proves.
@@ -233,11 +232,11 @@ class LocalRateLimitRegistryTest {
                 .isTrue();
     }
 
-    // --- T021 W3: saturation observability ---
+    // --- saturation observability ---
 
     /**
-     * External deep-review finding 3: key-space saturation ({@code CAPACITY_EXHAUSTED}) previously
-     * had no log signal anywhere. This proves exactly one {@code WARN} per saturation episode — not
+     * Key-space saturation ({@code CAPACITY_EXHAUSTED}) is logged. This proves exactly one
+     * {@code WARN} per saturation episode — not
      * one per rejected admission — and that a distinct later episode (after the registry has
      * recovered room and saturates again) warns again.
      */

@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-005: a {@link KeyedRateLimiter} must apply its selector function and dispatch through the
+ * A {@link KeyedRateLimiter} must apply its selector function and dispatch through the
  * same decision path {@link RateLimiter#acquire(RateLimitKey)} exercises, not a separate or
  * unimplemented code path.
  */

@@ -32,10 +32,10 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Neutral T011 fixtures published from cache-core for provider composition tests. */
-public final class T011CacheCompositionFixtures {
+/** Neutral fixtures published from cache-core for provider composition tests. */
+public final class CacheCompositionFixtures {
 
-    private T011CacheCompositionFixtures() {}
+    private CacheCompositionFixtures() {}
 
     /** Returns a deterministic cache configuration for one selected placement mode. */
     public static CacheConfig config(CacheMode mode, boolean enabled) {

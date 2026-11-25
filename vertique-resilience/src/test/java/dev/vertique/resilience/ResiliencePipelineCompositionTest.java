@@ -31,12 +31,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-001 red proof for the executable runtime and timeout composition contract.
+ * Proof of the executable runtime and timeout composition contract.
  *
  * <p>The scenarios deliberately cross the public construction boundary: a standalone timeout,
  * an inline pipeline timeout, and a prebuilt timeout must share one timeout fence while retaining
- * the pipeline's execution identity. The same proof also freezes eager builder validation,
- * captured-context execution, and runtime close semantics before the runtime implementation exists.
+ * the pipeline's execution identity. The same proof also covers eager builder validation,
+ * captured-context execution, and runtime close semantics.
  */
 @ExtendWith(VertxExtension.class)
 @org.junit.jupiter.api.Timeout(value = 10, unit = TimeUnit.SECONDS)

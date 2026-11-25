@@ -39,10 +39,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that {@link ServiceMethodInvoker}'s inbound-scope install seeds the ambient
- * {@link InvocationOrigin} for the lifetime of a service dispatch (identity-002 P2.S5b-ii), and
+ * {@link InvocationOrigin} for the lifetime of a service dispatch, and
  * that a dispatch carrying root-ingress provenance (e.g. a delayed-job {@link
  * DeferredExecutionOrigin}) is reflected in the derived origin's {@code kind()} rather than always
- * being clobbered to {@link DispatchBoundary#SERVICE_DISPATCH} (identity-002 review fix W_f).
+ * being clobbered to {@link DispatchBoundary#SERVICE_DISPATCH}.
  *
  * <p>Drives a real event-bus dispatch through {@link ServiceMethodInvoker#handle} (rather than
  * mocking the inbound scope) so the assertion exercises the actual production wiring: the merge

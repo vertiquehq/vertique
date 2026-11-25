@@ -50,7 +50,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001 contract proof for policy resolution, retry execution, budgets, and the structured
+ * Contract proof for policy resolution, retry execution, budgets, and the structured
  * adapter facade.
  *
  * <p>The scenarios intentionally cross the public resolver and execution boundaries. They keep
@@ -237,8 +237,8 @@ class ResiliencePolicyExecutionTest {
     }
 
     /**
-     * The stable TP-001 identifier from the task contract. It proves that resolver output,
-     * direct retry, inline retry, prebuilt retry, callback ordinals, and the known budget agree.
+     * Proves that resolver output, direct retry, inline retry, prebuilt retry, callback ordinals,
+     * and the known budget agree.
      */
     @Test
     @DisplayName("resolved retry schedule matches direct and pipeline execution budget")

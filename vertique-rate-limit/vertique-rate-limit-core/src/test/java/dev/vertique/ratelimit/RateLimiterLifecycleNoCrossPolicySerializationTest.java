@@ -17,14 +17,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 2 (T021 W2 — third round): a single {@link RateLimiter}'s {@code
- * acquire}/{@code execute} routed every LOCAL admission — across <em>every policy</em> this runtime
- * resolves a handle for — through one shared {@link RateLimiterLifecycle} monitor, held across
- * {@code backend.consume(...)}'s entire synchronous call (confirmed: {@code
- * LocalBucket4jRateLimitBackend} is fully synchronous). One policy's slow or blocked admission
- * therefore serialized every other policy's admission behind it, regardless of key or bucket.
+ * A single {@link RateLimiter}'s {@code acquire}/{@code execute} does not hold the shared
+ * {@link RateLimiterLifecycle} monitor across {@code backend.consume(...)}'s synchronous call
+ * ({@code LocalBucket4jRateLimitBackend} is fully synchronous), so one policy's slow or blocked
+ * admission never serializes another policy's admission behind it, regardless of key or bucket.
  *
- * <p>This test proves the fix holds: while policy A's backend consume is blocked mid-call (on a
+ * <p>This test proves it: while policy A's backend consume is blocked mid-call (on a
  * real, separate thread — this genuinely is a cross-thread scheduling property, not something a
  * single-threaded ordering trick can substitute for), policy B's {@code acquire} on another thread
  * must complete without ever waiting on policy A's hold. Determinism comes from {@link
@@ -78,8 +76,8 @@ class RateLimiterLifecycleNoCrossPolicySerializationTest {
         assertThat(policyBCompleted[0])
                 .as("policy B's acquire must complete while policy A's backend consume is still blocked -- a "
                         + "single shared RateLimiterLifecycle monitor must never serialize admission across "
-                        + "policies (T021 W2); under the old lock-hold-across-invoke design this thread would "
-                        + "still be blocked trying to enter registerAndInvoke's critical section")
+                        + "policies; a design that held the lock across the invocation would leave this thread "
+                        + "blocked trying to enter registerAndInvoke's critical section")
                 .isTrue();
 
         releasePolicyAConsume.countDown();

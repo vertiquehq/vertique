@@ -72,7 +72,7 @@ class ResilienceCancellationTest {
     }
 
     /**
-     * AC-068: cancelling during a retry delay fails the execution with the given reason, starts no
+     * Cancelling during a retry delay fails the execution with the given reason, starts no
      * further attempt, and reports one execution outcome.
      */
     @Test
@@ -140,7 +140,7 @@ class ResilienceCancellationTest {
     }
 
     /**
-     * AC-069: cancelling a call queued in the bulkhead removes it from the queue, never invokes its
+     * Cancelling a call queued in the bulkhead removes it from the queue, never invokes its
      * supplier, and frees the queue slot for the next caller.
      */
     @Test
@@ -211,7 +211,7 @@ class ResilienceCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancelled half-open trial is recorded as a failure, so the breaker re-opens
+     * A cancelled half-open trial is recorded as a failure, so the breaker re-opens
      * and the next call within {@code resetTimeoutMs} is rejected.
      */
     @Test
@@ -273,7 +273,7 @@ class ResilienceCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancelled execution on a closed breaker is recorded as a success, which
+     * A cancelled execution on a closed breaker is recorded as a success, which
      * resets the consecutive-failure count and never opens the breaker.
      */
     @Test
@@ -316,7 +316,7 @@ class ResilienceCancellationTest {
     }
 
     /**
-     * Supporting FR-030: cancelling while the attempt is in flight fails the execution once and ignores
+     * Cancelling while the attempt is in flight fails the execution once and ignores
      * the attempt's late result, including a late failure that would otherwise be retried.
      */
     @Test
@@ -462,7 +462,7 @@ class ResilienceCancellationTest {
     }
 
     /**
-     * Supporting FR-030: the first cancel wins across threads, later cancels are no-ops, and null
+     * The first cancel wins across threads, later cancels are no-ops, and null
      * arguments throw {@link NullPointerException} synchronously.
      */
     @Test

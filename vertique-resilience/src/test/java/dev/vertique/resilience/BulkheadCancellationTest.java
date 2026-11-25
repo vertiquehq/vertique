@@ -61,7 +61,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: cancelling an execution whose supplier is running gives its permit back, so
+     * Cancelling an execution whose supplier is running gives its permit back, so
      * the next caller is admitted instead of rejected and a queued caller is admitted at once.
      */
     @Test
@@ -121,7 +121,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: cancelling a queued execution cancels its queue timer, so the timer does not
+     * Cancelling a queued execution cancels its queue timer, so the timer does not
      * stay armed for the rest of the queue timeout.
      */
     @Test
@@ -158,7 +158,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancel that arrives after the call completed normally does nothing: it does
+     * A cancel that arrives after the call completed normally does nothing: it does
      * not fail, and it does not give a second permit back.
      */
     @Test
@@ -193,7 +193,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancel that has already taken the execution's listener off the cancellation
+     * A cancel that has already taken the execution's listener off the cancellation
      * and reaches the execution only after it completed normally does nothing: it does not fail and it
      * does not give a second permit back.
      */
@@ -242,7 +242,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a cancelled running call lets go of its operation, so a late result of an
+     * A cancelled running call lets go of its operation, so a late result of an
      * operation future that is still held does not keep the operation reachable.
      */
     @Test
@@ -270,7 +270,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: an execution handed to a bulkhead whose cancellation is already cancelled
+     * An execution handed to a bulkhead whose cancellation is already cancelled
      * fails with the reason without invoking the operation and without holding a permit.
      */
     @Test
@@ -307,7 +307,7 @@ class BulkheadCancellationTest {
     }
 
     /**
-     * Supporting FR-030: an execution that settles normally unregisters its cancellation listener, so a long-lived
+     * An execution that settles normally unregisters its cancellation listener, so a long-lived
      * cancellation shared by many calls holds nothing for the calls that already finished.
      */
     @Test

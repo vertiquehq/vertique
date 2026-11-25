@@ -26,15 +26,15 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Tests for {@link ServiceClientFactory}'s companion-selection seam (CG-015 §4.2 steps 3-4).
+ * Tests for {@link ServiceClientFactory}'s companion-selection seam.
  *
  * <p>This module cannot run its own downstream annotation processor against its own test sources,
  * so the generated companions this factory would select are hand-written stand-ins
  * ({@link SelectableContract_ServiceClientProxy}, {@link BrokenContract_ServiceClientProxy},
  * {@link DriftContract_ServiceClientProxy}, {@link NestedHolder_Inner_ServiceClientProxy}) that
- * mimic the §4.1 companion contract exactly: a
+ * mimic the generated companion contract exactly: a
  * {@code public final} class implementing the contract, a 3-arg constructor
- * {@code (ServiceRequestSender, DispatchEnvelopeBuilder, ContractEntry<?>)}, and the §4.2 mismatch
+ * {@code (ServiceRequestSender, DispatchEnvelopeBuilder, ContractEntry<?>)}, and the mismatch
  * prefix baked into any constructor-time completeness failure.
  *
  * <p>All entries here are hand-built via {@link ServiceContractEntries#deployable()} and
@@ -48,7 +48,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * fail-fast, and {@code shouldUnwrapBakedIdDriftToFailFast} pins the narrow baked-id-drift unwrap.
  * {@code shouldFallBackToDynamicProxyWhenCompanionAbsent} pins the complementary fallback path —
  * a contract with no companion anywhere on the classpath is still served by a JDK dynamic proxy —
- * and {@code shouldFailCreateWhenEntryMissingOperation_generatedPath} pins that the §4.2 step-2
+ * and {@code shouldFailCreateWhenEntryMissingOperation_generatedPath} pins that the {@code create()}-time
  * completeness check fires before any companion-selection attempt is made, identically on both
  * paths.
  */
@@ -253,7 +253,7 @@ class ServiceClientFactoryCompanionTest {
     }
 
     /**
-     * Baked-id drift (§4.2 narrow unwrap): a runtime-complete registry entry for
+     * Baked-id drift (narrow unwrap): a runtime-complete registry entry for
      * {@link DriftContract} (its sole current operation, {@code "opA"}) whose companion was
      * "compiled" against an older interface version baking in a now-nonexistent {@code "opGhost"}
      * operation must make {@code create()} fail with the exact generated-constructor
@@ -268,7 +268,7 @@ class ServiceClientFactoryCompanionTest {
      * @throws NoSuchMethodException never — {@code opA} is a real declared method
      */
     @Test
-    @DisplayName("Should unwrap baked-id drift to a fail-fast exception matching the §4.2 prefix")
+    @DisplayName("Should unwrap baked-id drift to a fail-fast exception matching the mismatch prefix")
     void shouldUnwrapBakedIdDriftToFailFast(Vertx vertx) throws NoSuchMethodException {
         Method opAMethod = DriftContract.class.getMethod("opA", String.class);
         DriftContract impl = x -> Future.succeededFuture(x);
@@ -290,7 +290,7 @@ class ServiceClientFactoryCompanionTest {
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> factory.create(DriftContract.class));
         assertTrue(
                 ex.getMessage().startsWith(ServiceClientFactory.CONTRACT_MISMATCH_PREFIX),
-                "Message must start with the §4.2-pinned mismatch prefix (narrow unwrap), was: " + ex.getMessage());
+                "Message must start with the pinned mismatch prefix (narrow unwrap), was: " + ex.getMessage());
         assertTrue(ex.getMessage().contains("opGhost"), "Message must name the stale baked operation id 'opGhost'");
         assertFalse(
                 ex.getMessage().contains("present but could not be instantiated"),
@@ -300,12 +300,11 @@ class ServiceClientFactoryCompanionTest {
     /**
      * Cross-path guard: a partial registry entry for {@link SelectableContract} (missing its only
      * operation, {@code "ping"}) with the real companion present must fail {@code create()} with
-     * the identical top-level mismatch exception as the S2 reflective-path test — the §4.2 step-2
+     * the identical top-level mismatch exception as the reflective-path test — the {@code create()}-time
      * completeness check runs immediately after {@code registry.resolve()} and before any
      * companion-selection attempt, on both the reflective and generated paths alike.
      *
-     * <p>This check predates the companion-selection seam (added in CG-015 S2, before CG-015 S3's
-     * selection logic) and continues to hold unconditionally now that selection is in place.
+     * <p>The check holds unconditionally, independent of companion selection.
      *
      * @param vertx the Vert.x instance
      * @throws NoSuchMethodException never — {@code ping} is a real declared method
@@ -335,7 +334,7 @@ class ServiceClientFactoryCompanionTest {
                 assertThrows(IllegalStateException.class, () -> factory.create(SelectableContract.class));
         assertTrue(
                 ex.getMessage().startsWith(ServiceClientFactory.CONTRACT_MISMATCH_PREFIX),
-                "Message must start with the §4.2-pinned mismatch prefix, was: " + ex.getMessage());
+                "Message must start with the pinned mismatch prefix, was: " + ex.getMessage());
         assertTrue(ex.getMessage().contains(SelectableContract.class.getName()), "Message must name the contract FQCN");
         assertTrue(ex.getMessage().contains("ping"), "Message must name the missing operation id 'ping'");
     }

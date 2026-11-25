@@ -110,7 +110,7 @@ class ResilienceAnnotationsTest {
     }
 
     @Test
-    @DisplayName("TP-001: @Resilient resolves policy and activates resilience")
+    @DisplayName("@Resilient resolves policy and activates resilience")
     void resolvesTheResilientAnchorAsPolicyAndActivation() throws Exception {
         Method anchorOnlyMethod = ResilientFixtures.class.getMethod("anchorOnly");
         ResilienceAnnotations anchorOnly = ResilienceAnnotations.resolve(ResilientFixtures.class, anchorOnlyMethod);
@@ -146,7 +146,7 @@ class ResilienceAnnotationsTest {
     }
 
     @Test
-    @DisplayName("TP-002: MethodMetadata resolution is reflection-free and method-level only")
+    @DisplayName("MethodMetadata resolution is reflection-free and method-level only")
     void resolvesTheMethodMetadataOverloadReflectionFreeAndMethodLevelOnly() throws Exception {
         Method method = MethodMetadataFixtures.class.getMethod("methodLevelDeclarations");
         MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of());

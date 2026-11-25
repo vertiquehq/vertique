@@ -9,11 +9,11 @@ import io.vertx.core.Future;
 /**
  * Hand-written broken stand-in for the generated companion of {@link BrokenContract}.
  *
- * <p>Present on the test classpath with the <em>correct</em> §4.1 constructor signature so that
+ * <p>Present on the test classpath with the <em>correct</em> constructor signature so that
  * {@link dev.vertique.core.util.GeneratedCompanions#instantiate} attempts reflective construction,
  * but the constructor body unconditionally throws an unrelated {@link RuntimeException} — the
- * present-but-broken case that must fail {@code create()} loudly (§4.2 {@code brokenCompanion},
- * wide-fallback branch) rather than silently degrading to the JDK dynamic proxy.
+ * present-but-broken case that must fail {@code create()} loudly
+ * (the wide-fallback branch) rather than silently degrading to the JDK dynamic proxy.
  *
  * <p>{@code ServiceClientProxyParityTest} (codegen-services) independently proves that the real
  * emitter's generated companion output behaves identically to what this hand-written stand-in

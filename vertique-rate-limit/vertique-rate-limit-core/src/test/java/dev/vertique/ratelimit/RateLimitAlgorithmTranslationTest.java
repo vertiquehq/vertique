@@ -13,9 +13,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-004: {@link GreedyRateLimitRefill} and {@link IntervalRateLimitRefill} must map to genuinely
- * distinct native Bucket4j refill behavior, not just distinct labels. Uses an injected deterministic {@link TimeMeter}; no wall-clock
- * sleep, per repository convention for refill-timing proofs.
+ * {@link GreedyRateLimitRefill} and {@link IntervalRateLimitRefill} must map to genuinely
+ * distinct native Bucket4j refill behavior, not just distinct labels. Uses an injected
+ * deterministic {@link TimeMeter}; no wall-clock sleep, per repository convention for
+ * refill-timing proofs.
  */
 class RateLimitAlgorithmTranslationTest {
 

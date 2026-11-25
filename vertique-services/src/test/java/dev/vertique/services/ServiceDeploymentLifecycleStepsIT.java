@@ -45,10 +45,10 @@ import org.mockito.Mockito;
  *
  * <p>Coverage:
  * <ul>
- *   <li><b>AC-11</b> — {@code serviceDeploymentManager.deployAll()} runs after the INFRA verticle
+ *   <li><b>Deploy order</b> — {@code serviceDeploymentManager.deployAll()} runs after the INFRA verticle
  *       deploy and before the {@code SERVICES}-phase verticle deploy (the low-priority SERVICES
  *       startup step runs before that phase's verticles). Asserted with Mockito {@link InOrder}.</li>
- *   <li><b>AC-14</b> — when a later (EDGE) startup step fails, teardown invokes
+ *   <li><b>Teardown order</b> — when a later (EDGE) startup step fails, teardown invokes
  *       {@code serviceDeploymentManager.undeployAll()} (the owner-managed, deregister-first teardown)
  *       as part of the reverse shutdown-step walk, <em>before</em> the runner's generic
  *       {@code verticleDeploymentManager.undeployAll()}; the original cause propagates. Asserted
@@ -60,7 +60,7 @@ import org.mockito.Mockito;
 public class ServiceDeploymentLifecycleStepsIT {
 
     @Test
-    @DisplayName("AC-11: service deploy runs after INFRA verticles and before SERVICES verticles")
+    @DisplayName("service deploy runs after INFRA verticles and before SERVICES verticles")
     void serviceDeploy_runsAfterInfra_beforeServicesVerticles(Vertx vertx, VertxTestContext ctx) {
         ServiceDeploymentManager serviceManager = mock(ServiceDeploymentManager.class);
         when(serviceManager.deployAll()).thenReturn(Future.succeededFuture());
@@ -90,8 +90,7 @@ public class ServiceDeploymentLifecycleStepsIT {
     }
 
     @Test
-    @DisplayName(
-            "AC-14: a later startup failure undeploys services (deregister-first) before generic verticle undeploy")
+    @DisplayName("a later startup failure undeploys services (deregister-first) before generic verticle undeploy")
     void laterFailure_tearsDownServicesBeforeGenericVerticles(Vertx vertx, VertxTestContext ctx) {
         RuntimeException boom = new RuntimeException("edge boom");
 

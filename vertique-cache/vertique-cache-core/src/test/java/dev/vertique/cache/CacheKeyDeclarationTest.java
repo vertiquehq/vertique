@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
-/** D007 proof: component declarations are injective without a template language. */
+/** Proof that component declarations are injective without a template language. */
 class CacheKeyDeclarationTest {
 
     @Test

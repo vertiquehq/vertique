@@ -10,22 +10,21 @@ import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 2 (T021 W2 — third round): a two-step {@code
- * register(fence)}-then-invoke sequence carries no live guarantee once {@code register}'s own
+ * A two-step {@code register(fence)}-then-invoke sequence carries no live guarantee once {@code register}'s own
  * critical section releases the lifecycle's monitor — a concurrent {@link
  * RateLimiterLifecycle#close()} that becomes fully observable strictly between those two steps
  * could still let the action run.
  *
- * <p>T018 originally closed this gap by holding the lifecycle's monitor across <em>both</em>
- * registration and invocation. A third external deep review found that fix serialized every LOCAL
- * backend admission across every policy this runtime resolves a handle for, since {@code
- * LocalBucket4jRateLimitBackend#consume} runs synchronously inside that critical section (one
- * shared {@link RateLimiterLifecycle} monitor per {@link RateLimiters} runtime, not per policy).
+ * <p>Holding the lifecycle's monitor across <em>both</em> registration and invocation would close
+ * this gap but would serialize every LOCAL backend admission across every policy this runtime
+ * resolves a handle for, since {@code LocalBucket4jRateLimitBackend#consume} runs synchronously
+ * inside that critical section (one shared {@link RateLimiterLifecycle} monitor per {@link
+ * RateLimiters} runtime, not per policy).
  *
- * <p>T021 W2 replaces lock-hold with a per-registration CAS ({@code REGISTERED -> INVOKING} raced
- * against {@code close()}'s {@code REGISTERED -> FENCED}): registration still happens under the
- * monitor, but the monitor is released <em>before</em> the action ever runs. This test proves the
- * gap the CAS must close is real and is actually closed — deterministically, with no sleeps —
+ * <p>Instead, a per-registration CAS ({@code REGISTERED -> INVOKING} raced against {@code
+ * close()}'s {@code REGISTERED -> FENCED}) closes it: registration happens under the monitor, but
+ * the monitor is released <em>before</em> the action ever runs. This test proves the gap the CAS
+ * must close is real and is actually closed — deterministically, with no sleeps —
  * using {@link RateLimiterLifecycle}'s package-private test-seam overload of {@code
  * registerAndInvoke}, whose extra hook runs exactly in the gap between registration and the CAS
  * attempt. A {@link CountDownLatch}-gated closer thread lands squarely in that gap and is joined

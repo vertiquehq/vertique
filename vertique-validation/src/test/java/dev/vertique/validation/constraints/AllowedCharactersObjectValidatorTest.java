@@ -285,7 +285,7 @@ class AllowedCharactersObjectValidatorTest {
         }
     }
 
-    // --- Nested DTO fixtures (Fix 4) ---
+    // --- Nested DTO fixtures ---
 
     /**
      * Plain DTO with a single string field — no own {@code @AllowedCharacters}.
@@ -328,7 +328,7 @@ class AllowedCharactersObjectValidatorTest {
             String included, @SkipViaComposed String skippedViaComposed) {}
 
     @Nested
-    @DisplayName("nested DTOs inside collections (Fix 4)")
+    @DisplayName("nested DTOs inside collections")
     class NestedDtoInCollection {
 
         @Test
