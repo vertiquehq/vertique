@@ -19,7 +19,9 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.ClientWebSocket;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketClient;
@@ -142,63 +144,75 @@ public class WebSocketBootstrapFailureIT {
         Future.join(s, c).onComplete(ar -> ctx.completeNow());
     }
 
-    // --- Connect helper ---
+    // --- Connect helpers ---
+
+    /** Close code reported when the connection ended without a clean close frame. */
+    private static final short NO_CLOSE_FRAME = -1;
+
+    private static WebSocketConnectOptions options(String path) {
+        return new WebSocketConnectOptions().setHost("127.0.0.1").setPort(port).setURI(path);
+    }
 
     private Future<WebSocket> connect(String path) {
-        return wsClient.connect(
-                new WebSocketConnectOptions().setHost("127.0.0.1").setPort(port).setURI(path));
+        return wsClient.connect(options(path));
+    }
+
+    /**
+     * Connects to a route whose server side closes the socket right after the upgrade and returns
+     * a future that completes when that close is observed, with the close code received from the
+     * server ({@code 0} for a close frame without a status code, {@link #NO_CLOSE_FRAME} when the
+     * connection ended without a clean close frame: a failed connect or a transport error).
+     *
+     * <p>The handlers are installed on an unconnected {@link ClientWebSocket} <em>before</em>
+     * {@code connect}, so the close cannot be missed. The server closes within milliseconds of the
+     * upgrade, and a handler registered from the connect future's callback is installed after the
+     * socket may already be closed, in which case it never fires. The wait ends on the event
+     * itself; the class timeout is the only bound.
+     */
+    private Future<Short> connectAndAwaitClose(String path) {
+        Promise<Short> closed = Promise.promise();
+        ClientWebSocket ws = wsClient.webSocket();
+        ws.closeHandler(v -> {
+            Short code = ws.closeStatusCode();
+            closed.tryComplete(code != null ? code : (short) 0);
+        });
+        // Fallback: fires if the server drops the connection without a proper close handshake.
+        ws.exceptionHandler(e -> closed.tryComplete(NO_CLOSE_FRAME));
+        // connect() failed: the server closed before a proper handshake completed, which also
+        // counts as the server having closed the connection.
+        ws.connect(options(path)).onFailure(e -> closed.tryComplete(NO_CLOSE_FRAME));
+        return closed.future();
+    }
+
+    /**
+     * Opens a healthy anonymous session, waits until its {@code @OnOpen} has actually run, and
+     * asserts it saw no {@link SecurityContext}; completes the test context.
+     */
+    private void awaitHealthySessionOpen(VertxTestContext ctx, String leakMessage) {
+        Future<Void> opened = HealthyAnonEndpoint.opened.future();
+        connect("/ws/anon")
+                .onComplete(ctx.succeeding(ws2 -> opened.onComplete(ctx.succeeding(v -> ctx.verify(() -> {
+                    assertNull(HealthyAnonEndpoint.onOpenSc.get(), leakMessage);
+                    ws2.close();
+                    ctx.completeNow();
+                })))));
     }
 
     // --- Tests ---
 
     @Test
     @DisplayName("bootstrap failure: close 1011, no message dispatch, scope cleared, sibling afterClose runs")
-    void bootstrapFailurePolicy(Vertx vertx, VertxTestContext ctx) {
+    void bootstrapFailurePolicy(VertxTestContext ctx) {
         sentinelAfterCloseRan.set(false);
         BootstrapFailingEndpoint.reset();
         HealthyAnonEndpoint.reset();
 
-        // Capture the close code received by the client from the server's 1011 frame.
-        // Initialised to -1 (sentinel) so we can distinguish "not yet received" from "received null".
-        AtomicReference<Short> capturedCloseCode = new AtomicReference<>((short) -1);
-        // Flag set to true when the client-side close event fires (either via closeHandler or
-        // exceptionHandler — both indicate the server closed the connection).
-        AtomicBoolean clientClosed = new AtomicBoolean(false);
-
-        // -- Step 1: connect to the failing endpoint. --
-        // Use onComplete (not succeeding) because in some Vert.x builds the connect future may
-        // fail if the server sends a close frame before the client fully processes the 101.
-        connect("/ws/fail").onComplete(ar -> {
-            if (ar.succeeded()) {
-                WebSocket ws = ar.result();
-                // Register closeHandler to capture the 1011 code sent by the server
-                ws.closeHandler(v -> {
-                    Short code = ws.closeStatusCode();
-                    capturedCloseCode.set(code != null ? code : (short) 0);
-                    clientClosed.set(true);
-                });
-                // Register exceptionHandler as fallback — fires if the server forcibly closes
-                // the connection without a proper close handshake
-                ws.exceptionHandler(e -> clientClosed.set(true));
-            } else {
-                // connect() failed: the server closed before a proper handshake completed —
-                // also counts as the server having closed the connection
-                clientClosed.set(true);
-            }
-        });
-
-        // -- Step 2: wait for the connection to be closed, then assert all invariants. --
-        // Use a timer long enough for the close handshake + event loop yields. The test class
-        // timeout of 20 s provides the outer bound; 2 s here gives plenty of slack for CI.
-        vertx.setTimer(
-                2000,
-                id -> ctx.verify(() -> {
-                    // (b) Server must have closed the connection — close code 1011 if we got a
-                    // clean close frame, or clientClosed=true via the fallback path
-                    assertTrue(clientClosed.get(), "server must close the connection after bootstrap failure");
-                    // If a clean close frame was received, it must carry code 1011
-                    short code = capturedCloseCode.get();
-                    if (code != (short) -1) {
+        // Wait for the client to observe the server's close, then assert all invariants.
+        connectAndAwaitClose("/ws/fail")
+                .onComplete(ctx.succeeding(code -> ctx.verify(() -> {
+                    // (b) Server must have closed the connection; if a clean close frame was
+                    // received, it must carry code 1011
+                    if (code != NO_CLOSE_FRAME) {
                         assertEquals((short) 1011, code, "server close code must be 1011");
                     }
 
@@ -219,53 +233,22 @@ public class WebSocketBootstrapFailureIT {
                     // (a) Scope-leak check: open a healthy anon session and verify SC is null.
                     // A leaked binding from the failed session would cause current() to be non-null
                     // on the next session's event loop context.
-                    connect("/ws/anon").onComplete(ctx.succeeding(ws2 -> {
-                        vertx.setTimer(
-                                300,
-                                id2 -> ctx.verify(() -> {
-                                    assertNull(
-                                            HealthyAnonEndpoint.onOpenSc.get(),
-                                            "healthy anon session must not see a leaked SC from the failed session");
-                                    ws2.close();
-                                    ctx.completeNow();
-                                }));
-                    }));
-                }));
+                    awaitHealthySessionOpen(
+                            ctx, "healthy anon session must not see a leaked SC from the failed session");
+                })));
     }
 
     @Test
     @DisplayName("async @OnOpen returning failed Future: close 1011, no message dispatch, scope cleared")
-    void asyncOnOpenFailurePolicy(Vertx vertx, VertxTestContext ctx) {
+    void asyncOnOpenFailurePolicy(VertxTestContext ctx) {
         AsyncBootstrapFailingEndpoint.reset();
         HealthyAnonEndpoint.reset();
 
-        AtomicReference<Short> capturedCloseCode = new AtomicReference<>((short) -1);
-        AtomicBoolean clientClosed = new AtomicBoolean(false);
-
-        // Connect to the async-failing endpoint.
-        connect("/ws/fail-async").onComplete(ar -> {
-            if (ar.succeeded()) {
-                WebSocket ws = ar.result();
-                ws.closeHandler(v -> {
-                    Short code = ws.closeStatusCode();
-                    capturedCloseCode.set(code != null ? code : (short) 0);
-                    clientClosed.set(true);
-                });
-                ws.exceptionHandler(e -> clientClosed.set(true));
-            } else {
-                // Server closed before the handshake completed — counts as closed.
-                clientClosed.set(true);
-            }
-        });
-
         // Wait for the async @OnOpen future to settle and the server close to arrive.
-        vertx.setTimer(
-                2000,
-                id -> ctx.verify(() -> {
+        connectAndAwaitClose("/ws/fail-async")
+                .onComplete(ctx.succeeding(code -> ctx.verify(() -> {
                     // (b) Server must have closed the connection with 1011.
-                    assertTrue(clientClosed.get(), "server must close the connection after async @OnOpen failure");
-                    short code = capturedCloseCode.get();
-                    if (code != (short) -1) {
+                    if (code != NO_CLOSE_FRAME) {
                         assertEquals((short) 1011, code, "server close code must be 1011 for async failure");
                     }
 
@@ -276,18 +259,9 @@ public class WebSocketBootstrapFailureIT {
                             "no onMessage must be dispatched after async @OnOpen failure");
 
                     // (a) Scope-leak check: healthy anon session must see null SC.
-                    connect("/ws/anon").onComplete(ctx.succeeding(ws2 -> {
-                        vertx.setTimer(
-                                300,
-                                id2 -> ctx.verify(() -> {
-                                    assertNull(
-                                            HealthyAnonEndpoint.onOpenSc.get(),
-                                            "healthy anon session must not see leaked SC from async-failed session");
-                                    ws2.close();
-                                    ctx.completeNow();
-                                }));
-                    }));
-                }));
+                    awaitHealthySessionOpen(
+                            ctx, "healthy anon session must not see leaked SC from async-failed session");
+                })));
     }
 
     // --- Endpoints ---
@@ -383,9 +357,13 @@ public class WebSocketBootstrapFailureIT {
 
         static final AtomicReference<SecurityContext> onOpenSc = new AtomicReference<>();
 
+        /** Completes once {@link #onOpen} has run for the current test. */
+        static volatile Promise<Void> opened = Promise.promise();
+
         /** Resets captured state before a test run. */
         static void reset() {
             onOpenSc.set(null);
+            opened = Promise.promise();
         }
 
         /**
@@ -397,6 +375,7 @@ public class WebSocketBootstrapFailureIT {
         @OnOpen
         public void onOpen(WebSocketSession session, SecurityContext sc) {
             onOpenSc.set(sc);
+            opened.tryComplete();
         }
     }
 
