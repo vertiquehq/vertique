@@ -6,7 +6,8 @@ package dev.vertique.rest.auth.jwt;
 import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.assertAuthenticationSucceeds;
 import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.closeThenAssertAuthenticationSucceeds;
 import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.secondsFromNow;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;

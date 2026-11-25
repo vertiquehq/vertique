@@ -3,8 +3,11 @@
 
 package dev.vertique.rest.jaxrs;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 import dev.vertique.rest.core.interceptor.OperationContext;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;

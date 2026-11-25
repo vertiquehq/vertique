@@ -3,7 +3,8 @@
 
 package dev.vertique.rest.core;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.core.router.MountCustomizer;

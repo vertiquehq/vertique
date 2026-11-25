@@ -3,7 +3,10 @@
 
 package dev.vertique.rest.jaxrs;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.ProblemDetail;
 import jakarta.ws.rs.NotFoundException;

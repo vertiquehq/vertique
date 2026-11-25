@@ -3,7 +3,10 @@
 
 package dev.vertique.rest.websocket.transport;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.TechnicalException;
 import io.netty.handler.codec.http.websocketx.WebSocketHandshakeException;

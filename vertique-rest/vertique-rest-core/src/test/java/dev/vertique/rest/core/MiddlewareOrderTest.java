@@ -3,7 +3,10 @@
 
 package dev.vertique.rest.core;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;

@@ -3,7 +3,9 @@
 
 package dev.vertique.rest.jaxrs;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import dev.vertique.rest.core.RestExceptionMapper;
 import dev.vertique.rest.core.RestExceptionMapperCustomizer;

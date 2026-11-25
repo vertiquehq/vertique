@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.security;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
