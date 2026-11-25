@@ -3,8 +3,9 @@
 
 package dev.vertique.services;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.core.health.HealthCheckResult;
 import dev.vertique.core.health.HealthStatus;
