@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Reproduces finding C2: the framework's own JWT scheme handler must be composable into a Vert.x
+ * Proves the framework's own JWT scheme handler is composable into a Vert.x
  * {@link ChainAuthHandler} OR chain.
  *
  * <p>The registrar composes alternative {@code @SecurityRequirement}s with
@@ -80,7 +80,7 @@ class DelegatingJwtAuthHandlerChainComposabilityTest {
     }
 
     @Test
-    @DisplayName("Two real DelegatingJwtAuthHandlers compose into a ChainAuthHandler.any() OR without a CCE (C2)")
+    @DisplayName("Two real DelegatingJwtAuthHandlers compose into a ChainAuthHandler.any() OR without a CCE")
     void twoRealJwtHandlersComposeIntoOrChainWithoutClassCastException() {
         List<AuthenticationHandler> handlers = new ArrayList<>();
         handlers.add(realJwtHandler("schemeA"));

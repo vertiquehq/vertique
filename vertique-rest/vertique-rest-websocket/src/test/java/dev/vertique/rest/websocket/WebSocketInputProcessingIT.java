@@ -438,7 +438,7 @@ public class WebSocketInputProcessingIT {
     }
 
     /**
-     * Endpoint pinning AC-019.1 (T020, issue #379): a class-level {@code @Sanitize} must apply to every
+     * Endpoint pinning: a class-level {@code @Sanitize} must apply to every
      * processed value on the route — including a {@code @PathParam} — except a parameter that opts out
      * with its own {@code @SkipSanitization}.
      */

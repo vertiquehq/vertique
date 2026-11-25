@@ -43,23 +43,24 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration proofs for {@link OpenApiContractValidationStrategy}'s per-mount contract cache (T005):
- * two mounts with divergent {@code openapiPath}s validate independently over HTTP (TP-003), a mount
- * whose contract fails to load fails only that mount's own operations (TP-004), and the per-mount gate
+ * Integration proofs for {@link OpenApiContractValidationStrategy}'s per-mount contract cache:
+ * two mounts with divergent {@code openapiPath}s validate independently over HTTP, a mount
+ * whose contract fails to load fails only that mount's own operations, and the per-mount gate
  * continues a request on the request's own {@link Context} even when the contract was loaded on a
- * different one (TP-005, AR-003).
+ * different one.
  *
- * <p>TP-003 and TP-004 share one router built in {@link #setUp}, binding a single {@code
+ * <p>The divergent-mounts and failed-load tests share one router built in {@link #setUp}, binding a single {@code
  * OpenApiContractValidationStrategy} singleton to three mounts: {@code /a/*} (fixture A, the shared
  * {@code openapi-contract-strategy-test.json}), {@code /b/*} (fixture B, {@code
- * openapi-contract-mount-b.json}), and {@code /c/*} (a nonexistent contract path). On the untouched
- * strategy, binding the second (divergent) mount throws synchronously inside {@link #setUp} — the
+ * openapi-contract-mount-b.json}), and {@code /c/*} (a nonexistent contract path). If binding the
+ * second (divergent) mount throws synchronously inside {@link #setUp}, the
  * bind is captured into {@link #mountStartupFailure} instead of being allowed to fail the {@code
- * @BeforeAll} callback itself (which would abort every test in the class, including TP-005, whose
- * own topology does not depend on this shared setup). Each of TP-003/TP-004 asserts on {@link
- * #mountStartupFailure} first, so its own red reason is visible in isolation.
+ * @BeforeAll} callback itself (which would abort every test in the class, including the foreign-context test, whose
+ * own topology does not depend on this shared setup). Each of the divergent-mounts and failed-load
+ * tests asserts on {@link #mountStartupFailure} first, so its own failure reason is visible in
+ * isolation.
  *
- * <p>TP-005 builds its own two independent {@link Vertx} instances (one to load the contract on, one
+ * <p>The foreign-context test builds its own two independent {@link Vertx} instances (one to load the contract on, one
  * to serve HTTP on) entirely inside its own test method, so it is unaffected by the shared fixture's
  * setup outcome either way.
  */
@@ -80,9 +81,9 @@ public class OpenApiContractPerMountIT {
     /**
      * Captures a {@code bindToMount} failure from {@link #setUp} instead of letting it propagate out of
      * the {@code @BeforeAll} callback. A thrown {@code @BeforeAll} exception would abort every test in
-     * this class — including TP-005, which does not depend on this shared fixture — so each of
-     * TP-003/TP-004 asserts on this field explicitly via {@link #assertMountsStartedCleanly()} to
-     * surface its own red reason rather than a shared, misattributed setup failure.
+     * this class — including the foreign-context test, which does not depend on this shared fixture — so each of
+     * the divergent-mounts and failed-load tests asserts on this field explicitly via
+     * {@link #assertMountsStartedCleanly()} to surface its own failure reason rather than a shared, misattributed setup failure.
      */
     private static RuntimeException mountStartupFailure;
 
@@ -164,7 +165,7 @@ public class OpenApiContractPerMountIT {
 
     /**
      * Fails the calling test with {@link #mountStartupFailure}'s message when the shared {@code
-     * @BeforeAll} setup could not bind all three mounts. Called first by both TP-003 and TP-004 so a
+     * @BeforeAll} setup could not bind all three mounts. Called first by both the divergent-mounts and failed-load tests so a
      * setup-time failure surfaces as that test's own assertion failure, quoting the original exception.
      */
     private static void assertMountsStartedCleanly() {
@@ -220,7 +221,7 @@ public class OpenApiContractPerMountIT {
     }
 
     /**
-     * TP-005 (AR-003): proves the 3-arg gate continues a request on the request's own {@link Context}
+     * Proves the 3-arg gate continues a request on the request's own {@link Context}
      * even though the contract was loaded on a completely different {@link Vertx} instance's context.
      *
      * <p>Mirrors the established foreign-context proof idiom in this codebase (see {@code
@@ -317,7 +318,7 @@ public class OpenApiContractPerMountIT {
         }
     }
 
-    // --- TP-005 helpers ---
+    // --- foreign-context helpers ---
 
     /**
      * Constructs the strategy while genuinely running on {@code context} (via {@link

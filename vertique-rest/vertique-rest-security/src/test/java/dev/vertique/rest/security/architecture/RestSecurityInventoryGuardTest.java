@@ -12,17 +12,15 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 /**
- * Progressive public-surface guard for {@code vertique-rest-security} (T005, inheriting T006's
- * frozen per-module guard mechanism).
+ * Progressive public-surface guard for {@code vertique-rest-security}.
  *
- * <p>This is the module's own guard: T005 adds the first post-rebaseline public member outside the
- * two MCP modules — {@link SecurityPolicyEnforcer#decide} — so it creates this local resource
- * covering {@code SecurityPolicyEnforcer}, {@code AuthorizationDecisionPoint},
+ * <p>This is the module's own guard. Its local resource covers {@code SecurityPolicyEnforcer}
+ * (including {@link SecurityPolicyEnforcer#decide}), {@code AuthorizationDecisionPoint},
  * {@code SyncPolicyDecisionPoint}, and {@code VertxProviderDecisionPoint} at their as-built
- * generic signatures, so any member drift beyond the one addition fails.
+ * generic signatures, so any member drift fails.
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
+ * full generic signature in both directions. Recorded and compiled sets must be
  * exactly equal, independently of the cross-module union check.
  */
 class RestSecurityInventoryGuardTest {

@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link HttpVerticle}'s package-private six-argument {@code @Inject} constructor
- * and its {@link MountCompositionValidator} seam (C-SPI): validators run only once mount-path
+ * and its {@link MountCompositionValidator} seam: validators run only once mount-path
  * validation has passed, their combined violation messages are sorted lexicographically into the
  * existing {@code IllegalStateException("Invalid mount configuration:\n  ...")} shape, a throwing
  * validator — whether a {@link RuntimeException} or a {@link LinkageError} — fails start with its
@@ -80,7 +80,7 @@ class HttpVerticleCompositionValidatorTest {
 
     private static final String OVERLAP_INNER_PATH = "/overlap/nested/*";
 
-    private static final String ALWAYS_VIOLATING_MESSAGE = "G2-11: composition always rejected";
+    private static final String ALWAYS_VIOLATING_MESSAGE = "composition always rejected";
 
     /** Substring of {@code HttpVerticle#detectOverlaps}'s containment-overlap warning message. */
     private static final String OVERLAP_WARNING_SUBSTRING = "is a prefix of";
@@ -106,7 +106,7 @@ class HttpVerticleCompositionValidatorTest {
         verticleLogger.setLevel(previousLevel);
     }
 
-    // --- TP-001 ---
+    // --- composition validators reject a mount before it starts ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("validatorCases")
@@ -128,12 +128,12 @@ class HttpVerticleCompositionValidatorTest {
     }
 
     /**
-     * TP-001's four cases: (a) an invalid mount path, beside a validator that must never run; (b) a
+     * The four cases: (a) an invalid mount path, beside a validator that must never run; (b) a
      * valid path, beside two validators whose combined violations must be sorted into one
      * {@link IllegalStateException}; (c) a valid path, beside a validator that throws a {@link
      * RuntimeException}; (d) a valid path, beside a validator that throws a {@link LinkageError}.
      *
-     * @return the four TP-001 cases, in contract order
+     * @return the four cases, in declaration order
      */
     private static Stream<ValidatorCase> validatorCases() {
         CountingRouterMount invalidPathMount = new CountingRouterMount(INVALID_MOUNT_PATH);
@@ -236,7 +236,7 @@ class HttpVerticleCompositionValidatorTest {
         assertEquals(0, mount.createRouterCalls(), "createRouter must never be called");
     }
 
-    // --- TP-002 ---
+    // --- the five-argument constructor runs no validators ---
 
     @Test
     @DisplayName(
@@ -285,7 +285,7 @@ class HttpVerticleCompositionValidatorTest {
         };
     }
 
-    // --- TP-003 ---
+    // --- validators run before overlap detection ---
 
     @Test
     @DisplayName("Composition validators run before overlap detection: an always-violating validator fails start "
@@ -349,7 +349,7 @@ class HttpVerticleCompositionValidatorTest {
     }
 
     /**
-     * One TP-001 case: a name, the pre-built {@link HttpVerticle} to deploy, its counting mount (to
+     * One validator case: a name, the pre-built {@link HttpVerticle} to deploy, its counting mount (to
      * assert {@code createRouter} was never called), and the failure assertion to run against the
      * deployment's cause.
      *

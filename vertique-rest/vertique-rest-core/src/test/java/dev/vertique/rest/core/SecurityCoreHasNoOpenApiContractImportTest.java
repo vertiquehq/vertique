@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for FR-023 (slice 6): after the {@code SecurityPolicyValidator} SPI
+ * Mechanical completeness check: after the {@code SecurityPolicyValidator} SPI
  * migrates off the Vert.x OpenAPI route/contract onto the neutral
  * {@code dev.vertique.rest.core.routing.RestOperationDescriptor}, the package
  * {@code io.vertx.openapi.contract} must no longer appear anywhere in the rest-core production

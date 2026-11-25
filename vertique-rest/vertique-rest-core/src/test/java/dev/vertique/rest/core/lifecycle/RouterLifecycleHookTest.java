@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that {@link RouterLifecycleHook#beforeAuthSetup} and {@link RouterLifecycleHook#afterAuthSetup}
- * accept the neutral {@link RouterSetup} rather than the Vert.x OpenAPI {@code RouterBuilder} (FR-022),
+ * accept the neutral {@link RouterSetup} rather than the Vert.x OpenAPI {@code RouterBuilder},
  * while {@link RouterLifecycleHook#afterRouterCreated} continues to receive the Vert.x {@link Router}
  * unchanged.
  *

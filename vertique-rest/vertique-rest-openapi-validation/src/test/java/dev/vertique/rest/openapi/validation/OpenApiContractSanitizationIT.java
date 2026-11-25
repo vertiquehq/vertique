@@ -42,7 +42,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.function.Executable;
 
 /**
- * Proves the {@code openapi-contract} strategy sanitizes its validation error output (W6): when the
+ * Proves the {@code openapi-contract} strategy sanitizes its validation error output: when the
  * standalone {@code RequestValidator} rejects a request, the resulting {@link RestValidationException}
  * (and the {@link ValidationProblemDetail} the REST pipeline renders from it) must NOT echo the
  * submitted request value or any undeclared property name the client sent, and must NOT carry raw
@@ -57,7 +57,7 @@ import org.junit.jupiter.api.function.Executable;
  * <p>The request is issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load a body read can succeed with zero bytes while the status code is
- * correct (issue #167). This case asserts on the status code and on the server-side captured
+ * correct. This case asserts on the status code and on the server-side captured
  * exception rather than on the wire body, so the raw idiom was latent rather than actively broken
  * here — but a {@link WebClient} aggregates the response before completing the send, which removes
  * the trap for whoever next asserts on the rendered response body.

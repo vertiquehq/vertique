@@ -72,7 +72,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * End-to-end integration test proving that an <em>action-only</em> REST route
  * ({@link SecurityPolicy.None} carrying a {@code @RequiresAction} gate, declaring no OpenAPI security
  * requirement) authenticates the caller before the action gate runs, so the gate evaluates the real
- * identity rather than an anonymous one (Phase-3 review finding C — silent auth bypass).
+ * identity rather than an anonymous one — a missing authentication step here would be a silent auth bypass.
  *
  * <p>The {@code /content} operation in the fixture spec declares <strong>no</strong> security
  * requirement, so the OpenAPI-security-scheme-driven auth path installs no handler for it. The fix —
@@ -100,7 +100,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * These tests assert on the status code plus the marker header, so the raw idiom is latent rather
  * than actively broken here — but a {@link WebClient} aggregates the response before completing the
  * send, which removes the trap for whoever next adds a body assertion. The response is consequently
@@ -198,7 +198,7 @@ public class ActionOnlyRouteAuthIT {
                     // Stamps every response from this test's router so a failing status assertion can tell
                     // "this server answered but the route/auth outcome differed" (marker present) from "this
                     // response was not stamped by this test's root handler" (marker absent — a foreign
-                    // process, or a response written below the router; see #186). Must run strictly before
+                    // process, or a response written below the router). Must run strictly before
                     // every other handler.
                     root.route().order(Integer.MIN_VALUE).handler(rc -> {
                         rc.response().putHeader("x-vq-test-server", "action-only-route-auth");
@@ -334,7 +334,7 @@ public class ActionOnlyRouteAuthIT {
      * from "not stamped" — the latter covers both a foreign process answering the request and a
      * response written below the router, so absence does not by itself conclusively prove a foreign
      * process. The marker exists only to enrich status-assertion failure messages — it is never
-     * asserted on independently (see #186).
+     * asserted on independently.
      *
      * @param status         the HTTP status code
      * @param fromThisServer whether the marker header was present on the response
@@ -345,7 +345,7 @@ public class ActionOnlyRouteAuthIT {
      * Builds the marker-diagnostic suffix appended to status-assertion failure messages, telling
      * apart "this test's router answered but the route/auth outcome differed" from "the response
      * was not stamped by this test's root handler" — the latter meaning a foreign process, or a
-     * response written below the router (see #186).
+     * response written below the router.
      *
      * @param resp the response to describe
      * @return the diagnostic suffix text
@@ -354,7 +354,7 @@ public class ActionOnlyRouteAuthIT {
         return resp.fromThisServer()
                 ? " (marker present: response from this test's router — route matching/auth behavior changed)"
                 : " (marker ABSENT: response was not stamped by this test's root handler (foreign"
-                        + " process, or a response written below the router) — see #186)";
+                        + " process, or a response written below the router))";
     }
 
     // --- Test doubles ---

@@ -31,9 +31,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-002: proves the edge {@link RateLimitEdgeMiddleware} mounts and runs strictly before {@code
- * BodyHandler}/any {@code RouterMount} — the exact {@code HttpVerticle.start} ordering
- * {@code plan.md} finding 2 confirms live — with no {@code vertique-rest-core} source change.
+ * Proves the edge {@link RateLimitEdgeMiddleware} mounts and runs strictly before {@code
+ * BodyHandler}/any {@code RouterMount} — the exact {@code HttpVerticle.start} ordering — with no
+ * {@code vertique-rest-core} source change.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Test-only construction helpers hiding a real {@link HttpVerticle} composition wired with a
- * {@link RateLimitEdgeMiddleware} under test (TP-002, {@code RateLimitEdgeMiddlewareOrderingIT}).
+ * {@link RateLimitEdgeMiddleware} under test ({@code RateLimitEdgeMiddlewareOrderingIT}).
  *
  * <p>Uses a real, non-mocked LOCAL {@link RateLimiters} (constructed directly via its public
  * constructor — no Dagger graph needed) so the middleware's {@code acquire(...)} calls exercise

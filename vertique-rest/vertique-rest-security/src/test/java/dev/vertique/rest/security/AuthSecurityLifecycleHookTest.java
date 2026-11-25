@@ -68,7 +68,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * Every test here asserts on the response body — the marker string the operation handler writes is
  * the only evidence of whether the middleware ran and what identity it bound — so a silently emptied
  * body would fail these tests for a reason unrelated to the handler chain. A {@link WebClient}

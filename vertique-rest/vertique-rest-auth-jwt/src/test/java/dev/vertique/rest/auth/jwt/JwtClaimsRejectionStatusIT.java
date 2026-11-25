@@ -86,7 +86,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests go through a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a
  * raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is
  * attached, so under load {@code body()} can succeed with zero bytes while the status code is
- * correct (issue #167). Every assertion here reads the rendered problem body, so a silently
+ * correct. Every assertion here reads the rendered problem body, so a silently
  * emptied body would decode-fail on one test and let the no-leak test pass for the wrong reason. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
@@ -184,8 +184,8 @@ public class JwtClaimsRejectionStatusIT {
 
         JsonObject problem = result.problem();
         // assertAll, not sequential asserts: media type, status and title are independent properties
-        // of the same body, and a report of this slice needs to know which of them hold today rather
-        // than only the first one that does not.
+        // of the same body, and a report needs to know which of them hold rather than only the first one that
+        // does not.
         assertAll(
                 () -> assertEquals(
                         "application/problem+json",

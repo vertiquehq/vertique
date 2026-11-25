@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Unit tests for {@link SecurityPolicyEnforcer}'s {@code @RequiresAction} composition (slice 12).
+ * Unit tests for {@link SecurityPolicyEnforcer}'s {@code @RequiresAction} composition.
  *
  * <p>Verifies the two-argument {@code createHandler(SecurityPolicy, Optional&lt;ActionRef&gt;)} path,
  * which AND-composes the Jakarta role/scope gate with the action gate evaluated by the core
@@ -371,7 +371,7 @@ class SecurityPolicyEnforcerActionTest {
             // PermitAll with no @RequiresAction is the established no-handler case: the
             // route installs no authorization handler and emits nothing. The action-composing path is
             // entered only when a requiredAction is present; PermitAll + @RequiresAction is itself a
-            // startup conflict (slice 11), so no PermitAll path ever runs the action gate.
+            // startup conflict, so no PermitAll path ever runs the action gate.
             SecurityPolicyEnforcer enforcer =
                     enforcerWith(mock(AuthorizationDecisionPoint.class), mock(Authorizer.class));
 
@@ -525,7 +525,7 @@ class SecurityPolicyEnforcerActionTest {
         }
     }
 
-    // --- Fail-closed hardening (F-W3): contract-violating gates on the composed path ---
+    // --- Fail-closed: contract-violating gates on the composed path ---
 
     @Nested
     @DisplayName("Composed action-gate fails closed on a contract-violating Authorizer")

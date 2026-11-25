@@ -299,7 +299,7 @@ class ParamConversionResolverTest {
 
     // --- Missing converter ---
 
-    // --- Conversion-failure context (FR-015-08a) ---
+    // --- Conversion-failure context ---
 
     @Test
     @DisplayName("Native parse failure is re-contextualized with the resolver's paramName/source/targetType")

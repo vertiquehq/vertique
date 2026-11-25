@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
  * {@link RestOperationDescriptor#securityRequirementSets()} (sourced from Swagger
  * {@code @SecurityRequirement} annotations at scan time).
  *
- * <p>This class also covers the V1 fail-closed matrix (SH-2): the validator throws
+ * <p>This class also covers the fail-closed matrix: the validator throws
  * {@link RestConfigurationException} for security shapes whose enforcement is deferred — a
  * multi-scheme (AND) set, scopes on OR alternatives, and scopes declared via both {@code @Authorized}
  * and {@code @SecurityRequirement} on the same operation. Supported shapes (single-scheme scopeless,
@@ -185,7 +185,7 @@ class DefaultSecurityPolicyValidatorTest {
                 violations.get(0).type());
     }
 
-    // --- SH-2 fail-closed matrix ---
+    // --- fail-closed matrix ---
 
     @Test
     @DisplayName("Matrix: a multi-scheme (AND) set throws — combine() AND-groups are deferred")

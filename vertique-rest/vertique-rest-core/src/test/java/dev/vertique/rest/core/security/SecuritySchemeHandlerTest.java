@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that {@link SecuritySchemeHandler#configure} accepts the neutral
- * {@link SecuritySchemeRegistry} rather than the Vert.x OpenAPI {@code RouterBuilder} (FR-022).
+ * {@link SecuritySchemeRegistry} rather than the Vert.x OpenAPI {@code RouterBuilder}.
  *
  * <p>The test is a compile-time contract check: a handler implementation that references only
  * {@link SecuritySchemeRegistry} in its {@code configure} body must satisfy the interface, proving

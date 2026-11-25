@@ -43,8 +43,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration test for the fail-closed behavior of channel registration during WebSocket bootstrap
- * (finding F-W5).
+ * Integration test for the fail-closed behavior of channel registration during WebSocket bootstrap.
  *
  * <p>When a {@link WebSocketChannelAdapter} is present, {@link WebSocketEndpointRegistrar} hands the
  * session's snapshot {@link dev.vertique.core.context.ContextHolder.Scope} to the
@@ -63,11 +62,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>the scope handed to the binding is released — proven by a follow-up
  *       {@link WebSocketChannelBinding#rebind} failing with {@link IllegalStateException}
  *       ("already released"), the same released-scope signal pinned by
- *       {@code WebSocketChannelBindingTest.rebindAfterReleaseFails}. Before the fix the scope is
- *       orphaned, so {@code rebind} would succeed.</li>
+ *       {@code WebSocketChannelBindingTest.rebindAfterReleaseFails}. A scope that is
+ *       orphaned would let {@code rebind} succeed.</li>
  * </ul>
  *
- * <p><b>Adapter boundary hardening (round-2).</b> The {@link ChannelIdentityManager#register} SPI
+ * <p><b>Adapter boundary hardening.</b> The {@link ChannelIdentityManager#register} SPI
  * documents a non-null {@link Future} return, but a custom manager could violate that contract by
  * throwing synchronously or returning {@code null}. {@link WebSocketChannelAdapter#onOpen} must treat
  * either as a failed registration: release the binding's scope and return a failed future, so the

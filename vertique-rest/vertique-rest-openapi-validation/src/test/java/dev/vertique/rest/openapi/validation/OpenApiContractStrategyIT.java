@@ -35,7 +35,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Exercises the {@code openapi-contract} validation gate end-to-end against a real Vert.x HTTP server,
  * with the gate installed after {@code BodyHandler} exactly as the production router places it
- * (body-read-once). It asserts the contract-driven behavior (FR-020):
+ * (body-read-once). It asserts the contract-driven behavior:
  *
  * <ul>
  *   <li>a request missing a required body field fails the routing context with a
@@ -57,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load a body read can succeed with zero bytes while the status code is
- * correct (issue #167). These cases assert on the status code alone, so the raw idiom was latent
+ * correct. These cases assert on the status code alone, so the raw idiom was latent
  * rather than actively broken here — but a {@link WebClient} aggregates the response before completing
  * the send, which removes the trap for whoever next asserts on a problem-detail body.
  *

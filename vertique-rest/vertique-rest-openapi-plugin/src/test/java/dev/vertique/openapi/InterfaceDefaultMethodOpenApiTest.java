@@ -24,9 +24,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Pins that the OpenAPI document swagger-core's {@link Reader} builds — the reader the
  * {@code swagger-maven-plugin} build step runs — lists an interface {@code default} resource
- * method exactly once, both when the resource class inherits it and when it overrides it (issue
- * #630). The server routes the same methods, so the published document and the served routes
- * agree.
+ * method exactly once, both when the resource class inherits it and when it overrides it. The server routes the same methods, so the published document and the
+ * served routes agree.
  */
 class InterfaceDefaultMethodOpenApiTest {
 

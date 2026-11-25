@@ -19,7 +19,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Test-only construction helpers for TP-004 ({@code RateLimitEdgeIpDimensionIT}): a real {@link
+ * Test-only construction helpers for {@code RateLimitEdgeIpDimensionIT}: a real {@link
  * HttpVerticle} composition with {@link OriginCaptureMiddleware} co-installed ahead of the {@code
  * IP}-dimension {@link RateLimitEdgeMiddleware} under test.
  */

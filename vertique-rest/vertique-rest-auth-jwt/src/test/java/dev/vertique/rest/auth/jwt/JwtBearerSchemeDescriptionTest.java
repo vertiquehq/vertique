@@ -26,7 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * Proves T009's TP-005: {@link JwtBearerSecuritySchemeHandler#openApiDescription()} always
+ * Proves that {@link JwtBearerSecuritySchemeHandler#openApiDescription()} always
  * describes an HTTP bearer scheme with {@code bearerFormat} {@code "JWT"}, whatever the handler's
  * configured scheme name, and never leaks its configured issuer or audience through the
  * description's {@code toString()}.

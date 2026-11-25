@@ -23,11 +23,11 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Verifies:
  * <ul>
- *   <li>Resolver chain ordering: priority ascending, ties broken by class name (FR-REST-194).
+ *   <li>Resolver chain ordering: priority ascending, ties broken by class name.
  *   <li>{@link RestContextResolution#resolve} returns the first non-empty result; returns empty when
  *       all resolvers return empty.
  *   <li>{@link RestContextResolution#require} returns the resolved value or throws
- *       {@link RestContextUnavailableException} with the exact FR-REST-174 message.
+ *       {@link RestContextUnavailableException} with the exact message.
  *   <li>{@link RestContextUnavailableException} field accessors ({@code type()},
  *       {@code resourceClass()}, {@code methodName()}) return the values passed at construction.
  *   <li>Empty resolver set: {@code resolve} returns empty, {@code require} throws.
@@ -230,7 +230,7 @@ class RestContextResolutionTest {
         }
 
         @Test
-        @DisplayName("Throws RestContextUnavailableException with exact FR-REST-174 message when absent")
+        @DisplayName("Throws RestContextUnavailableException with exact message when absent")
         void throwsWithExactMessageWhenAbsent() {
             RestContextResolution resolution = new RestContextResolution(Set.of());
 

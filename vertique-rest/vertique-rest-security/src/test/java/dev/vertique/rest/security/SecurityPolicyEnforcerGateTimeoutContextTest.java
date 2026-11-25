@@ -41,7 +41,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R07 item 5 (security/architecture review, post-R01) —
  * {@code shouldSettleOnTheCallersContextEvenWhenTheGateFutureHasNone}.
  *
  * <p>{@link SecurityPolicyEnforcerGateDeadlineTest} already proves the never-completing-gate deadline
@@ -58,7 +57,7 @@ import org.junit.jupiter.api.Test;
  * <p><strong>Sensitivity (DECISIVE):</strong> verified by temporarily reverting the context-anchored
  * {@code Promise} back to the unconditional {@code Promise.promise()} in {@code decide()} and
  * confirming this test fails — the completion then observably runs on a different thread than the one
- * that called {@code decide()} (see R07 completion evidence for the before/after capture).
+ * that called {@code decide()}.
  */
 class SecurityPolicyEnforcerGateTimeoutContextTest {
 
@@ -126,7 +125,7 @@ class SecurityPolicyEnforcerGateTimeoutContextTest {
         // DECISIVE: the returned future's completion handler must run on the exact same request-owning
         // context (and therefore the same pinned event-loop thread) decide() was called from — not on
         // Netty's GlobalEventExecutor, which is what a context-less .timeout() continuation would use
-        // for a gate future built with the static Promise.promise() (issue #417's own fixture shape).
+        // for a gate future built with the static Promise.promise().
         assertThat(settlingContext.get())
                 .as("DECISIVE: the completion must observe the same Vert.x context decide() was called on")
                 .isEqualTo(requestContext);
@@ -180,7 +179,7 @@ class SecurityPolicyEnforcerGateTimeoutContextTest {
         }
     };
 
-    /** An {@link AuthorizationDecisionPoint} whose returned future never completes — the issue #417 shape. */
+    /** An {@link AuthorizationDecisionPoint} whose returned future never completes. */
     private static final class NeverCompletingDecisionPoint implements AuthorizationDecisionPoint {
         @Override
         public Future<AuthorizationDecision> decide(AuthorizationRequest request) {

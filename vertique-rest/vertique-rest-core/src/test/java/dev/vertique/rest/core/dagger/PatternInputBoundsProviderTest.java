@@ -23,8 +23,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-008 (rest-022 T004): {@code RestCoreModule.jaxRsConfig} validates the two pattern-input bounds of the
- * {@code web-validation} gate immediately after parsing. A per-string limit below 1 fails naming {@code
+ * {@code RestCoreModule.jaxRsConfig} validates the two pattern-input bounds of the {@code web-validation}
+ * gate immediately after parsing. A per-string limit below 1 fails naming {@code
  * jaxrs.validationPatternMaxChars}; otherwise a total below 1 or below the per-string limit fails naming
  * {@code jaxrs.validationPatternMaxTotalChars}; valid limits, including the edges, are returned as
  * configured, and an absent {@code jaxrs} section yields the defaults.
@@ -41,14 +41,14 @@ class PatternInputBoundsProviderTest {
     private static final String MAX_TOTAL_CHARS = "jaxrs.validationPatternMaxTotalChars";
 
     /**
-     * TP-008. Invalid limits fail at the {@code JaxRsConfig} provider with a {@link ConfigurationException}
+     * Invalid limits fail at the {@code JaxRsConfig} provider with a {@link ConfigurationException}
      * naming the failing setting and not the other; accepted limits are returned exactly.
      *
      * @param row the row's configuration and expectation
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("limits")
-    @DisplayName("TP-008: invalid pattern-input limits fail at the JaxRsConfig provider, naming the setting")
+    @DisplayName("invalid pattern-input limits fail at the JaxRsConfig provider, naming the setting")
     void invalidLimitsFailAtTheJaxRsConfigProvider(Limits row) {
         ConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
         JsonObject appConfig = new JsonObject(row.config());
@@ -76,7 +76,7 @@ class PatternInputBoundsProviderTest {
     }
 
     /**
-     * TP-008's rows: the invalid configurations, then the accepted edges.
+     * The rows: the invalid configurations, then the accepted edges.
      *
      * @return the rows
      */
@@ -132,7 +132,7 @@ class PatternInputBoundsProviderTest {
     }
 
     /**
-     * One TP-008 row.
+     * One limits row.
      *
      * @param config         the application configuration, as JSON
      * @param failingSetting the setting a rejection must name, or {@code null} for an accepted row

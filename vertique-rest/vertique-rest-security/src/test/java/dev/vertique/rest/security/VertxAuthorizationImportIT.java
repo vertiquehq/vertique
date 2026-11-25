@@ -83,7 +83,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * The 503 scenario asserts on the ProblemDetail body — both that it carries the generic detail and
  * that it never names the failing provider — and the second of those is an assertion an emptied body
  * would satisfy vacuously. A {@link WebClient} aggregates the body into its {@code HttpResponse}
@@ -188,7 +188,7 @@ public class VertxAuthorizationImportIT {
                     Router root = Router.router(vertx);
                     // Stamps every response from this test's router so a failing status assertion can
                     // tell "this server answered but the outcome differed" (marker present) from "this
-                    // response was not stamped by this test's root handler" (see #186).
+                    // response was not stamped by this test's root handler".
                     root.route().order(Integer.MIN_VALUE).handler(rc -> {
                         rc.response().putHeader("x-vq-test-server", "vertx-authz-import");
                         rc.next();
@@ -525,8 +525,7 @@ public class VertxAuthorizationImportIT {
 
     /**
      * Response status, body text, and whether the {@code x-vq-test-server} marker header (stamped by
-     * this test's root router) was present; the marker is used only to enrich failure messages (see
-     * #186).
+     * this test's root router) was present; the marker is used only to enrich failure messages.
      *
      * @param status         the HTTP status code
      * @param body           the response body as text
@@ -535,7 +534,7 @@ public class VertxAuthorizationImportIT {
     private record Resp(int status, String body, boolean fromThisServer) {}
 
     /**
-     * Builds the marker-diagnostic suffix appended to status-assertion failure messages (see #186).
+     * Builds the marker-diagnostic suffix appended to status-assertion failure messages.
      *
      * @param resp the response to describe
      * @return the diagnostic suffix text
@@ -543,7 +542,7 @@ public class VertxAuthorizationImportIT {
     private static String diagnosticSuffix(Resp resp) {
         return resp.fromThisServer()
                 ? " (marker present: response from this test's router — auth/authz outcome differed)"
-                : " (marker ABSENT: response was not stamped by this test's root handler — see #186)";
+                : " (marker ABSENT: response was not stamped by this test's root handler)";
     }
 
     // --- Test doubles ---

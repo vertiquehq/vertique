@@ -173,8 +173,7 @@ final class RestSecurityInventoryChecker {
     }
 
     /**
-     * Annotation-processor output carries no source file and is not guarded surface (T006 § Frozen
-     * guard mechanism and scan scope). Nested types are judged by their outer type, so generated
+     * Annotation-processor output carries no source file and is not guarded surface. Nested types are judged by their outer type, so generated
      * members of a hand-authored type stay in scope.
      */
     private boolean handAuthored(Class<?> type) {

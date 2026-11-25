@@ -46,20 +46,20 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T019 established: an edge denial (429/503) renders through the application's own {@code
+ * An edge denial (429/503) renders through the application's own {@code
  * ExceptionMapper<RateLimitExceededException>}/{@code ExceptionMapper<RateLimitUnavailableException>}
  * contribution — the same mapper-resolution seam the {@code execute()}/{@code @RateLimited} path
  * already uses — instead of a hardcoded body; with no application override the response carries the
  * built-in {@code RateLimitExceptionMapper} shape; a mapper that itself throws falls back to that
  * same built-in response.
  *
- * <p>T020 re-points this proof at the real, mounted {@code JaxRsRouterMount} pipeline (via {@link
- * RestTestMounts}) rather than a bare, failure-handler-less {@code RouterMount}: the middleware now
- * delegates via {@code ctx.fail}, so the response is no longer byte-identical to a hand-built {@link
+ * <p>This proof runs against the real, mounted {@code JaxRsRouterMount} pipeline (via {@link
+ * RestTestMounts}) rather than a bare, failure-handler-less {@code RouterMount}: the middleware
+ * delegates via {@code ctx.fail}, so the response is not byte-identical to a hand-built {@link
  * dev.vertique.rest.core.ProblemDetail} — {@code ErrorPipeline} runs the mapping, which leaves
  * {@code instance} an opaque occurrence id (the pipeline stamps it). See {@code
  * RateLimitEdgeFullPipelineRenderingIT} for the full-pipeline dressing proof (transformResponse,
- * ErrorInterceptor.afterMapping, the new framework default); this class stays focused on precedence:
+ * ErrorInterceptor.afterMapping, the framework default); this class stays focused on precedence:
  * built-in vs. application-contributed mapper, and the mapper-throw fallback.
  */
 @ExtendWith(VertxExtension.class)
@@ -132,10 +132,9 @@ class RateLimitEdgeMiddlewareApplicationExceptionMapperIT {
     }
 
     /**
-     * Red before the T019 fix: the edge middleware wrote a hardcoded {@link
-     * dev.vertique.rest.core.ProblemDetail} body regardless of any application-contributed mapper.
-     * Green after the fix, and still green under T020's {@code ctx.fail} delegation: the custom
-     * mapper's distinct response is served, resolved through the mount's own real registry.
+     * An application-contributed mapper's distinct response is served instead of a hardcoded {@link
+     * dev.vertique.rest.core.ProblemDetail} body, resolved through the mount's own real registry under
+     * the middleware's {@code ctx.fail} delegation.
      */
     @Test
     void shouldRenderTheApplicationContributedMapperInsteadOfTheBuiltInBodyForQuotaExceeded(
@@ -174,11 +173,10 @@ class RateLimitEdgeMiddlewareApplicationExceptionMapperIT {
     }
 
     /**
-     * T020 behavior change (documented consequence, "execute() parity"): a throwing application
-     * mapper now falls through to {@code ResponsePipeline}'s own bare-metal {@code 500} fallback —
-     * the same fallback a throwing mapper for an {@code execute()} exception hits — rather than
-     * T019's fixed {@code 429}/{@code 503} fallback body (the middleware no longer builds any
-     * response itself, so there is no local fallback left to fall back to).
+     * A throwing application mapper falls through to {@code ResponsePipeline}'s own bare-metal
+     * {@code 500} fallback — the same fallback a throwing mapper for an {@code execute()} exception
+     * hits — rather than a fixed {@code 429}/{@code 503} fallback body (the middleware builds no
+     * response itself, so there is no local fallback).
      */
     @Test
     void shouldFallThroughToThePipelines500WhenTheApplicationMapperThrowsForQuotaExceeded(

@@ -337,7 +337,7 @@ public class WebSocketBootstrapFailureIT {
      * {@link WebSocketEndpointRegistrar#bootstrapSession}.
      *
      * <p>Unlike {@link BootstrapFailingEndpoint}, this endpoint does not throw synchronously —
-     * it returns a pre-failed future, which is the distinct code path added by Finding 1.
+     * it returns a pre-failed future, which is the distinct async composition path.
      */
     @WebSocketEndpoint("/ws/fail-async")
     static class AsyncBootstrapFailingEndpoint {

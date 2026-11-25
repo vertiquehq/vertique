@@ -15,7 +15,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link JwtCorrelationSessionEnricher} claim selection and ref shape (FR-COR-100..105).
+ * Unit tests for {@link JwtCorrelationSessionEnricher} claim selection and ref shape.
  */
 class JwtCorrelationSessionEnricherTest {
 

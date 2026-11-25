@@ -15,7 +15,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for FR-025 (slice 14): after the tech-preview OpenAPI-router
+ * Mechanical completeness check: after the tech-preview OpenAPI-router
  * dependency is removed from the default path, no reference to the preview packages
  * {@code io.vertx.openapi.} or {@code io.vertx.ext.web.openapi.router.} may remain anywhere in the
  * rest-core production source tree — not in imports, code, or javadoc {@code {@code ...}} blocks.

@@ -630,7 +630,7 @@ public class WebSocketSecurityPipelineIT {
     // --- Factory parity helpers ---
 
     /**
-     * Builds a {@link WebSocketMount.Factory} through T008's frozen
+     * Builds a {@link WebSocketMount.Factory} through its
      * single-{@code Optional<IdentityPipelineFactory>} constructor, assembling an
      * {@link IdentityPipelineFactory} that threads the given importer — wired with the shared stub
      * security pipeline used by this IT's registrar-based tests.
@@ -667,11 +667,11 @@ public class WebSocketSecurityPipelineIT {
     }
 
     /**
-     * Builds a {@link WebSocketMount.Factory} through T008's frozen
+     * Builds a {@link WebSocketMount.Factory} through its
      * single-{@code Optional<IdentityPipelineFactory>} constructor (retention control — no importer),
      * assembling an {@link IdentityPipelineFactory} with the given providers contributed through the
-     * {@code authorizationProviders} set, exactly as the pre-T008 constructor threaded them into the
-     * enforcer.
+     * {@code authorizationProviders} set, exactly as an enforcer would receive them
+     * directly.
      *
      * @param providers the Vert.x authorization providers passed to the enforcer's provider set
      * @return the configured factory
@@ -1270,7 +1270,7 @@ public class WebSocketSecurityPipelineIT {
         }
     }
 
-    // --- TP-002 stubs (T008) ---
+    // --- identity-capture stubs ---
 
     /**
      * Wraps the real, {@code final} {@link IdentitySnapshotCapture} — which cannot be subclassed —

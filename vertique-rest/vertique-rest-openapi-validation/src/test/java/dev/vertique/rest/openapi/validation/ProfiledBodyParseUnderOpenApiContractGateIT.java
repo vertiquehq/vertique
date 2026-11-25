@@ -40,7 +40,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Proves the {@code openapi-contract} validation gate honors the JSON-profile request-body FIRST PARSE
- * contract (review finding W-A, FR-JSON-024/024A): when a resolved JSON profile mapper is
+ * contract: when a resolved JSON profile mapper is
  * stashed on the {@link RoutingContext} under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} (as the
  * production {@code JaxRsRouteRegistrar} does for ALL strategies ahead of the gate), the
  * {@code openapi-contract} gate must trigger the profile mapper's strict first parse <em>before</em>
@@ -73,7 +73,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). The rejection test asserts on the rendered rejection message and on the
+ * is correct. The rejection test asserts on the rendered rejection message and on the
  * absence of the request values from it, so a silently emptied body would let the value-free
  * assertion pass for the wrong reason while the message assertion failed. A {@link WebClient}
  * aggregates the body into its {@code HttpResponse} before completing the send, so the race is closed

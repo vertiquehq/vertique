@@ -29,14 +29,14 @@ class JaxRsConfigTest {
     }
 
     /**
-     * TP-001 (rest-022 T004): {@code jaxrs.validationPatternMaxChars} and {@code
+     * {@code jaxrs.validationPatternMaxChars} and {@code
      * jaxrs.validationPatternMaxTotalChars} default to 4,096 and 262,144, bind from JSON, and leave the
      * other keys at their defaults.
      *
      * @throws Exception when the JSON cannot be read
      */
     @Test
-    @DisplayName("TP-001: the two pattern-input bounds default to 4,096 and 262,144 and bind from JSON")
+    @DisplayName("the two pattern-input bounds default to 4,096 and 262,144 and bind from JSON")
     void patternInputBoundsDefaultAndBindFromJson() throws Exception {
         JaxRsConfig built = JaxRsConfig.builder().build();
         JaxRsConfig parsed = new ObjectMapper()

@@ -40,8 +40,8 @@ import org.junit.jupiter.api.Test;
  *   <li>mTLS evidence → {@code SERVICE} actor regardless of subject</li>
  *   <li>Evidence with no derivable id ({@code sub}/{@code client_id}/{@code azp} all absent) → fails
  *       resolution with an {@link IdentityResolutionException} rather than fabricating a shared id
- *       or falling back to anonymous (FR-ID-CA-012)</li>
- *   <li>Negative AC-CO-3 cases: no input combination produces {@code PrincipalType.SYSTEM}</li>
+ *       or falling back to anonymous</li>
+ *   <li>Negative cases: no input combination produces {@code PrincipalType.SYSTEM}</li>
  *   <li>{@link DefaultSecurityIdentityResolver#priority()} returns 100</li>
  *   <li>{@link DefaultSecurityIdentityResolver#id()} returns the FQCN</li>
  *   <li>The {@code Future} completes synchronously (no I/O)</li>
@@ -250,13 +250,13 @@ class DefaultSecurityIdentityResolverTest {
         }
 
         @Test
-        @DisplayName("mTLS evidence with no derivable id fails resolution, not anonymous (FR-ID-CA-012)")
+        @DisplayName("mTLS evidence with no derivable id fails resolution, not anonymous")
         void mtlsWithNoDerivableIdFailsResolution() {
             AuthenticationEvidence evidence = mtlsEvidence(Map.of());
             Future<Optional<SecurityIdentity>> future = resolver.resolve(contextWith(List.of(evidence)));
 
             assertTrue(future.isComplete(), "Future must complete synchronously");
-            // FR-ID-CA-012: an underivable id must never be fabricated as a shared "unknown" id —
+            // An underivable id must never be fabricated as a shared "unknown" id —
             // that would collide across principals — nor silently downgraded to anonymous, which
             // would hide a genuine verified-credential-without-stable-id condition. Resolution
             // MUST fail closed instead.
@@ -281,7 +281,7 @@ class DefaultSecurityIdentityResolverTest {
     }
 
     @Nested
-    @DisplayName("AC-CO-3 — negative SYSTEM invariant")
+    @DisplayName("negative SYSTEM invariant")
     class NegativeSystemInvariant {
 
         @Test
@@ -304,8 +304,8 @@ class DefaultSecurityIdentityResolverTest {
         @Test
         @DisplayName("JWT with safe attr type=SYSTEM → USER or SERVICE, never SYSTEM")
         void jwtSafeAttrTypeSystemNeverYieldsSystemPrincipal() {
-            // `sub` is included so the id is derivable — this test isolates the AC-CO-3 hostile-
-            // attribute guard from the unrelated FR-ID-CA-012 underivable-id failure path.
+            // `sub` is included so the id is derivable — this test isolates the hostile-
+            // attribute guard from the unrelated underivable-id failure path.
             AuthenticationEvidence evidence = jwtEvidence(Map.of("type", "SYSTEM", "sub", "alice"));
             Optional<SecurityIdentity> result =
                     resolver.resolve(contextWith(List.of(evidence))).result();
@@ -322,8 +322,8 @@ class DefaultSecurityIdentityResolverTest {
         @Test
         @DisplayName("JWT with safe attr system=true → USER or SERVICE, never SYSTEM")
         void jwtSafeAttrSystemTrueNeverYieldsSystemPrincipal() {
-            // `sub` is included so the id is derivable — this test isolates the AC-CO-3 hostile-
-            // attribute guard from the unrelated FR-ID-CA-012 underivable-id failure path.
+            // `sub` is included so the id is derivable — this test isolates the hostile-
+            // attribute guard from the unrelated underivable-id failure path.
             AuthenticationEvidence evidence = jwtEvidence(Map.of("system", Boolean.TRUE, "sub", "alice"));
             Optional<SecurityIdentity> result =
                     resolver.resolve(contextWith(List.of(evidence))).result();
@@ -354,7 +354,7 @@ class DefaultSecurityIdentityResolverTest {
     }
 
     @Nested
-    @DisplayName("Blank safe-attribute claims are treated as absent (CW-2)")
+    @DisplayName("Blank safe-attribute claims are treated as absent")
     class BlankClaimHandling {
 
         @Test
@@ -380,7 +380,7 @@ class DefaultSecurityIdentityResolverTest {
             assertEquals(
                     IdentityResolutionError.UNDERIVABLE_PRINCIPAL_ID,
                     ex.error(),
-                    "a blank sub claim must classify as an underivable id, per FR-ID-CA-012");
+                    "a blank sub claim must classify as an underivable id");
         }
 
         @Test
@@ -428,7 +428,7 @@ class DefaultSecurityIdentityResolverTest {
             assertEquals(
                     IdentityResolutionError.UNDERIVABLE_PRINCIPAL_ID,
                     ex.error(),
-                    "blank client_id/azp claims must classify as an underivable id, per FR-ID-CA-012");
+                    "blank client_id/azp claims must classify as an underivable id");
         }
     }
 

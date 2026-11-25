@@ -32,12 +32,12 @@ import org.junit.jupiter.api.Test;
 /**
  * Proves that an action-only WebSocket endpoint ({@link dev.vertique.rest.core.security.SecurityPolicy.None}
  * carrying a class-level {@code @RequiresAction}) installs an authentication handler so the action
- * gate evaluates the real caller's identity rather than an anonymous one (Phase-3 review finding C2b).
+ * gate evaluates the real caller's identity rather than an anonymous one.
  *
- * <p>Before the fix, {@code installAuthenticationHandler} ran only for {@code AuthenticatedOnly} /
- * {@code Constrained} policies, so a {@code None} + {@code @RequiresAction} endpoint had no
- * {@link RouteAuthHandler} on its route and the action gate evaluated an anonymous identity. The fix
- * treats a present {@code requiredAction} as also requiring authentication.
+ * <p>{@code installAuthenticationHandler} must run for a {@code None} + {@code @RequiresAction}
+ * endpoint as well as for {@code AuthenticatedOnly} / {@code Constrained} policies; without a
+ * {@link RouteAuthHandler} on its route the action gate would evaluate an anonymous identity. A
+ * present {@code requiredAction} therefore also requires authentication.
  */
 @DisplayName("WebSocket action-only endpoint authentication")
 class WebSocketActionOnlyAuthHandlerTest {
@@ -118,7 +118,7 @@ class WebSocketActionOnlyAuthHandlerTest {
                 null,
                 new StubActionRegistry(Set.of(CONTENT_READ)),
                 // Authorizer present (mock): this test exercises the auth-handler wiring, not the
-                // action-gate decision, so a bare mock satisfies the W2 startup presence check.
+                // action-gate decision, so a bare mock satisfies the startup presence check.
                 mock(Authorizer.class));
     }
 

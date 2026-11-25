@@ -44,7 +44,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Unit tests for {@link SecurityPolicyEnforcer#decide} — the T005 frozen programmatic decision
+ * Unit tests for {@link SecurityPolicyEnforcer#decide} — the frozen programmatic decision
  * operation that mirrors the existing {@code createHandler} contract without a {@link
  * io.vertx.ext.web.RoutingContext}.
  *
@@ -62,8 +62,8 @@ class SecurityPolicyEnforcerDecisionTest {
     private static final String POLICY_VERSION = "7";
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t005ContractMatrixRows")
-    void shouldEnforceT005ContractMatrix(String rowName) {
+    @MethodSource("decisionContractMatrixRows")
+    void shouldEnforceTheDecisionContractMatrix(String rowName) {
         switch (rowName) {
             case "shouldPermitNoneAndPermitAllWithoutEmittingAnEvent" -> {
                 List<AuthorizationDecisionEvent> events = new ArrayList<>();
@@ -195,7 +195,7 @@ class SecurityPolicyEnforcerDecisionTest {
                 SecurityPolicyEnforcer enforcer = enforcerWith(dp, authorizer, events);
                 SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
-                // SENSITIVITY PROOF (T005 TP-001): the role set below is alice's actual role, "ops".
+                // SENSITIVITY PROOF: the role set below is alice's actual role, "ops".
                 // Changing only this literal to Set.of() must flip `permitted` true→false and
                 // `actionEvaluated` true→false while the emitted event count stays 1 (fail-fast:
                 // the action gate is not evaluated once the role/scope gate denies).
@@ -250,11 +250,11 @@ class SecurityPolicyEnforcerDecisionTest {
                 assertThat(events.get(2).decision().permitted()).isFalse();
             }
 
-            default -> fail("unknown T005 contract matrix row: " + rowName);
+            default -> fail("unknown contract matrix row: " + rowName);
         }
     }
 
-    static Stream<String> t005ContractMatrixRows() {
+    static Stream<String> decisionContractMatrixRows() {
         return Stream.of(
                 "shouldPermitNoneAndPermitAllWithoutEmittingAnEvent",
                 "shouldDenyAllAndEmitOneDenyAllEvent",

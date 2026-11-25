@@ -140,7 +140,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * Every assertion here reads the response status or the emitted event, never the body, so these
  * tests cannot flake on that today — the raw idiom was latent, and would become a live race the
  * moment anyone asserted on the body, with no diff to hint why. A {@link WebClient} aggregates the
@@ -1001,7 +1001,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * T003 TP-006 (FR-008): a request no transport claimed publishes one
+     * A request no transport claimed publishes one
      * {@link HttpRequestCompletedEvent} carrying the transport facts, built as for the REST event: the
      * failure's simple class name, no failure message, the wire-failure marker, the bound security,
      * origin and correlation snapshots, and empty attributes.
@@ -1017,7 +1017,7 @@ class RestRequestCompletionEmitterTest {
         private static final RequestOrigin ORIGIN = new RequestOrigin(
                 "192.0.2.10", 54321, List.of(), 0, false, "192.0.2.10", "http", "api.example.test", Optional.empty());
 
-        /** T003 TP-006. */
+        /** An unclaimed failed request publishes an HTTP event carrying the transport facts. */
         @Test
         @DisplayName("An unclaimed failed request's HttpRequestCompletedEvent carries the transport facts and no raw "
                 + "message")
@@ -1175,7 +1175,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     @Nested
-    @DisplayName("WebSocket upgrade exclusion (Fix B)")
+    @DisplayName("WebSocket upgrade exclusion")
     class WebSocketUpgradeExclusion {
 
         /**
@@ -1267,7 +1267,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * T003 TP-005 (FR-001, D002): the emitter dispatches exactly one event type, chosen by the request's
+     * The emitter dispatches exactly one event type, chosen by the request's
      * claim. A REST claim publishes one {@link RestRequestCompletedEvent} to the REST listeners; no claim
      * publishes one {@link HttpRequestCompletedEvent} to the HTTP listeners, each isolated from the others;
      * another transport's claim publishes nothing and logs one DEBUG line on the emitter's logger, carrying
@@ -1337,7 +1337,7 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** T003 TP-005. */
+        /** The event type is chosen by the request's claim. */
         @Test
         @DisplayName("REST claim: one REST event; no claim: one HTTP event despite a throwing HTTP listener; another "
                 + "transport's claim: nothing, and one DEBUG line without the path")
@@ -1456,7 +1456,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * T003 review finding T003-R-04 (supporting): an {@link Error} thrown by an
+     * An {@link Error} thrown by an
      * {@link HttpRequestCompletedListener} is not isolated the way its exceptions are; it propagates out of
      * {@code emit}. The request is unclaimed, and its route handler drives {@code emit} directly, through the
      * seam {@code emitPopulatesWireFailureCodeFromFailedEndHandlerWiring} uses, so the {@link Error} surfaces on
@@ -1725,19 +1725,19 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * rest-025 T004's TP-001 to TP-004 (FR-009, AC-009.1 to AC-009.3): the listener overloads. The emitter reaches
+     * The listener overloads. The emitter reaches
      * every listener, of either type, through {@code onCompleted(event, RoutingContext)}, whose default delegates to
      * {@code onCompleted(event)}. A listener implementing only the one-argument method receives each event exactly
-     * once (TP-001). A listener overriding both methods gets only the two-argument call, with the request's root
-     * context (TP-002), also on a sub-router route, where that context's {@code request()} is the route handler's
-     * (TP-003). A throwing listener of either type, throwing from either method, is isolated (TP-004).
+     * once. A listener overriding both methods gets only the two-argument call, with the request's root
+     * context, also on a sub-router route, where that context's {@code request()} is the route handler's.
+     * A throwing listener of either type, throwing from either method, is isolated.
      *
      * <p>Every proof builds its emitter through {@link #overloadEmitter}, with each listener set a
      * {@link LinkedHashSet}, and runs on {@link #overloadRouter}: the spine with per-path lifecycle barriers, a ROOT
      * handler after the emitter that records each request's root context, {@code /claimed}, whose operation route
      * claims the request for {@link #CLAIMED_OPERATION}, and the plain {@code /unclaimed}. Every route handler records
      * its own context and {@code request()}, then answers 200. Captured state is read only after the request's
-     * lifecycle barrier. {@link #appender} records the emitter's WARN lines for TP-004.
+     * lifecycle barrier. {@link #appender} records the emitter's WARN lines for the isolation proof.
      */
     @Nested
     @DisplayName("Listener overloads")
@@ -1749,20 +1749,20 @@ class RestRequestCompletionEmitterTest {
         /** Route that no transport claims: it publishes an HTTP event. */
         private static final String UNCLAIMED = "/unclaimed";
 
-        /** Mount path of TP-003's sub-router. */
+        /** Mount path of the sub-router. */
         private static final String SUB_MOUNT = "/sub/*";
 
-        /** {@link #CLAIMED}, served by TP-003's sub-router. */
+        /** {@link #CLAIMED}, served by the sub-router. */
         private static final String SUB_CLAIMED = "/sub" + CLAIMED;
 
-        /** {@link #UNCLAIMED}, served by TP-003's sub-router. */
+        /** {@link #UNCLAIMED}, served by the sub-router. */
         private static final String SUB_UNCLAIMED = "/sub" + UNCLAIMED;
 
         /** The operation of every {@code /claimed} route; the proofs compare it by identity only. */
         private static final RestOperationDescriptor CLAIMED_OPERATION =
                 new TestOperation("claimedOperation", "GET", "/claimed");
 
-        /** Message of the exception TP-004's throwing listeners throw. */
+        /** Message of the exception the throwing listeners throw. */
         private static final String BOOM = "listener-boom";
 
         /** The emitter's class logger, whose events {@link #appender} records. */
@@ -1793,7 +1793,7 @@ class RestRequestCompletionEmitterTest {
             emitterLogger.setLevel(previousLevel);
         }
 
-        /** TP-001 (AC-009.1): both listener types stay lambda-compatible. */
+        /** Both listener types stay lambda-compatible. */
         @Test
         @DisplayName("A listener implementing only the one-argument method receives each event exactly once")
         void oneArgumentOnlyListenerReceivesEachEventOnce(VertxTestContext ctx) {
@@ -1829,7 +1829,7 @@ class RestRequestCompletionEmitterTest {
             }));
         }
 
-        /** TP-002 (AC-009.2): only the two-argument call, with the root context, for both listener types. */
+        /** Only the two-argument call, with the root context, for both listener types. */
         @Test
         @DisplayName("A listener overriding both methods gets only the two-argument call, with the request's root "
                 + "context")
@@ -1851,7 +1851,7 @@ class RestRequestCompletionEmitterTest {
             }));
         }
 
-        /** TP-003 (AC-009.2 across a mount, R-004). */
+        /** A listener on a sub-router route gets the root context. */
         @Test
         @DisplayName("On a sub-router route the listener gets the root context, whose request() is the route "
                 + "handler's request()")
@@ -1897,7 +1897,7 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** TP-004 (AC-009.3), one row per listener type and throwing method. */
+        /** One row per listener type and throwing method. */
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#isolationCases")
         @DisplayName("A throwing listener of either type, throwing from either method, is isolated: the later "
@@ -1968,7 +1968,7 @@ class RestRequestCompletionEmitterTest {
 
         /**
          * Mounts a sub-router at {@code /sub/*} holding {@code GET /claimed} and {@code GET /unclaimed}, as
-         * {@link #overloadRouter} builds them on the root: TP-003's {@code /sub/claimed} and {@code /sub/unclaimed}.
+         * {@link #overloadRouter} builds them on the root: {@code /sub/claimed} and {@code /sub/unclaimed}.
          *
          * @param router   the root router to mount the sub-router on
          * @param recorded receives what the sub-router's route handlers saw
@@ -1995,7 +1995,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * TP-001's and TP-002's two requests: serves {@link #overloadRouter} over {@code restListener} and
+         * The two requests of the one-argument and two-argument proofs: serves {@link #overloadRouter} over {@code restListener} and
          * {@code httpListener}, each the only listener of its type, then completes {@code GET /claimed} and
          * {@code GET /unclaimed}, in that order, each awaited through its lifecycle barrier.
          *
@@ -2038,7 +2038,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Asserts TP-002 on one listener: the emitter called its two-argument method once, never its one-argument
+         * Asserts the two-argument proof on one listener: the emitter called its two-argument method once, never its one-argument
          * method, and passed the request's root context. The counts are asserted before the identity.
          *
          * @param counter the listener
@@ -2061,8 +2061,8 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * TP-003's fixture guard, which checks the fixture, not the contract: the route handler of {@code path} ran on
-         * a sub-router's own {@link RoutingContext} wrapper, not on the request's root context (R-004).
+         * The sub-router proof's fixture guard, which checks the fixture, not the contract: the route handler of
+         * {@code path} ran on a sub-router's own {@link RoutingContext} wrapper, not on the request's root context.
          *
          * @param recorded what the ROOT and route handlers saw
          * @param path     the request path
@@ -2080,7 +2080,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Asserts TP-003 on one listener: its two-argument method was called once, with the request's root context,
+         * Asserts the sub-router proof on one listener: its two-argument method was called once, with the request's root context,
          * whose {@code request()} is the {@code request()} the sub-router route handler received. The count is asserted
          * before the identities, and the received context is checked for {@code null} before it is read.
          *
@@ -2109,7 +2109,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Asserts TP-004's five outcomes for one row. Reaching it means the request's lifecycle barrier completed, so
+         * Asserts the five isolation outcomes for one row. Reaching it means the request's lifecycle barrier completed, so
          * the response lifecycle ended normally.
          *
          * @param isolationCase the row
@@ -2238,7 +2238,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * TP-002's and TP-003's counting double for a listener overriding both methods: it counts the calls of each,
+         * The counting double for a listener overriding both methods: it counts the calls of each,
          * and records the event and the context the two-argument call received.
          *
          * @param <E> the event type
@@ -2325,7 +2325,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * TP-004's throwing double: it counts the calls of each of its methods and throws
+         * The throwing double: it counts the calls of each of its methods and throws
          * {@code new RuntimeException("listener-boom")} from one of them, after counting. With
          * {@link #throwsFromOverride()} it throws from its two-argument override, and its one-argument method only
          * counts. Without it, it throws from its one-argument method, and its two-argument method runs the
@@ -2462,7 +2462,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * A TP-004 row (rest-025 T004): the throwing listener's type, by the request that reaches it, and the method it
+     * An isolation row: the throwing listener's type, by the request that reaches it, and the method it
      * throws from.
      *
      * @param name               the row's display name
@@ -2485,10 +2485,10 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-004's rows: {REST on {@code /claimed}, HTTP on {@code /unclaimed}} × {throws from the one-argument method,
+     * The isolation rows: {REST on {@code /claimed}, HTTP on {@code /unclaimed}} × {throws from the one-argument method,
      * throws from the two-argument override}.
      *
-     * @return the rows in contract order
+     * @return the rows in declaration order
      */
     private static Stream<IsolationCase> isolationCases() {
         return Stream.of(
@@ -2964,20 +2964,20 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** T003 TP-007: the {@code /rest} request's log, the scope bracketing the REST listener. */
+        /** The {@code /rest} request's log, the scope bracketing the REST listener. */
         private static final List<String> REST_BRACKETED = List.of("open", "rest(marker)", "close");
 
-        /** T003 TP-007: the {@code /plain} request's log, the scope bracketing the HTTP listener. */
+        /** The {@code /plain} request's log, the scope bracketing the HTTP listener. */
         private static final List<String> HTTP_BRACKETED = List.of("open", "http(marker)", "close");
 
         /**
-         * T003 TP-007: the {@code /other} request's log. Scopes bracket the dispatch of an event, and none
-         * is dispatched for another transport's claim, so no scope opens (ruling R2).
+         * The {@code /other} request's log. Scopes bracket the dispatch of an event, and none
+         * is dispatched for another transport's claim, so no scope opens.
          */
         private static final List<String> NOTHING_OPENED = List.of();
 
         /**
-         * T003 TP-007 (FR-010): the scope brackets the dispatch of either event type, and none opens for a
+         * The scope brackets the dispatch of either event type, and none opens for a
          * request another transport claimed. Each request's log is keyed by its path: the scope logs
          * {@code open} and {@code close}, each listener its type and whether the scope's thread-local
          * marker was set. The marker is read again on the thread that ran the dispatch, after every end
@@ -3245,11 +3245,11 @@ class RestRequestCompletionEmitterTest {
 
     // --- Route identity and framework-owned completion state ---
     //
-    // These proofs (rest-025 T002's TP-004 to TP-012, TP-015 and TP-016) run on a real server whose
+    // These proofs run on a real server whose
     // operation routes sit on a sub-router mounted at /api/*, the HttpVerticle mount shape. Each identity
     // route starts with RequestCompletionRecorder.operationRouteHandler, as the JAX-RS route registrar
     // installs it, and each proof awaits the first-pass sentinel, which fires after emission, before
-    // asserting. With T003's claim dispatch, a request no operation route claimed publishes an
+    // asserting. With claim dispatch, a request no operation route claimed publishes an
     // HttpRequestCompletedEvent instead of a RestRequestCompletedEvent with null identity, and a request
     // another transport claimed publishes nothing; the proofs whose requests can end that way capture both
     // event types and state their outcome as an Expected.
@@ -3282,21 +3282,20 @@ class RestRequestCompletionEmitterTest {
     /** Terminal route handler that responds 200 with no body. */
     private static final Handler<RoutingContext> RESPOND_OK = RestRequestCompletionEmitterTest::respondOk;
 
-    /** TP-012 (a) and (c): exactly one REST event, carrying {@code listItems}. */
+    /** Exactly one REST event, carrying {@code listItems}. */
     private static final Expected ONE_LIST_ITEMS_EVENT = Expected.oneRestEvent(LIST_ITEMS);
 
     /**
-     * TP-012 (b): within the pass the operation route leaves OTHER unchanged, so the request stays claimed
-     * by another transport and publishes no rest-core event. This replaces T002's interim reading, one
-     * {@link RestRequestCompletedEvent} with {@code null} identity, now that T003 dispatches by claim.
+     * Within the pass the operation route leaves OTHER unchanged, so the request stays claimed
+     * by another transport and publishes no rest-core event, because dispatch is by claim.
      */
     private static final Expected OTHER_CLAIM_NO_EVENT = Expected.NO_EVENT;
 
-    /** TP-012 (d): no emitter is mounted, so there is no holder and no event. */
+    /** No emitter is mounted, so there is no holder and no event. */
     private static final Expected NO_EMITTER_NO_EVENT = Expected.NO_EVENT;
 
     /**
-     * TP-012 (e): the request stays unclaimed, as with holder removal, and still publishes exactly once: one
+     * The request stays unclaimed, as with holder removal, and still publishes exactly once: one
      * {@link HttpRequestCompletedEvent}.
      */
     private static final Expected ONE_UNCLAIMED_EVENT = Expected.ONE_HTTP_EVENT;
@@ -3431,8 +3430,8 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Writes the four retired {@code rest.events.*} keys with forged values (TP-004, AC-006.1), plus the
-     * retired wire-failure key removed by GH-648. The keys are deliberate string literals: the constants
+     * Writes the four retired {@code rest.events.*} keys with forged values, plus the
+     * retired wire-failure key. The keys are deliberate string literals: the constants
      * that named them are removed, and writing the keys must have no effect on the event.
      *
      * @param rc the routing context to forge the keys on
@@ -3447,7 +3446,7 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * Removes the framework's per-request completion holder from {@code data()}, through the package-private
-     * holder key. FR-006 and D003: removal before an operation route matches can at most prevent the claim;
+     * holder key. Removal before an operation route matches can at most prevent the claim;
      * removal after the match has no effect, because the emitter reads only its closure-held state.
      *
      * @param rc the routing context to remove the holder from
@@ -3458,7 +3457,7 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * Stores another in-flight request's holder in this request's slot, through the package-private holder
-     * key: the copy of AC-006.9. FR-006: a holder bound to another request counts as no holder here, so the
+     * key: the holder copy. A holder bound to another request counts as no holder here, so the
      * copy never changes the other request's event and leaves this request's event at most unclaimed.
      *
      * @param rc     this request's routing context
@@ -3469,15 +3468,14 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * FR-006: the completion state is framework-owned. Writing the retired {@code rest.events.*} keys changes
-     * nothing (TP-004, AC-006.1), and neither does removing the holder once the operation route matched
-     * (TP-008, AC-006.4).
+     * The completion state is framework-owned. Writing the retired {@code rest.events.*} keys changes
+     * nothing, and neither does removing the holder once the operation route matched.
      */
     @Nested
     @DisplayName("Tamper resistance")
     class TamperResistance {
 
-        /** TP-004: the retired keys neither forge the operation, move the start time, nor suppress emission. */
+        /** The retired keys neither forge the operation, move the start time, nor suppress emission. */
         @Test
         @DisplayName("Writing the retired rest.events.* keys alters neither the operation, the start time nor emission")
         void retiredKeysDoNotAlterOperationStartTimeOrEmission(VertxTestContext ctx) {
@@ -3517,7 +3515,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * GH-648: writing the retired public wire-failure key cannot forge a truncated-response signature
+         * Writing the retired public wire-failure key cannot forge a truncated-response signature
          * onto a clean 200, and cannot suppress a real framework-recorded classification.
          */
         @Test
@@ -3570,7 +3568,7 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** TP-008: the emitter reads its closure-held state, never the {@code data()} holder. */
+        /** The emitter reads its closure-held state, never the {@code data()} holder. */
         @Test
         @DisplayName("Removing the holder after the operation route matched keeps the operation")
         void holderRemovedAfterMatchKeepsOperation(VertxTestContext ctx) {
@@ -3606,10 +3604,10 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * FR-003 and AC-003.1: a reroute re-enters the emitter, which reuses the request's state. The request
+     * A reroute re-enters the emitter, which reuses the request's state. The request
      * emits once, with the start time of its first pass, as its final pass's claim decides: a
      * {@link RestRequestCompletedEvent} with the operation the final pass matched, or an
-     * {@link HttpRequestCompletedEvent} when the final pass matched no operation route (TP-005).
+     * {@link HttpRequestCompletedEvent} when the final pass matched no operation route.
      */
     @Nested
     @DisplayName("Reroute")
@@ -3621,7 +3619,7 @@ class RestRequestCompletionEmitterTest {
         /** One {@link Instant} per routing pass, taken by a ROOT handler ordered after the emitter. */
         private final List<Instant> passMarks = new CopyOnWriteArrayList<>();
 
-        /** TP-005, one row per reroute target. */
+        /** One row per reroute target. */
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#rerouteCases")
         @DisplayName("A reroute emits once, as the final pass's claim decides, with the first pass's start time")
@@ -3653,7 +3651,7 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Builds TP-005's router. {@code GET /api/a} claims {@code getA}, then reroutes to {@code target} on a
+         * Builds the reroute router. {@code GET /api/a} claims {@code getA}, then reroutes to {@code target} on a
          * one-shot {@code REROUTE_DELAY_MS} timer; {@code GET /api/b} claims {@code getB}; {@code GET
          * /api/plain} is no operation route. A ROOT handler after the emitter appends to {@link #passMarks} on
          * every pass.
@@ -3677,22 +3675,22 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * FR-023's claim transitions, observed through the published event: a later operation route in the same
-     * pass replaces a REST claim (TP-006, AC-003.3); {@code claimForOtherTransport} is ignored once REST has
-     * claimed (TP-009, AC-006.5); an OTHER claim holds within a pass and resets on a reroute, and a missing or
-     * mistyped holder is a no-op (TP-012).
+     * Claim transitions, observed through the published event: a later operation route in the same
+     * pass replaces a REST claim; {@code claimForOtherTransport} is ignored once REST has
+     * claimed; an OTHER claim holds within a pass and resets on a reroute, and a missing or
+     * mistyped holder is a no-op.
      */
     @Nested
     @DisplayName("Claim transitions")
     class ClaimTransitions {
 
-        /** TP-006. */
+        /** A later operation route in the same pass replaces the claim. */
         @Test
         @DisplayName("A later operation route in the same routing pass replaces the claim")
         void laterOperationRouteInSamePassWins(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> events = new CopyOnWriteArrayList<>();
             Wired wired = subRouterWith(emitter(Set.of(events::add)), api -> {
-                // FR-023, REST(op) -> REST(op'): both routes match /items/special. The wildcard route, added
+                // REST(op) -> REST(op'): both routes match /items/special. The wildcard route, added
                 // first, claims and passes on; the special route, matched later in the same pass, replaces it.
                 operationRoute(api, "/items/*", WILDCARD_ITEMS).handler(RoutingContext::next);
                 operationRoute(api, "/items/special", SPECIAL_ITEM).handler(RESPOND_OK);
@@ -3714,14 +3712,14 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** TP-009. An effective OTHER claim would publish no event at all. */
+        /** An effective OTHER claim would publish no event at all. */
         @Test
         @DisplayName("claimForOtherTransport after a REST claim is ignored")
         void otherTransportClaimAfterRestClaimIsIgnored(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> events = new CopyOnWriteArrayList<>();
             Wired wired = subRouterWith(emitter(Set.of(events::add)), api -> operationRoute(api, "/items", LIST_ITEMS)
                     .handler(rc -> {
-                        // FR-023: claimForOtherTransport is ignored once a REST or OTHER claim exists.
+                        // claimForOtherTransport is ignored once a REST or OTHER claim exists.
                         RequestCompletionRecorder.claimForOtherTransport(rc);
                         respondOk(rc);
                     }));
@@ -3741,7 +3739,7 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** TP-012, one row per named case, each on the router its named factory builds. */
+        /** One row per named case, each on the router its named factory builds. */
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#claimCases")
         @DisplayName(
@@ -3770,12 +3768,12 @@ class RestRequestCompletionEmitterTest {
         }
     }
 
-    /** AC-006.3: the emitter needs no {@link RequestContextLifecycle} (TP-007). */
+    /** The emitter needs no {@link RequestContextLifecycle}. */
     @Nested
     @DisplayName("Lifecycle-free emission")
     class LifecycleFree {
 
-        /** TP-007. */
+        /** A doubly-mounted emitter emits once per request without the lifecycle. */
         @Test
         @DisplayName("Without RequestContextLifecycle a doubly-mounted emitter still emits exactly once per request")
         void emitsExactlyOnceWithoutRequestContextLifecycle(VertxTestContext ctx) {
@@ -3821,8 +3819,8 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * AC-006.8: a response ended on a thread other than the event loop runs the end handlers there, and the
-     * emission on that thread sees the claimed operation (TP-010).
+     * A response ended on a thread other than the event loop runs the end handlers there, and the
+     * emission on that thread sees the claimed operation.
      */
     @Nested
     @DisplayName("Foreign-thread end")
@@ -3842,7 +3840,7 @@ class RestRequestCompletionEmitterTest {
             assertTrue(foreignEnd.shutDown(), "the foreign-end executor must terminate");
         }
 
-        /** TP-010. */
+        /** An end handler on a foreign thread emits once, with the claimed operation. */
         @Test
         @DisplayName("An end handler on a foreign thread emits once, with the claimed operation")
         void foreignThreadEndEmitsOnceWithClaimedOperation(VertxTestContext ctx) {
@@ -3866,7 +3864,7 @@ class RestRequestCompletionEmitterTest {
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
                             ObservedEmission first = observed.get(0);
-                            // Precondition (testing.md, "assert the thread directly"): emission ran on the
+                            // Precondition (assert the thread directly): emission ran on the
                             // thread that ended the response, off the event loop, so this proof cannot pass
                             // vacuously on an event-loop thread.
                             assertEquals(
@@ -3883,14 +3881,14 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * FR-002 across a mount (R-004): identity recorded on a sub-router's {@link RoutingContext} wrapper reaches
-     * the root's emission (TP-011).
+     * Across a mount, identity recorded on a sub-router's {@link RoutingContext} wrapper reaches
+     * the root's emission.
      */
     @Nested
     @DisplayName("Sub-router")
     class SubRouter {
 
-        /** TP-011. */
+        /** Identity recorded on a sub-router wrapper reaches the root emission. */
         @Test
         @DisplayName("Identity recorded on a sub-router wrapper reaches the root emission")
         void subRouterIdentityReachesRootEmission(VertxTestContext ctx) {
@@ -3915,12 +3913,12 @@ class RestRequestCompletionEmitterTest {
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
-                            // Precondition (R-004): the operation route runs on the sub-router's own
+                            // Precondition: the operation route runs on the sub-router's own
                             // RoutingContext wrapper, not on the root context, and both share one data() map.
                             assertNotNull(rootContext.get(), "precondition: the root context was recorded");
                             assertNotNull(routeContext.get(), "precondition: the route context was recorded");
                             assertAll(
-                                    "precondition (R-004)",
+                                    "precondition",
                                     () -> assertNotSame(
                                             rootContext.get(),
                                             routeContext.get(),
@@ -3938,11 +3936,10 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * AC-006.9 and FR-006: the holder is bound to the request {@code begin} created it for. A holder copied
+     * The holder is bound to the request {@code begin} created it for. A holder copied
      * from another in-flight request, A, into this request's slot, B's, never changes A's event, and leaves
      * B at most unclaimed, as holder removal does, so publishing an {@link HttpRequestCompletedEvent}. The
-     * rows differ only in where the copy lands, and so in which of the three binding checks meets it
-     * (TP-015).
+     * rows differ only in where the copy lands, and so in which of the three binding checks meets it.
      */
     @Nested
     @DisplayName("Holder binding")
@@ -3977,7 +3974,7 @@ class RestRequestCompletionEmitterTest {
             awaitBarrier(vertx, aDone, "held request A's response").onComplete(ar -> ctx.completeNow());
         }
 
-        /** TP-015, one row per place the copy lands. */
+        /** One row per place the copy lands. */
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#copyCases")
         @DisplayName("A copied holder leaves the other request's event unchanged and this request's at most unclaimed")
@@ -4074,14 +4071,14 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * FR-006 and the holder lookup: every read of the holder goes through {@code ctx.get(key)}, so a context
-     * whose {@code data()} is {@code null}, as a mocked one can be, is a no-holder case (TP-016).
+     * Holder lookup: every read of the holder goes through {@code ctx.get(key)}, so a context
+     * whose {@code data()} is {@code null}, as a mocked one can be, is a no-holder case.
      */
     @Nested
     @DisplayName("Holder lookup")
     class HolderLookup {
 
-        /** TP-016. */
+        /** The recorder tolerates a mocked context whose {@code data()} is {@code null}. */
         @Test
         @DisplayName("The recorder tolerates a mocked context whose data() is null")
         void recorderToleratesContextWithNullData() {
@@ -4104,7 +4101,7 @@ class RestRequestCompletionEmitterTest {
     // --- Parameterized cases ---
 
     /**
-     * A TP-005 row.
+     * A reroute row.
      *
      * @param name     the row's display name
      * @param target   the path {@code GET /api/a} reroutes to
@@ -4118,7 +4115,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-005's rows.
+     * The reroute rows.
      *
      * @return (a) a reroute to another operation route, and (b) a reroute to a plain route
      */
@@ -4134,7 +4131,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * A TP-012 row.
+     * A claim row.
      *
      * @param name        the row's display name
      * @param requestPath the path of the row's one {@code GET}
@@ -4150,9 +4147,9 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012's rows, (e) as two sub-cases.
+     * The claim rows, the last as two sub-cases.
      *
-     * @return the rows in contract order
+     * @return the rows in declaration order
      */
     private static Stream<ClaimCase> claimCases() {
         return Stream.of(
@@ -4189,7 +4186,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012 (a), the control: the {@code listItems} identity route alone.
+     * The control: the {@code listItems} identity route alone.
      *
      * @param emitter the emitter to mount
      * @return the wired root
@@ -4199,7 +4196,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012 (b): a ROOT handler after the emitter claims OTHER before the operation route matches. FR-023:
+     * A ROOT handler after the emitter claims OTHER before the operation route matches.
      * within the pass, the operation route leaves OTHER unchanged.
      *
      * @param emitter the emitter to mount
@@ -4215,11 +4212,11 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012 (c): {@code GET /api/x} claims OTHER, then reroutes to the {@code listItems} route.
+     * {@code GET /api/x} claims OTHER, then reroutes to the {@code listItems} route.
      *
-     * <p>FR-023 and ruling R5: a reroute resets every claim, OTHER included, to NONE, so the operation route
+     * <p>A reroute resets every claim, OTHER included, to NONE, so the operation route
      * claims REST on the second pass; a kept OTHER claim would block that claim, and the request would
-     * publish no event. The target is an operation route, as at T002, where a reroute to a plain route could
+     * publish no event. The target is an operation route, because a reroute to a plain route could
      * not tell a kept OTHER claim from a reset one; it also shows the second pass claims REST.
      *
      * @param emitter the emitter to mount
@@ -4236,7 +4233,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012 (d): a router with no emitter, so no request has a holder; the identity route also calls
+     * A router with no emitter, so no request has a holder; the identity route also calls
      * {@code claimForOtherTransport}. Both must be no-ops.
      *
      * @param emitter the emitter, deliberately not mounted
@@ -4251,7 +4248,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012 (e), removed: a ROOT handler after the emitter removes the holder before the operation route
+     * Removed: a ROOT handler after the emitter removes the holder before the operation route
      * matches, so the identity handler finds no holder and the request stays unclaimed.
      *
      * @param emitter the emitter to mount
@@ -4267,7 +4264,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-012 (e), replaced: a ROOT handler after the emitter replaces the holder's value with a
+     * Replaced: a ROOT handler after the emitter replaces the holder's value with a
      * {@link String} before the operation route matches. A value of another type counts as no holder, with
      * no {@link ClassCastException}, and the request stays unclaimed.
      *
@@ -4283,7 +4280,7 @@ class RestRequestCompletionEmitterTest {
                 .mountApi(RestRequestCompletionEmitterTest::listItemsRoute);
     }
 
-    /** Where TP-015's copy handler sits, relative to request B's emitter; selected by B's {@code X-Copy}. */
+    /** Where the copy handler sits, relative to request B's emitter; selected by B's {@code X-Copy}. */
     private enum CopyPoint {
         /** A ROOT handler ordered ahead of the emitter. */
         BEFORE_EMITTER("before-emitter"),
@@ -4307,7 +4304,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * A TP-015 row.
+     * A holder-copy row.
      *
      * @param name      the row's display name, naming the place it checks
      * @param aPath     request A's path, the other request
@@ -4324,9 +4321,9 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-015's rows.
+     * The holder-copy rows.
      *
-     * @return the rows in contract order
+     * @return the rows in declaration order
      */
     private static Stream<CopyCase> copyCases() {
         return Stream.of(
@@ -4522,7 +4519,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Holds TP-015's request A open. Its hold handler captures the value in A's holder slot through the
+     * Holds the holder-copy proof's request A open. Its hold handler captures the value in A's holder slot through the
      * package-private holder key, completes {@link #captured()}, and lets A continue only once
      * {@link #release()} is called, on A's own Vert.x context.
      */
@@ -4580,7 +4577,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Owns TP-010's single non-Vert.x thread, named {@code foreign-end}, and ends responses on it, so Vert.x
+     * Owns the single non-Vert.x thread, named {@code foreign-end}, and ends responses on it, so Vert.x
      * runs the response end handlers there.
      */
     private static final class ForeignEnd {
@@ -4616,7 +4613,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * TP-010's observation of one emission: the event, and the thread its listener ran on.
+     * The observation of one emission: the event, and the thread its listener ran on.
      *
      * @param event       the emitted event
      * @param threadName  {@code Thread.currentThread().getName()} inside the listener

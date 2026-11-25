@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link AuthorizationGateConfig} (issue #417, R42).
+ * Unit tests for {@link AuthorizationGateConfig} .
  *
  * <p>Verifies the default gate deadline, the {@code fromJson} Jackson factory's omitted-value
  * default, and the compact constructor's positive-only validation — mirroring {@code

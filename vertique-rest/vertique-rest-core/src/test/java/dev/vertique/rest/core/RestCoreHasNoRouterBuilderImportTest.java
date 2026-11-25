@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mechanical completeness check for FR-022 (slice 5): after the route-registration SPIs migrate off
+ * Mechanical completeness check: after the route-registration SPIs migrate off
  * the Vert.x OpenAPI {@code RouterBuilder}, the type
  * {@code io.vertx.ext.web.openapi.router.RouterBuilder} must no longer appear anywhere in the
  * rest-core production source tree. The neutral {@code RouterSetup} / {@code SecuritySchemeRegistry}
@@ -23,8 +23,7 @@ import org.junit.jupiter.api.Test;
  * <p>The test walks {@code src/main/java} and asserts zero occurrences of the retired import. It is a
  * grep backstop, not a behavior test — it guards against a straggler reference re-introducing the
  * OpenAPI-router coupling in rest-core. Other {@code io.vertx.openapi.contract.*} references in
- * rest-core (e.g. in the security-policy validator) are migrated in a later slice and are out of
- * scope here.
+ * rest-core (e.g. in the security-policy validator) are out of scope here.
  */
 class RestCoreHasNoRouterBuilderImportTest {
 

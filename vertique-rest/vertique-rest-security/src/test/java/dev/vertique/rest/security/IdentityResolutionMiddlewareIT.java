@@ -62,7 +62,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * under load a body read can succeed with zero bytes while the status code is correct.
  * Every test here asserts on server-side captured state (the bound {@link SecurityContext}, the MDC
  * copy) rather than on the body, so the raw idiom is latent rather than actively broken here — but a
  * {@link WebClient} aggregates the response before completing the send, which removes the trap for

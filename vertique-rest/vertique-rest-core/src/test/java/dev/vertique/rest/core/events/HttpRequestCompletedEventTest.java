@@ -18,8 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
 /**
- * Unit tests for the compact constructor of {@link HttpRequestCompletedEvent} (rest-025 T003, review finding
- * T003-R-03): the safety rules the event shares with {@link RestRequestCompletedEvent} (FR-008).
+ * Unit tests for the compact constructor of {@link HttpRequestCompletedEvent}: the safety rules the event
+ * shares with {@link RestRequestCompletedEvent}.
  *
  * <p>Verifies:
  * <ul>

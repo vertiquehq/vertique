@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
  * requirement's scopes through the source list it passed in.
  *
  * <p>{@link SecurityRequirement} is one named scheme (plus its scopes) within an operation's
- * OR-of-AND security model used by the rest-017 security hardening; its scopes feed the effective
+ * OR-of-AND security model; its scopes feed the effective
  * {@link dev.vertique.rest.core.security.SecurityPolicy} fold, so they must be immutable.
  */
 class SecurityRequirementTest {
