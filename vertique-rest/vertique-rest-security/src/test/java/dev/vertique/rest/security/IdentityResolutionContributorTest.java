@@ -3,8 +3,11 @@
 
 package dev.vertique.rest.security;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import dev.vertique.rest.core.routing.RouteRegistration;

@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.security;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
