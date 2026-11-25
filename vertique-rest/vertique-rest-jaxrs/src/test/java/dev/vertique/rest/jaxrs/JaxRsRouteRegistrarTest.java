@@ -536,6 +536,76 @@ class JaxRsRouteRegistrarTest {
         assertEquals("multiBody", ex.violations().get(0).operationId());
     }
 
+    @Path("/rt")
+    static class AlternationOrderResource {
+        @GET
+        @Path("/{p:a|b/admin}")
+        public Future<String> alternation(@PathParam("p") String p) {
+            return Future.succeededFuture(p);
+        }
+
+        @GET
+        @Path("/plain/{id}")
+        public Future<String> plain(@PathParam("id") String id) {
+            return Future.succeededFuture(id);
+        }
+
+        @GET
+        @Path("/fixed")
+        public Future<String> fixed() {
+            return Future.succeededFuture("fixed");
+        }
+
+        @GET
+        @Path("/{a:\\w+}/{b}")
+        public Future<String> twoVariables(@PathParam("a") String a, @PathParam("b") String b) {
+            return Future.succeededFuture(a + b);
+        }
+    }
+
+    @Test
+    @DisplayName("Registers one Vert.x route per route entry, in entry order")
+    void registersOneRoutePerRouteEntryInOrder() {
+        AlternationOrderResource resource = new AlternationOrderResource();
+        List<JaxRsRouteRegistrar.RouteEntry> entries =
+                JaxRsRouteRegistrar.routeEntries(registrar.scanResource(resource));
+
+        RegistrarTestSupport.registerAll(
+                registrar,
+                Set.of(resource),
+                router,
+                RegistrarTestSupport.TEST_MOUNT_META,
+                List.of(),
+                List.of(),
+                null,
+                false,
+                List.of(),
+                List.of(),
+                "OFF",
+                null,
+                null,
+                null,
+                false);
+
+        List<io.vertx.ext.web.Route> routes = router.getRoutes();
+        assertEquals(5, entries.size(), "four operations plus one extra alternative route");
+        assertEquals(entries.size(), routes.size());
+        for (int i = 0; i < entries.size(); i++) {
+            JaxRsRouteRegistrar.RouteEntry entry = entries.get(i);
+            io.vertx.ext.web.Route route = routes.get(i);
+            JaxRsPathTemplate expected = entry.template().equals(entry.meta().path())
+                    ? JaxRsPathTemplate.translate(entry.template())
+                    : JaxRsPathTemplate.translateVariant(entry.meta().path(), entry.template());
+            if (expected.isRegex()) {
+                assertTrue(route.isRegexPath(), "entry " + i + ": " + entry.template());
+                assertNull(route.getPath(), "entry " + i);
+            } else {
+                // Vert.x reports a colon-form path with a parameter as a regex path too.
+                assertEquals(expected.vertxValue(), route.getPath(), "entry " + i);
+            }
+        }
+    }
+
     @Test
     @DisplayName("Should collect an SSE return type violation with the other route violations")
     void shouldCollectSseReturnTypeViolationWithOtherViolations() {

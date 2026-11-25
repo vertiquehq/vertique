@@ -28,9 +28,11 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end check that a secured static route is not shadowed by an open regex route whose
- * constraint contains a slash, or by an open route with a mixed {@code {name}.txt} segment. The
- * regex resource methods are declared first so registration in source order would favour them.
+ * End-to-end check that a secured route is not shadowed by an open route that is broader in the
+ * JAX-RS ranking sense: an open regex route whose constraint contains a slash, a catch-all, a mixed
+ * {@code {name}.txt} segment, or an alternation. The open resource methods are declared first so
+ * registration in source order would favour them. Also pins one reversal of the literal-character
+ * ranking, so a change to it shows up here.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -72,8 +74,8 @@ class FilesRouteShadowingIT {
     }
 
     /**
-     * Open mixed-segment route beside a secured static route. Pins the existing order: both segments
-     * rank as literal, and the template tie-break puts the static one first.
+     * Open mixed-segment route beside a secured static route. The static route has more literal
+     * characters (11 against 4 plus the extension), so it ranks first whatever the names.
      */
     @Path("/mixed")
     public static class MixedFirstResource {
@@ -103,6 +105,39 @@ class FilesRouteShadowingIT {
         @SecurityRequirement(name = "bearerAuth")
         @Operation(operationId = "mixedStatic")
         public String staticFile() {
+            return "static";
+        }
+    }
+
+    /** Open optional-suffix route beside a secured static route with the same literal text. */
+    @Path("/")
+    public static class OptionalSuffixResource {
+
+        /**
+         * Open route whose variable can match an empty string.
+         *
+         * @param ext the bound suffix
+         * @return the bound suffix echoed back
+         */
+        @GET
+        @Path("/opt{ext:(\\.json)?}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "optionalSuffixOpen")
+        public String open(@PathParam("ext") String ext) {
+            return "open=" + ext;
+        }
+
+        /**
+         * Secured static route.
+         *
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/opt")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "optionalSuffixStatic")
+        public String staticRoute() {
             return "static";
         }
     }
@@ -142,7 +177,12 @@ class FilesRouteShadowingIT {
         }
     }
 
-    /** Open route whose constraint has a top-level alternation beside a secured one-segment regex. */
+    /**
+     * Open route whose constraint has a top-level alternation beside a secured one-segment regex. The
+     * pair {@code /alt/a} is an equal-rank pair: the order between the two routes is decided by
+     * variable name today, and the equal-rank rule gives it no guarantee. The case is kept as a
+     * regression check of that outcome, not as a contract.
+     */
     @Path("/alt")
     public static class AlternationResource {
 
@@ -173,6 +213,214 @@ class FilesRouteShadowingIT {
         @Operation(operationId = "altSecured")
         public String secured(@PathParam("a") String a) {
             return "secured";
+        }
+    }
+
+    /** Open catch-all declared before a secured route with a literal tail. */
+    @Path("/ca")
+    public static class CatchAllResource {
+
+        /**
+         * Open catch-all.
+         *
+         * @param p the bound value
+         * @return the bound value echoed back
+         */
+        @GET
+        @Path("/{p:.+}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "caOpen")
+        public String open(@PathParam("p") String p) {
+            return "open=" + p;
+        }
+
+        /**
+         * Secured route with a literal tail.
+         *
+         * @param id the bound value
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/{id}/secret")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "caSecret")
+        public String secret(@PathParam("id") String id) {
+            return "secret";
+        }
+    }
+
+    /** Open mixed-segment route beside a secured mixed-segment route with a longer literal. */
+    @Path("/mx")
+    public static class MixedLiteralResource {
+
+        /**
+         * Open mixed-segment route.
+         *
+         * @param name the bound name
+         * @return the bound name echoed back
+         */
+        @GET
+        @Path("/{name}.txt")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "mxOpen")
+        public String open(@PathParam("name") String name) {
+            return "open=" + name;
+        }
+
+        /**
+         * Secured route whose literal is longer than the open route's.
+         *
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/~admin.txt")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "mxAdmin")
+        public String admin() {
+            return "admin";
+        }
+    }
+
+    /** Open two-variable route beside a secured alternation whose second alternative spans a separator. */
+    @Path("/alt2")
+    public static class AlternationVariantResource {
+
+        /**
+         * Open two-variable route.
+         *
+         * @param a the first bound value
+         * @param b the second bound value
+         * @return the bound values echoed back
+         */
+        @GET
+        @Path("/{a:\\w+}/{b}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "alt2Open")
+        public String open(@PathParam("a") String a, @PathParam("b") String b) {
+            return "open=" + a + "/" + b;
+        }
+
+        /**
+         * Secured alternation: the single segment {@code a}, or {@code b/admin}.
+         *
+         * @param p the bound value
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/{p:a|b/admin}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "alt2Secured")
+        public String secured(@PathParam("p") String p) {
+            return "secured";
+        }
+    }
+
+    /** Open alternation with a weak alternative beside a secured static sibling. */
+    @Path("/wk")
+    public static class WeakAlternativeResource {
+
+        /**
+         * Open alternation: {@code b/admin}, or any single segment.
+         *
+         * @param p the bound value
+         * @return the bound value echoed back
+         */
+        @GET
+        @Path("/{p:b/admin|[^/]+}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "wkOpen")
+        public String open(@PathParam("p") String p) {
+            return "open=" + p;
+        }
+
+        /**
+         * Secured static sibling.
+         *
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/secret")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "wkSecret")
+        public String secret() {
+            return "secret";
+        }
+    }
+
+    /**
+     * Pins a reversal of the literal-character ranking. {@code /u/{name}/profile} has 11 literal
+     * characters against 4 for the secured {@code /u/{id:\\d+}/{action}}, so the open route answers
+     * {@code /u/42/profile} although the secured route has the earlier static segment.
+     */
+    @Path("/u")
+    public static class ReversalResource {
+
+        /**
+         * Open route with a literal tail.
+         *
+         * @param name the bound name
+         * @return the bound name echoed back
+         */
+        @GET
+        @Path("/{name}/profile")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "uOpen")
+        public String open(@PathParam("name") String name) {
+            return "open=" + name;
+        }
+
+        /**
+         * Secured route with a regex variable and a plain variable.
+         *
+         * @param id the bound id
+         * @param action the bound action
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/{id:\\d+}/{action}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "uSecured")
+        public String secured(@PathParam("id") String id, @PathParam("action") String action) {
+            return "secured";
+        }
+    }
+
+    /** Open alternation beside a longer open route that would otherwise answer first. */
+    @Path("/q")
+    public static class OpenAlternationResource {
+
+        /**
+         * Open two-variable route.
+         *
+         * @param a the first bound value
+         * @param b the second bound value
+         * @return the bound values echoed back
+         */
+        @GET
+        @Path("/{a:\\w+}/{b}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "qLong")
+        public String longer(@PathParam("a") String a, @PathParam("b") String b) {
+            return "long=" + a + "/" + b;
+        }
+
+        /**
+         * Open alternation: the single segment {@code a}, or {@code b/x}.
+         *
+         * @param p the bound value
+         * @return the bound value echoed back
+         */
+        @GET
+        @Path("/{p:a|b/x}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "qAlt")
+        public String alt(@PathParam("p") String p) {
+            return "alt=" + p;
         }
     }
 
@@ -229,6 +477,18 @@ class FilesRouteShadowingIT {
     }
 
     @Test
+    @DisplayName("A secured /opt is not shadowed by an open /opt{ext:(\\.json)?} whose variable can be empty")
+    void staticNotShadowedByEmptyMatchingVariable(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new OptionalSuffixResource(), port -> status(client, port, "/opt")
+                .compose(code -> {
+                    ctx.verify(() -> assertEquals(401, code, "anonymous /opt must hit the auth handler"));
+                    return body(client, port, "/opt.json");
+                })
+                .andThen(r -> ctx.verify(() -> assertEquals("open=.json", r.result()))));
+    }
+
+    @Test
     @DisplayName("A secured /mixed/static.txt is not shadowed by an open /mixed/{name}.txt")
     void staticNotShadowedByMixedSegment(Vertx vertx, VertxTestContext ctx) {
         WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
@@ -262,5 +522,68 @@ class FilesRouteShadowingIT {
                     return body(client, port, "/alt/b/c");
                 })
                 .andThen(r -> ctx.verify(() -> assertEquals("open=b/c", r.result()))));
+    }
+
+    private static io.vertx.core.Future<Void> expect(WebClient client, int port, String path, int expected) {
+        return status(client, port, path).map(code -> {
+            if (code != expected) {
+                throw new AssertionError("GET " + path + " answered " + code + ", expected " + expected);
+            }
+            return null;
+        });
+    }
+
+    @Test
+    @DisplayName("A secured /ca/{id}/secret is not shadowed by an open catch-all /ca/{p:.+}")
+    void literalTailNotShadowedByCatchAll(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new CatchAllResource(), port -> expect(client, port, "/ca/x/secret", 401)
+                .compose(v -> expect(client, port, "/ca/x/y", 200)));
+    }
+
+    @Test
+    @DisplayName("A secured /mx/~admin.txt is not shadowed by an open /mx/{name}.txt")
+    void longerLiteralInMixedSegmentNotShadowed(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new MixedLiteralResource(), port -> expect(client, port, "/mx/~admin.txt", 401)
+                .compose(v -> expect(client, port, "/mx/other.txt", 200)));
+    }
+
+    @Test
+    @DisplayName("A secured /alt2/{p:a|b/admin} answers /alt2/b/admin and /alt2/a ahead of /alt2/{a:\\w+}/{b}")
+    void alternationVariantsRankedSeparately(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new AlternationVariantResource(), port -> expect(client, port, "/alt2/b/admin", 401)
+                .compose(v -> expect(client, port, "/alt2/a", 401))
+                .compose(v -> expect(client, port, "/alt2/x/y", 200)));
+    }
+
+    @Test
+    @DisplayName("A weak alternative of /wk/{p:b/admin|[^/]+} does not shadow a secured /wk/secret")
+    void weakAlternativeDoesNotShadowStaticSibling(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new WeakAlternativeResource(), port -> expect(client, port, "/wk/secret", 401)
+                .compose(v -> expect(client, port, "/wk/b/admin", 200))
+                .compose(v -> expect(client, port, "/wk/other", 200)));
+    }
+
+    @Test
+    @DisplayName("Reversal pinned: /u/{name}/profile answers /u/42/profile ahead of /u/{id:\\d+}/{action}")
+    void literalTailOutranksEarlierRegexVariable(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new ReversalResource(), port -> expect(client, port, "/u/42/profile", 200)
+                .compose(v -> expect(client, port, "/u/42/edit", 401)));
+    }
+
+    @Test
+    @DisplayName("An open alternation variant /q/{p:a|b/x} answers /q/b/x ahead of /q/{a:\\w+}/{b}")
+    void variantRouteBindsParameterLikeFullTemplate(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new OpenAlternationResource(), port -> body(client, port, "/q/b/x")
+                .compose(first -> {
+                    ctx.verify(() -> assertEquals("alt=b/x", first));
+                    return body(client, port, "/q/c/d");
+                })
+                .andThen(r -> ctx.verify(() -> assertEquals("long=c/d", r.result()))));
     }
 }

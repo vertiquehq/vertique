@@ -102,6 +102,12 @@ Four artifact types are emitted for every semantic candidate:
 
 Only the Dagger module row is gated by DI eligibility (see "Semantic vs. DI candidates" above) — the other three are emitted for every semantic candidate regardless.
 
+**Route order.** The processor emits no route table. A descriptor reports each operation's path
+template exactly as the reflective scanner does. `vertique-rest-jaxrs` then ranks both engines'
+operations with one runtime sort, and registers one extra route per more specific regex alternative.
+The registered route order is therefore the same whichever engine described the resource. See "Route
+precedence" in the `vertique-rest-jaxrs` module reference for the ranking itself.
+
 ---
 
 ## Generated Binding Shape

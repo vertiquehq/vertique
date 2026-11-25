@@ -129,8 +129,9 @@ public class OperationPublicationDeploymentIT {
             assertNull(defaultMount.applicationName());
             assertNull(defaultMount.declaringType());
             assertEquals("none", defaultMount.strategyId());
+            // Registration order: more literal characters first (/catalog, /manual, /extra).
             assertEquals(
-                    List.of("zeroDeclarationCatalog", "zeroDeclarationExtra", "zeroDeclarationManual"),
+                    List.of("zeroDeclarationCatalog", "zeroDeclarationManual", "zeroDeclarationExtra"),
                     operationIds(defaultMount));
             assertNoDetail(defaultMount);
 
@@ -141,7 +142,7 @@ public class OperationPublicationDeploymentIT {
             assertEquals("jaxrs:/api/mgmt/*", mgmtMount.mountId());
             assertNull(mgmtMount.applicationName());
             assertNull(mgmtMount.declaringType());
-            assertEquals(List.of("echoAgain", "bad", "head", "echo"), operationIds(mgmtMount));
+            assertEquals(List.of("echoAgain", "head", "bad", "echo"), operationIds(mgmtMount));
             assertNoDetail(mgmtMount);
 
             // The empty mount publishes zero operations with the configured strategyId, and null

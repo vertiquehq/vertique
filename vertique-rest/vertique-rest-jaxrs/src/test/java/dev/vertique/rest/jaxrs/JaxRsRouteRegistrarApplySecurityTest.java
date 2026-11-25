@@ -70,7 +70,8 @@ class JaxRsRouteRegistrarApplySecurityTest {
 
         RestConfigurationException ex = assertThrows(
                 RestConfigurationException.class,
-                () -> JaxRsRouteRegistrar.applySecurity("multiSchemeOp", route, List.of(andSet), collector));
+                () -> JaxRsRouteRegistrar.applySecurity(
+                        "multiSchemeOp", OperationRoutes.of(route), List.of(andSet), collector));
 
         assertTrue(ex.getMessage().contains("multiSchemeOp"), "message should name the operationId");
     }
@@ -85,7 +86,8 @@ class JaxRsRouteRegistrarApplySecurityTest {
         SecurityRequirementSet singleSet =
                 new SecurityRequirementSet(List.of(new SecurityRequirement("jwt", List.of())));
 
-        assertDoesNotThrow(() -> JaxRsRouteRegistrar.applySecurity("singleOp", route, List.of(singleSet), collector));
+        assertDoesNotThrow(() -> JaxRsRouteRegistrar.applySecurity(
+                "singleOp", OperationRoutes.of(route), List.of(singleSet), collector));
     }
 
     @Test
@@ -100,7 +102,8 @@ class JaxRsRouteRegistrarApplySecurityTest {
         SecurityRequirementSet setA = new SecurityRequirementSet(List.of(new SecurityRequirement("jwt", List.of())));
         SecurityRequirementSet setB = new SecurityRequirementSet(List.of(new SecurityRequirement("apiKey", List.of())));
 
-        assertDoesNotThrow(() -> JaxRsRouteRegistrar.applySecurity("orOp", route, List.of(setA, setB), collector));
+        assertDoesNotThrow(() ->
+                JaxRsRouteRegistrar.applySecurity("orOp", OperationRoutes.of(route), List.of(setA, setB), collector));
     }
 
     /** Minimal {@link SecuritySchemeHandler} stub reporting a fixed scheme name. */
