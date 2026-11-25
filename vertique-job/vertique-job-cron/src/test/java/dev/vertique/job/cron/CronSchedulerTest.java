@@ -5,6 +5,7 @@ package dev.vertique.job.cron;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -2578,8 +2579,22 @@ class CronSchedulerTest {
         @Test
         @DisplayName("execution timeout marks tracked execution as ABANDONED when handler never replies")
         void executionTimeoutMarksAbandoned(Vertx vertx, VertxTestContext ctx) {
-            AtomicReference<JobState> capturedState = new AtomicReference<>();
-            JobRepository repo = stubRepoCapturingCompletion(capturedState);
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+            // The ABANDONED write is the terminal state transition itself, and it is mutually
+            // exclusive with the only other way this fire can end (a reply, which the handler below
+            // never sends) — so it is the completion signal. The nest's @Timeout is the only
+            // ceiling: if the execution timeout never fires, the test fails there.
+            doAnswer(invocation -> {
+                        ctx.verify(() -> {
+                            assertEquals(JobState.ABANDONED, invocation.getArgument(1));
+                            assertNotNull(invocation.getArgument(2), "the abandon records an error type");
+                            assertNotNull(invocation.getArgument(3), "the abandon records an error message");
+                        });
+                        ctx.completeNow();
+                        return Future.succeededFuture(Optional.empty());
+                    })
+                    .when(repo)
+                    .completeExecution(any(UUID.class), any(JobState.class), any(), any(), any());
 
             // Scheduler with 300 ms timeout — handler will never reply
             // Use SINGLE_INSTANCE so tryInsert() is the persistence path
@@ -2616,15 +2631,6 @@ class CronSchedulerTest {
 
             scheduler.register(job);
             scheduler.start();
-
-            // The ABANDONED write is the terminal state transition itself, and it is mutually
-            // exclusive with the only other way this fire can end (a reply, which the handler above
-            // never sends) — so there is no quiet window to observe and no fixed padding needed.
-            // The Mockito timeout is a generous ceiling (the compressed first tick + the 300 ms
-            // injected execution timeout), not an elapsed-time assertion.
-            verify(repo, timeout(2000).atLeastOnce())
-                    .completeExecution(any(UUID.class), eq(JobState.ABANDONED), anyString(), anyString(), any());
-            ctx.completeNow();
         }
 
         @Test
