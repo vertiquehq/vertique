@@ -60,7 +60,7 @@ public class ScopeMigrationIT {
 
     @Test
     void upgradeFromV1AppliesOneScopeMigration() throws Exception {
-        // Given the first migration is shipped byte for byte as pinned (the release before this pin differed only in comments)
+        // Given the first migration is shipped byte for byte as pinned (its earlier release differed in comments only)
         assertThat(shippedSha256(V1_SCRIPT)).isEqualTo(PINNED_V1_SHA256);
 
         // And a database migrated to the first version only, holding two instances (one with a business key),
