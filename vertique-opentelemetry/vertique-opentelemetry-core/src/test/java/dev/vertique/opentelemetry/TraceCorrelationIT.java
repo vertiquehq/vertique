@@ -55,7 +55,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.LoggerFactory;
 
 /**
- * Integration test proving AC-3: trace/span IDs from the active OpenTelemetry span are correctly
+ * Integration test proving that trace/span IDs from the active OpenTelemetry span are correctly
  * propagated into MDC log fields and restored to absence after the request scope closes.
  *
  * <p>Each test builds its own isolated Vert.x instance with an explicit {@link OpenTelemetrySdk}
@@ -81,7 +81,7 @@ import org.slf4j.LoggerFactory;
  * log events the appender captured, or the SERVER span the <em>server's</em> tracer exported, so the
  * raw client is a bare trigger and buys nothing. And while every exchange is status-only — which is
  * why a raw client could not lose anything here today — a status-only raw exchange is merely
- * unexposed to the empty-body race (issue #167), not immune to it: the first body assertion added
+ * unexposed to the empty-body race, not immune to it: the first body assertion added
  * here would make it live. A {@link WebClient} aggregates the body into its {@code HttpResponse}
  * before completing the send, so the hazard cannot appear at all.
  *
@@ -265,7 +265,7 @@ public class TraceCorrelationIT {
         void handle(io.vertx.ext.web.RoutingContext rc);
     }
 
-    // --- Test 1 (sampled): MDC IDs match exported span; log event carries IDs; fresh span per request ---
+    // --- Sampled: MDC IDs match exported span; log event carries IDs; fresh span per request ---
 
     @Test
     @DisplayName("sampled: MDC traceId/spanId match the SERVER span; log event carries same IDs")
@@ -366,10 +366,10 @@ public class TraceCorrelationIT {
                 }));
     }
 
-    // --- Test 2 (SP-10, unsampled): MDC IDs may be well-formed; exporter has no sampled spans ---
+    // --- Unsampled: MDC IDs may be well-formed; exporter has no sampled spans ---
 
     @Test
-    @DisplayName("SP-10 unsampled: MDC keys populated when span context is valid; no sampled spans exported")
+    @DisplayName("unsampled: MDC keys populated when span context is valid; no sampled spans exported")
     void unsampledMdcIdsWellFormed(io.vertx.junit5.VertxTestContext ctx) {
         InMemorySpanExporter exporter = InMemorySpanExporter.create();
         Vertx vertx = buildTracedVertx(exporter, Sampler.alwaysOff());
@@ -396,13 +396,13 @@ public class TraceCorrelationIT {
                         // NOTE: Vert.x server tracing with alwaysOff sampler:
                         // The Vert.x OpenTelemetryTracer creates a span context even when
                         // alwaysOff is active. The resolver returns a TraceReference for any
-                        // VALID SpanContext (regardless of the sampled flag), per the SP-10 spec.
+                        // VALID SpanContext (regardless of the sampled flag).
                         //
                         // If Vert.x does not propagate a span context with alwaysOff (e.g. no
                         // current span is set for the server request), the resolver returns empty
                         // and MDC keys are absent — that is also valid behavior.
                         //
-                        // The unit-level SP-10 proof in OpenTelemetryTraceReferenceResolverTest
+                        // The unit-level proof in OpenTelemetryTraceReferenceResolverTest
                         // already covers the isValid/isSampled contract.
                         if (Boolean.TRUE.equals(resolverReturnedValue.get())) {
                             // An unsampled but valid span context exists — IDs must be well-formed
@@ -424,7 +424,7 @@ public class TraceCorrelationIT {
                 }));
     }
 
-    // --- Test 3 (no tracing): plain Vert.x without tracer; MDC trace keys absent ---
+    // --- No tracing: plain Vert.x without tracer; MDC trace keys absent ---
 
     @Test
     @DisplayName("no tracing: plain Vert.x + OpenTelemetryTraceReferenceResolver; MDC trace keys absent")

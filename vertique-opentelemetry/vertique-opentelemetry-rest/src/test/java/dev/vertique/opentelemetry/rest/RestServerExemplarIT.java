@@ -58,7 +58,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration test for AC-9 (production-path exemplar proof): proves that when a sampled
+ * Integration test of the production-path exemplar: proves that when a sampled
  * OpenTelemetry server span is active during a Micrometer timer recording on the REAL
  * framework completion path, the resulting Prometheus OpenMetrics scrape body carries an
  * exemplar with a {@code trace_id} matching the recorded server span.
@@ -111,7 +111,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <em>server's</em> tracer exported and on the {@link PrometheusMeterRegistry} scrape body, so the
  * raw client is a bare trigger and buys nothing. And while both exchanges are status-only — which is
  * why a raw client could not lose anything here today — a status-only raw exchange is merely
- * unexposed to the empty-body race (issue #167), not immune to it: the first body assertion added
+ * unexposed to the empty-body race, not immune to it: the first body assertion added
  * here would make it live. A {@link WebClient} aggregates the body into its {@code HttpResponse}
  * before completing the send, so the hazard cannot appear at all.
  *
@@ -252,7 +252,7 @@ public class RestServerExemplarIT {
         return client.get(port, "127.0.0.1", path).send().map(HttpResponse::statusCode);
     }
 
-    // --- Test 1: production-path exemplar proof (5x for determinism) ---
+    // --- production-path exemplar proof (5x for determinism) ---
 
     /**
      * Production-path proof: the real framework completion pipeline attaches an exemplar
@@ -267,7 +267,7 @@ public class RestServerExemplarIT {
      * <p>Repeated 5 times to verify determinism — the scope must work on every request.
      */
     @RepeatedTest(5)
-    @DisplayName("AC-9 production-path: OpenMetrics scrape carries exemplar with trace_id "
+    @DisplayName("production-path: OpenMetrics scrape carries exemplar with trace_id "
             + "matching the server span recorded via the framework completion pipeline")
     void productionPathExemplarAttachesViaCompletionScope(VertxTestContext ctx) {
         InMemorySpanExporter exporter = buildTracedVertx();
@@ -358,14 +358,14 @@ public class RestServerExemplarIT {
                 }));
     }
 
-    // --- Test 2: Prometheus text format has no exemplars ---
+    // --- Prometheus text format has no exemplars ---
 
     /**
      * Negative test: Prometheus text-format scrapes carry no exemplar blocks regardless of whether
      * a span is active during recording.
      */
     @Test
-    @DisplayName("AC-9 negative: Prometheus text-format scrape has no exemplar block")
+    @DisplayName("negative: Prometheus text-format scrape has no exemplar block")
     void prometheusTextFormatHasNoExemplar(VertxTestContext ctx) {
         InMemorySpanExporter exporter = buildTracedVertx();
         Vertx vertx = tracedVertx;

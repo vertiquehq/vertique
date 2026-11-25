@@ -256,7 +256,7 @@ class DelayedJobHandlerRegistrarTest {
     }
 
     @Nested
-    @DisplayName("contributor-backed entries (Phase 2)")
+    @DisplayName("contributor-backed entries")
     class ContributorBackedEntries {
 
         @Test

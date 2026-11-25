@@ -290,7 +290,7 @@ class VerticleDeploymentManagerTest {
                 }));
     }
 
-    // --- deployPhase non-verticle phase rejection tests (AC-3) ---
+    // --- deployPhase non-verticle phase rejection tests ---
 
     @Nested
     @DisplayName("deployPhase rejects non-verticle phases with IllegalArgumentException")

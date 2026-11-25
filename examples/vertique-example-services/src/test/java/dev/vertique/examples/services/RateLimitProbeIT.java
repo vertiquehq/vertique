@@ -23,11 +23,11 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Proves the programmatic {@link dev.vertique.ratelimit.RateLimiters} handle and the {@code
- * @RateLimited}-annotated {@code RateLimitProbeService} resolve through the same runtime (T013,
- * TP-002, transport-neutrality proof): either path permits while the shared policy's capacity
- * remains, and both observe the same exhausted-quota outcome once it is gone — the programmatic
- * path via its own reported {@link dev.vertique.ratelimit.RateLimitDecision} outcome, the annotated
- * path via {@code RateLimitExceededException}'s T010-mapped {@code 429}.
+ * @RateLimited}-annotated {@code RateLimitProbeService} resolve through the same runtime
+ * (transport-neutrality proof): either path permits while the shared policy's capacity remains,
+ * and both observe the same exhausted-quota outcome once it is gone — the programmatic path via
+ * its own reported {@link dev.vertique.ratelimit.RateLimitDecision} outcome, the annotated
+ * path via {@code RateLimitExceededException}'s mapped {@code 429}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

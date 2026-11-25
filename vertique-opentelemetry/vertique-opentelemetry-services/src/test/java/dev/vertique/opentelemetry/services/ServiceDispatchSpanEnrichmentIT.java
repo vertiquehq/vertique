@@ -239,7 +239,7 @@ public class ServiceDispatchSpanEnrichmentIT {
         };
     }
 
-    // --- Test 1: traced dispatch carries vertique.service.target and vertique.service.oneway=false ---
+    // --- traced dispatch carries vertique.service.target and vertique.service.oneway=false ---
 
     /**
      * Runs one iteration of the traced-dispatch scenario.
@@ -338,7 +338,7 @@ public class ServiceDispatchSpanEnrichmentIT {
 
     @Test
     @DisplayName(
-            "Test S29-1: traced dispatch → consumer span carries vertique.service.target and vertique.service.oneway=false; same traceId as parent (5x stress loop)")
+            "traced dispatch → consumer span carries vertique.service.target and vertique.service.oneway=false; same traceId as parent (5x stress loop)")
     void tracedDispatchConsumerSpanCarriesServiceAttributes(VertxTestContext ctx) throws Exception {
         InMemorySpanExporter exporter = InMemorySpanExporter.create();
         OpenTelemetrySdk sdk = buildSdkAndTracedVertx(exporter);
@@ -363,7 +363,7 @@ public class ServiceDispatchSpanEnrichmentIT {
         });
     }
 
-    // --- Test 2: untraced dispatch → no spans, no exception ---
+    // --- untraced dispatch → no spans, no exception ---
 
     /**
      * Runs one iteration of the untraced-dispatch scenario.
@@ -416,7 +416,7 @@ public class ServiceDispatchSpanEnrichmentIT {
 
     @Test
     @DisplayName(
-            "Test S29-2: untraced dispatch (no parent span) → reply received, exporter has no vertique-attributed spans (5x stress loop)")
+            "untraced dispatch (no parent span) → reply received, exporter has no vertique-attributed spans (5x stress loop)")
     void untracedDispatchProducesNoAttributedSpans(VertxTestContext ctx) throws Exception {
         InMemorySpanExporter exporter = InMemorySpanExporter.create();
         buildSdkAndTracedVertx(exporter);

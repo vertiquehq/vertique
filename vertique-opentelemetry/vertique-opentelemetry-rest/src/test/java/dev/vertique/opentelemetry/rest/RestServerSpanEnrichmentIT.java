@@ -52,7 +52,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for {@link ServerSpanEnrichmentContributor} proving AC-7: the contributor
+ * Integration tests for {@link ServerSpanEnrichmentContributor} proving that the contributor
  * correctly enriches server spans with route template, operationId, and span naming when a real
  * Vert.x HTTP server is traced with an OTel SDK.
  *
@@ -82,7 +82,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * request before the send, and with no span active on the calling context the client's own tracing
  * policy ({@code PROPAGATE}) neither opens a CLIENT span nor injects a header of its own. And while
  * both exchanges are status-only — which is why a raw client could not lose anything here today — a
- * status-only raw exchange is merely unexposed to the empty-body race (issue #167), not immune to
+ * status-only raw exchange is merely unexposed to the empty-body race, not immune to
  * it: the first body assertion added here would make it live. A {@link WebClient} aggregates the
  * body into its {@code HttpResponse} before completing the send, so the hazard cannot appear at all.
  *
@@ -251,7 +251,7 @@ public class RestServerSpanEnrichmentIT {
                 });
     }
 
-    // --- Test 1: W3C traceparent → server span renamed, attrs set, traceId + parentSpanId match ---
+    // --- W3C traceparent → server span renamed, attrs set, traceId + parentSpanId match ---
 
     @Test
     @DisplayName("W3C traceparent injected: server span renamed to 'GET /orders/{id}', "
@@ -330,7 +330,7 @@ public class RestServerSpanEnrichmentIT {
                 }));
     }
 
-    // --- Test 2: plain Vert.x (no tracer) → 200 OK, zero spans exported ---
+    // --- plain Vert.x (no tracer) → 200 OK, zero spans exported ---
 
     @Test
     @DisplayName("plain Vert.x (no tracer): contributor is a no-op — 200 OK returned, zero spans exported")

@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  *   <li><b>Timer recording (SUCCESS)</b> — a {@code Timer} named {@code vertique.example.greet} with
  *       {@code outcome=SUCCESS} is recorded, with count {@code >= 1}, on the caller-owned
  *       {@link SimpleMeterRegistry} (read deterministically, not via {@code MeterRegistryHolder}).</li>
- *   <li><b>Per-occurrence literal (F2)</b> — the second method's distinct {@code @Timed} value
+ *   <li><b>Per-occurrence literal</b> — the second method's distinct {@code @Timed} value
  *       records a separate {@code vertique.example.farewell} timer, proving each occurrence's own
  *       annotation attributes reached the generated proxy.</li>
  *   <li><b>Timer recording (ERROR)</b> — a failing future records {@code outcome=ERROR}.</li>
@@ -107,7 +107,7 @@ class GreeterAopTest {
     }
 
     @Test
-    @DisplayName("farewell() records its own distinct timer (per-occurrence literal, F2)")
+    @DisplayName("farewell() records its own distinct timer (per-occurrence literal)")
     void farewellRecordsDistinctTimer() throws Throwable {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         Greeter greeter = componentWith(registry).greeter();
@@ -121,7 +121,7 @@ class GreeterAopTest {
         assertNotNull(
                 timer,
                 "farewell() must record its OWN " + FAREWELL_TIMER + " timer with its extraTags — "
-                        + "proves each @Timed occurrence's attributes reached the generated proxy (F2)");
+                        + "proves each @Timed occurrence's attributes reached the generated proxy");
         assertTrue(timer.count() >= 1, "farewell timer count must be >= 1, was " + timer.count());
     }
 

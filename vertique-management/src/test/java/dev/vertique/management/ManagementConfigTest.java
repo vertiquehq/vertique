@@ -136,7 +136,7 @@ class ManagementConfigTest {
     }
 
     @Nested
-    @DisplayName("healthCheckTimeoutSeconds validation (#140)")
+    @DisplayName("healthCheckTimeoutSeconds validation")
     class TimeoutValidation {
 
         private ManagementConfig parse(JsonObject management) {

@@ -53,9 +53,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration coverage for the composition boundary behind issue #41: a real {@link CronScheduler}
- * dispatching a {@code SINGLE_INSTANCE}, {@code service:}-targeted cron job against a real
- * {@link PgJobRepository} backed by PostgreSQL.
+ * Integration coverage for the composition boundary between the cron scheduler and the job
+ * repository: a real {@link CronScheduler} dispatching a {@code SINGLE_INSTANCE},
+ * {@code service:}-targeted cron job against a real {@link PgJobRepository} backed by PostgreSQL.
  *
  * <p>{@code CronSchedulerTest} proves the scheduler resolves the effective handler address
  * correctly, but does so against mock repositories that happily accept a {@code null}
@@ -63,8 +63,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code null} handler against the real {@code job_executions.handler NOT NULL} column, but always
  * supplies a non-null handler itself. Neither test alone could have caught a regression where the
  * scheduler persists a {@code null} handler for a {@code service:} target and the
- * {@code SINGLE_INSTANCE} leader-election {@code INSERT} silently fails against the real schema —
- * which is exactly what issue #41 was. This test wires both halves together.
+ * {@code SINGLE_INSTANCE} leader-election {@code INSERT} silently fails against the real schema.
+ * This test wires both halves together.
  *
  * <p>The trigger is deliberately misfire recovery, not a one-second cron expression polled on the
  * wall clock: {@link CronScheduler#start()} runs misfire recovery synchronously as part of

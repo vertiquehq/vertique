@@ -78,8 +78,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
- * under load {@code body()} can succeed with zero bytes while the status code is correct (issue
- * #167). Nothing here asserts on a body today, but the racy idiom would become a live race the
+ * under load {@code body()} can succeed with zero bytes while the status code is correct.
+ * Nothing here asserts on a body today, but the racy idiom would become a live race the
  * moment someone added a body assertion, with no diff to explain why. No route answers 3xx, so
  * {@link WebClient}'s follow-redirects default (a raw {@code HttpClient} follows none) never
  * engages.
@@ -268,11 +268,11 @@ public class RestServerMetricsIT {
     }
 
     // =========================================================================
-    // Test 15 — timer tags by outcome bucket
+    // timer tags by outcome bucket
     // =========================================================================
 
     @Test
-    @DisplayName("Test 15: GET /ok (200→SUCCESS) and GET /boom (500→SERVER_ERROR) each produce a timer with "
+    @DisplayName("GET /ok (200→SUCCESS) and GET /boom (500→SERVER_ERROR) each produce a timer with "
             + "the correct route and outcome tag; the unmatched GET /nope (404) produces none")
     void timerTagsByOutcomeBucket(Vertx vertx, VertxTestContext ctx) {
         PrometheusMeterRegistry[] registryHolder = new PrometheusMeterRegistry[1];
@@ -316,11 +316,11 @@ public class RestServerMetricsIT {
     }
 
     // =========================================================================
-    // TP-012 — a ROOT rejection and an unmatched request are not timed
+    // A ROOT rejection and an unmatched request are not timed
     // =========================================================================
 
     /**
-     * TP-012: {@value RestServerRequestMetricsListener#METER_NAME} records only requests an operation
+     * {@value RestServerRequestMetricsListener#METER_NAME} records only requests an operation
      * route claimed. {@code GET /limited} is rejected with 429 by a root handler before any route
      * matches and {@code GET /nope} matches no route; neither is claimed, so each yields an
      * {@code HttpRequestCompletedEvent} and no series, while {@code GET /ok} is timed under its
@@ -330,7 +330,7 @@ public class RestServerMetricsIT {
      * @param ctx   the test context
      */
     @Test
-    @DisplayName("TP-012: GET /ok (200) is timed under route=/ok; the ROOT-rejected GET /limited (429) and the "
+    @DisplayName("GET /ok (200) is timed under route=/ok; the ROOT-rejected GET /limited (429) and the "
             + "unmatched GET /nope (404) record no series")
     void rootRejectedAndUnmatchedRequestsAreNotTimed(Vertx vertx, VertxTestContext ctx) {
         PrometheusMeterRegistry[] registryHolder = new PrometheusMeterRegistry[1];
@@ -387,11 +387,11 @@ public class RestServerMetricsIT {
     }
 
     // =========================================================================
-    // Test 16 — active-requests gauge returns to 0 after responses complete
+    // active-requests gauge returns to 0 after responses complete
     // =========================================================================
 
     @Test
-    @DisplayName("Test 16: active-requests gauge returns to 0 after all responses complete; "
+    @DisplayName("active-requests gauge returns to 0 after all responses complete; "
             + "during an in-flight slow request the gauge is 1")
     void activeGaugeReturnsToZero(Vertx vertx, VertxTestContext ctx) {
         PrometheusMeterRegistry[] registryHolder = new PrometheusMeterRegistry[1];
@@ -417,11 +417,11 @@ public class RestServerMetricsIT {
     }
 
     // =========================================================================
-    // Test 17 — Prometheus rendering
+    // Prometheus rendering
     // =========================================================================
 
     @Test
-    @DisplayName("Test 17: Prometheus scrape contains vertique_rest_server_requests_seconds_count "
+    @DisplayName("Prometheus scrape contains vertique_rest_server_requests_seconds_count "
             + "with route=\"/ok\" and vertique_rest_server_active")
     void prometheusScrapeContainsExpectedMetrics(Vertx vertx, VertxTestContext ctx) {
         PrometheusMeterRegistry[] registryHolder = new PrometheusMeterRegistry[1];

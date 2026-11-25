@@ -39,7 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * still be in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive before
  * a body handler is attached, so under load {@code body()} can succeed with zero bytes while the
  * status code is correct — which every helper below, decoding the body as JSON, would surface as a
- * spurious decode failure (issues #167, #330). A {@link WebClient} aggregates the body into its
+ * spurious decode failure. A {@link WebClient} aggregates the body into its
  * {@code HttpResponse} before completing the send.
  *
  * <p>No route exercised here ever answers 3xx, so {@link WebClient}'s follow-redirects default

@@ -81,7 +81,7 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Test 1 — credential counters
+    // credential counters
     // =========================================================================
 
     @Nested
@@ -154,7 +154,7 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Test 2 — authorization decision counters
+    // authorization decision counters
     // =========================================================================
 
     @Nested
@@ -197,7 +197,7 @@ class SecurityMetricsObserverTest {
 
         @Test
         @DisplayName(
-                "Slice-16: new AuthzReasonCodes deny codes all land on the same decision=deny counter, no cardinality explosion")
+                "new AuthzReasonCodes deny codes all land on the same decision=deny counter, no cardinality explosion")
         void newDenyReasonCodesDoNotAddCounterCardinality() {
             // Every deny with a new AuthzReasonCodes constant must increment the same
             // decision=deny counter — the reason code is NOT a tag, so no cardinality explosion.
@@ -248,7 +248,7 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Test 3 — channel gauge
+    // channel gauge
     // =========================================================================
 
     @Nested
@@ -305,7 +305,7 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Test 4 — gating by enabled flags
+    // gating by enabled flags
     // =========================================================================
 
     @Nested
@@ -350,7 +350,7 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Test 5 — never-throws resilience
+    // never-throws resilience
     // =========================================================================
 
     @Nested
@@ -417,14 +417,14 @@ class SecurityMetricsObserverTest {
         }
 
         /**
-         * Verifies W3: when the registry throws an exception whose message contains a sentinel
+         * Verifies that when the registry throws an exception whose message contains a sentinel
          * value, the observer logs only the exception CLASS name — not the full throwable (message
          * or cause chain). No log event's formatted message may contain the sentinel, and no log
          * event must carry a throwable proxy (i.e. the throwable is never passed to the logger).
          */
         @Test
         @DisplayName(
-                "W3: registry throws with SENTINEL message → log event message lacks SENTINEL, throwable proxy is null")
+                "registry throws with SENTINEL message → log event message lacks SENTINEL, throwable proxy is null")
         void throwingRegistryLogsClassNameOnlyNotThrowable() {
             String sentinel = "SENTINEL_secret_xyz";
 
@@ -475,7 +475,7 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Test 6 — null-safety on auth method
+    // null-safety on auth method
     // =========================================================================
 
     @Nested
@@ -520,13 +520,13 @@ class SecurityMetricsObserverTest {
     }
 
     // =========================================================================
-    // Micro-measurement (NFR-TEL-003 input) — DOES NOT RUN IN CI
+    // Micro-measurement — DOES NOT RUN IN CI
     // =========================================================================
 
     @Test
-    @Disabled("manual micro-measurement for NFR-TEL-003 — not a CI assertion")
+    @Disabled("manual micro-measurement — not a CI assertion")
     @DisplayName("micro-measurement: empty composite no-op vs SimpleMeterRegistry counter throughput")
-    void microMeasurementNfrTel003() {
+    void microMeasurement() {
         final int WARMUP = 100_000;
         final int RUNS = 1_000_000;
         final int REPEAT = 3;
@@ -561,7 +561,7 @@ class SecurityMetricsObserverTest {
         }
 
         // Print results (captured by Surefire output file or console with -Dtest.output.toFile=false)
-        System.out.println("=== NFR-TEL-003 micro-measurement ===");
+        System.out.println("=== micro-measurement ===");
         System.out.printf("Empty composite (%,d ops):%n", RUNS);
         for (int r = 0; r < REPEAT; r++) {
             System.out.printf(
@@ -789,7 +789,7 @@ class SecurityMetricsObserverTest {
 
     /**
      * A {@link MeterRegistry} stub that throws a {@link RuntimeException} whose message embeds the
-     * given sentinel string on every meter-creation call. Used to verify that W3 log hardening
+     * given sentinel string on every meter-creation call. Used to verify that the log hardening
      * prevents the sentinel from appearing in log output.
      */
     static final class SentinelThrowingMeterRegistry extends SimpleMeterRegistry {

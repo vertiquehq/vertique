@@ -632,7 +632,7 @@ class DelayedJobServiceTest {
     }
 
     /**
-     * F5 doomed-expiry fire-time threading: verifies that {@code toExecution}
+     * Doomed-expiry fire-time threading: verifies that {@code toExecution}
      * threads {@link DelayedJob#runAt()} (or "now" when unset) into the encode context's
      * {@link DurableEncodeContext#fireTime()}, and that a
      * {@link DurableEncodeRejectedException} thrown by a durable-context encoder — the exact shape
@@ -644,7 +644,7 @@ class DelayedJobServiceTest {
      * javadoc on {@link DelayedJobService}).
      */
     @Nested
-    @DisplayName("F5 doomed-expiry fire-time threading")
+    @DisplayName("doomed-expiry fire-time threading")
     class DoomedExpiryFireTimeThreading {
 
         /** Minimal {@link ContextValue} test double bound to trigger {@link #propagatorWithFakeEncoder}. */
@@ -665,7 +665,7 @@ class DelayedJobServiceTest {
          * Builds a {@link DurableContextPropagator} wired with a single fake encoder for
          * {@link FakeCtx} that records the {@link DurableEncodeContext} it observes and, when
          * {@code rejecting} is {@code true}, throws {@link DurableEncodeRejectedException} — standing
-         * in for {@code IdentitySnapshotDurableEncoder}'s F5 doomed-expiry rejection.
+         * in for {@code IdentitySnapshotDurableEncoder}'s doomed-expiry rejection.
          *
          * @param holder    the context holder the fake value is bound into and the propagator reads
          *                  from
@@ -692,7 +692,7 @@ class DelayedJobServiceTest {
                     observed.set(context);
                     if (rejecting) {
                         throw new DurableEncodeRejectedException(
-                                "fake encoder rejects — models the F5 doomed-expiry FAIL policy");
+                                "fake encoder rejects — models the doomed-expiry FAIL policy");
                     }
                     return DurableMetadata.of("fake-ns", new JsonObject().put("v", "x"));
                 }

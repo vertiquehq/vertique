@@ -863,12 +863,11 @@ public class PgJobRepositoryIT {
      * that every persisted cron execution carries a resolved, non-blank handler address.
      * The scheduler unit tests use mock repositories, which happily accept a
      * {@code null} handler — so without this test nothing in the build would notice if the
-     * constraint were dropped, and the composition defect behind issue #41 could return
+     * constraint were dropped, and a null-handler composition defect could return
      * silently. The delayed-job poller also dispatches to this column
      * ({@code DelayedJobPoller.dispatch}), so it must stay non-null for that path too.
      *
-     * <p>Green from the start, and intended to stay that way: a future change that relaxes the
-     * constraint has to argue with a failing test.
+     * <p>A future change that relaxes the constraint has to argue with a failing test.
      */
     @Test
     @DisplayName("job_executions rejects an execution with a null handler")

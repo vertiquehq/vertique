@@ -61,7 +61,7 @@ import org.mockito.quality.Strictness;
  *   <li>Ambient holder-bound durable context is captured into {@link JobExecution#metadata()} via
  *       a {@link TestCorrelationContext} encoder/decoder pair.
  *   <li>A caller-supplied namespace that collides with a bound encoder's namespace throws
- *       {@link IllegalStateException} (FR-CTX-153).
+ *       {@link IllegalStateException}.
  * </ul>
  */
 @ExtendWith({VertxExtension.class, MockitoExtension.class})
@@ -285,7 +285,7 @@ class DelayedJobServiceMetadataTest {
     }
 
     @Nested
-    @DisplayName("namespace collision (FR-CTX-153)")
+    @DisplayName("namespace collision")
     class NamespaceCollision {
 
         @Test
@@ -316,8 +316,7 @@ class DelayedJobServiceMetadataTest {
         }
 
         @Test
-        @DisplayName(
-                "caller namespace matching encoder namespace passes through when encoder type is NOT bound (FR-CTX-154)")
+        @DisplayName("caller namespace matching encoder namespace passes through when encoder type is NOT bound")
         void callerNamespacePassesThroughWhenTypeNotBound(Vertx vertx, VertxTestContext ctx) {
             DefaultContextHolder holder = new DefaultContextHolder();
             DelayedJobService service = serviceWith(propagatorWith(holder));
@@ -338,7 +337,7 @@ class DelayedJobServiceMetadataTest {
                     ctx.verify(() -> assertEquals(
                             "explicit-corr",
                             captor.getValue().metadata().body(NS).orElseThrow().getString("correlationId"),
-                            "caller namespace body must survive when encoder type is not bound (FR-CTX-154)"));
+                            "caller namespace body must survive when encoder type is not bound"));
                     ctx.completeNow();
                 } catch (Throwable t) {
                     ctx.failNow(t);
@@ -503,7 +502,7 @@ class DelayedJobServiceMetadataTest {
     }
 
     @Nested
-    @DisplayName("F5 row-carrier binding")
+    @DisplayName("row-carrier binding")
     class CarrierBinding {
 
         @Test

@@ -40,7 +40,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>{@link PrometheusScrapeEndpoint} exposes those meters at {@code GET /metrics} on the
  *       management server.</li>
  *   <li>OpenMetrics format is served when requested via {@code Accept} header.</li>
- *   <li>{@code /metrics} is NOT served on the application server port (NFR-TEL-005): the app
+ *   <li>{@code /metrics} is NOT served on the application server port: the app
  *       server is a Router-based server that returns 404 for un-registered paths.</li>
  *   <li>The scrape body is rendered on a Vert.x worker thread, not the event loop.</li>
  * </ol>
@@ -53,7 +53,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Scrapes are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load a body read can succeed with zero bytes while the status code is
- * correct (issue #167). This class reads the scrape body in nearly every test — the {@code # EOF}
+ * correct. This class reads the scrape body in nearly every test — the {@code # EOF}
  * assertion and the {@code vertx_http}/{@code jvm_} polls all inspect it — so the raw idiom was a live
  * hazard here, not a latent one: a silently emptied body would have looked like a missing meter. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
@@ -106,7 +106,7 @@ public class PrometheusScrapeIT {
         client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
         // Start a Router-based application HTTP server on port 0.
-        // A Router returns 404 for paths not explicitly registered (NFR-TEL-005).
+        // A Router returns 404 for paths not explicitly registered.
         Router appRouter = Router.router(vertx);
         appRouter.get("/").handler(rc -> rc.response().end("OK"));
 
@@ -215,7 +215,7 @@ public class PrometheusScrapeIT {
     }
 
     @Test
-    @DisplayName("NFR-TEL-005: GET /metrics on application port → 404 (Router-based app server)")
+    @DisplayName("GET /metrics on application port → 404 (Router-based app server)")
     void metricsNotOnApplicationPort(VertxTestContext ctx) {
         client.get(appServerPort, "127.0.0.1", "/metrics")
                 .send()

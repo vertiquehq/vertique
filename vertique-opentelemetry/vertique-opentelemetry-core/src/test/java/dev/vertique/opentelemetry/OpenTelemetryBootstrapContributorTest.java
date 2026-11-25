@@ -41,8 +41,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Verifies the disabled path (noop factory), enabled path with no global set, enabled path
  * reusing an existing global, the failure path (TracingBootstrapException, cause severed, no secret
- * leak), onShutdown lifecycle, the NFR-TEL-003 noop proof, the fail-fast-on-relaunch guard
- * (Fix 2: a second contribute() after onShutdown on an owned SDK must throw TracingBootstrapException),
+ * leak), onShutdown lifecycle, the noop proof, the fail-fast-on-relaunch guard
+ * (a second contribute() after onShutdown on an owned SDK must throw TracingBootstrapException),
  * and the exception hierarchy proof.
  *
  * <p>Every test class resets {@link GlobalOpenTelemetry} in {@link BeforeEach} and {@link AfterEach}
@@ -86,7 +86,7 @@ class OpenTelemetryBootstrapContributorTest {
         assertNull(failure.getCause(), "the binding failure echoes the value, so it is not chained");
     }
 
-    // --- Test 1: Disabled path ---
+    // --- Disabled path ---
 
     @Nested
     @DisplayName("disabled path — noop factory installed, SDK not built")
@@ -147,7 +147,7 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 2: Enabled, no global set ---
+    // --- Enabled, no global set ---
 
     @Nested
     @DisplayName("enabled path with no existing global — SDK built, factory wired, options set")
@@ -196,7 +196,7 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 3: Enabled, global already set ---
+    // --- Enabled, global already set ---
 
     @Nested
     @DisplayName("enabled path with existing global — reuse, no SDK built, no TracingBootstrapException")
@@ -251,7 +251,7 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 4: Failure path — TracingBootstrapException, no cause, no secret leak ---
+    // --- Failure path — TracingBootstrapException, no cause, no secret leak ---
 
     @Nested
     @DisplayName("failure path — TracingBootstrapException with no cause and no secret leak")
@@ -335,7 +335,7 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 5: onShutdown after successful contribute closes owned SDK ---
+    // --- onShutdown after successful contribute closes owned SDK ---
 
     @Nested
     @DisplayName("onShutdown closes the owned SDK safely")
@@ -378,10 +378,10 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 6: NFR-TEL-003 noop proof ---
+    // --- noop proof ---
 
     @Nested
-    @DisplayName("NFR-TEL-003 — disabled path noop proof")
+    @DisplayName("disabled path noop proof")
     class NoopProof {
 
         @Test
@@ -394,7 +394,7 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 7: Malformed tracing section ---
+    // --- Malformed tracing section ---
 
     @Nested
     @DisplayName("malformed tracing section throws ConfigurationException, not TracingBootstrapException")
@@ -416,15 +416,15 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 8: Fail-fast on closed-global relaunch (Fix 2 — RED TEST) ---
+    // --- Fail-fast on closed-global relaunch ---
 
     @Nested
     @DisplayName("fail-fast on closed-global relaunch — symmetric with Micrometer double-bootstrap guard")
     class ClosedGlobalRelaunch {
 
         /**
-         * RED TEST: contribute (enabled, exporter=none) → onShutdown → NEW contributor instance
-         * + contribute again → must throw TracingBootstrapException (currently succeeds silently).
+         * contribute (enabled, exporter=none) → onShutdown → NEW contributor instance
+         * + contribute again → must throw TracingBootstrapException.
          */
         @Test
         @DisplayName("contribute → onShutdown → new contributor contribute again → TracingBootstrapException")
@@ -453,7 +453,7 @@ class OpenTelemetryBootstrapContributorTest {
 
             // Now GlobalOpenTelemetry.isSet() is still true (pointing at closed SDK).
             // A new contributor instance (simulating ServiceLoader re-discovery) would take
-            // the reuse branch and silently wire a closed SDK. The fix must make this fail-fast.
+            // the reuse branch and silently wire a closed SDK, so it must fail fast.
             OpenTelemetryBootstrapContributor second = new OpenTelemetryBootstrapContributor();
             VertxOptions options2 = new VertxOptions();
             BootstrapContext ctx2 = fakeContext(
@@ -469,7 +469,7 @@ class OpenTelemetryBootstrapContributorTest {
             VertxBuilder builder2 = mock(VertxBuilder.class);
             when(builder2.withTracer(org.mockito.ArgumentMatchers.any())).thenReturn(builder2);
 
-            // MUST throw TracingBootstrapException — currently (before fix) it succeeds silently (RED)
+            // MUST throw TracingBootstrapException
             assertThrows(
                     TracingBootstrapException.class,
                     () -> second.contribute(builder2, ctx2),
@@ -518,21 +518,19 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test W3: rollback-via-exception must poison the OWNED_GLOBAL_CLOSED latch ---
+    // --- Rollback-via-exception must poison the OWNED_GLOBAL_CLOSED latch ---
 
     @Nested
-    @DisplayName("W3 — rollback after setResultAsGlobal poisons the relaunch latch")
+    @DisplayName("rollback after setResultAsGlobal poisons the relaunch latch")
     class RollbackPoisonsLatch {
 
         /**
-         * RED TEST: contribute (enabled) where {@code builder.withTracer()} throws a RuntimeException
+         * contribute (enabled) where {@code builder.withTracer()} throws a RuntimeException
          * after the SDK was built and registered as the global via {@code setResultAsGlobal()}.
-         * The rollback catch should close ownedSdk AND set OWNED_GLOBAL_CLOSED, so a second
-         * contribute() on a new instance (with the global still set) fails fast rather than silently
-         * wiring the already-closed SDK.
-         *
-         * <p>Before the fix the second contribute() takes the {@code GlobalOpenTelemetry.isSet()}
-         * reuse branch and succeeds silently — this test is RED until the fix is applied.
+         * The rollback catch must close ownedSdk AND set OWNED_GLOBAL_CLOSED, so a second
+         * contribute() on a new instance (with the global still set) fails fast rather than taking
+         * the {@code GlobalOpenTelemetry.isSet()} reuse branch and silently wiring the
+         * already-closed SDK.
          */
         @Test
         @DisplayName(
@@ -582,7 +580,7 @@ class OpenTelemetryBootstrapContributorTest {
                     options2);
             OpenTelemetryBootstrapContributor second = new OpenTelemetryBootstrapContributor();
 
-            // MUST throw TracingBootstrapException — currently (before fix) succeeds silently (RED)
+            // MUST throw TracingBootstrapException
             TracingBootstrapException second_thrown =
                     assertThrows(TracingBootstrapException.class, () -> second.contribute(builder2, ctx2));
             assertTrue(
@@ -627,10 +625,10 @@ class OpenTelemetryBootstrapContributorTest {
         }
     }
 
-    // --- Test 9 (Fix #9): owned-SDK rollback on wiring failure ---
+    // --- owned-SDK rollback on wiring failure ---
 
     @Nested
-    @DisplayName("Fix #9 — owned-SDK rollback: wiring steps run inside try block")
+    @DisplayName("owned-SDK rollback: wiring steps run inside try block")
     class OwnedSdkRollback {
 
         /**
@@ -639,7 +637,7 @@ class OpenTelemetryBootstrapContributorTest {
          * latch is set, so a subsequent relaunch throws {@link TracingBootstrapException}.
          *
          * <p>{@code setTracingOptions()} and {@code withTracer()} do not throw in practice (no
-         * injectable seam exists without a refactor disproportionate to the fix), so direct unit
+         * injectable seam exists without a disproportionate refactor), so direct unit
          * testing of the catch-block rollback path is not possible without a seam. The correctness
          * of the reordering is verified structurally: both steps are inside the try block in the
          * source, and any future test injection would exercise the rollback path. This test instead

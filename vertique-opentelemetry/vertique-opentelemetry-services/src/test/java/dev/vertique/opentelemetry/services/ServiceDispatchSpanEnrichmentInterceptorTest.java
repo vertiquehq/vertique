@@ -88,7 +88,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 Map.of());
     }
 
-    // --- Test 1: onDispatch with recording span → target + oneway=false ---
+    // --- onDispatch with recording span → target + oneway=false ---
 
     @Test
     @DisplayName(
@@ -119,7 +119,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 "vertique.service.oneway must be false for request/reply dispatch");
     }
 
-    // --- Test 2: onDispatch with null stableTargetId → NO target attribute, oneway still set ---
+    // --- onDispatch with null stableTargetId → NO target attribute, oneway still set ---
 
     @Test
     @DisplayName("onDispatch with null stableTargetId → no target attribute, vertique.service.oneway still set")
@@ -148,7 +148,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 "vertique.service.oneway must still be set even when stableTargetId is null");
     }
 
-    // --- Test 3: onDispatch with no current span → no-op, no exception ---
+    // --- onDispatch with no current span → no-op, no exception ---
 
     @Test
     @DisplayName("onDispatch with no current span → no-op, no exception")
@@ -162,7 +162,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
         assertEquals(0, OTEL.getSpans().size(), "no spans must be exported");
     }
 
-    // --- Test 4: onDispatch with non-recording (noop) span → no attribute writes, no exception ---
+    // --- onDispatch with non-recording (noop) span → no attribute writes, no exception ---
 
     @Test
     @DisplayName("onDispatch with a non-recording (noop) span current → no attribute writes, no exception")
@@ -179,7 +179,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
         assertEquals(0, OTEL.getSpans().size(), "no spans must be exported for a non-recording span");
     }
 
-    // --- Test 5: onTerminalComplete with recording span + failed result → ERROR + error.type ---
+    // --- onTerminalComplete with recording span + failed result → ERROR + error.type ---
 
     @Test
     @DisplayName(
@@ -209,7 +209,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 "error.type must be the simple class name of the failure cause");
     }
 
-    // --- Test 6: onTerminalComplete success → status UNSET, no error.type ---
+    // --- onTerminalComplete success → status UNSET, no error.type ---
 
     @Test
     @DisplayName("onTerminalComplete success → span status stays UNSET, no error.type")
@@ -239,7 +239,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 "error.type must not be set for successful Result");
     }
 
-    // --- Test 7: onTerminalComplete after span was ENDED → safe no-op, exported span unchanged ---
+    // --- onTerminalComplete after span was ENDED → safe no-op, exported span unchanged ---
 
     @Test
     @DisplayName("onTerminalComplete after the span was ENDED → safe no-op, no exception, exported span unchanged")
@@ -265,7 +265,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 "ended span status must be unchanged (UNSET)");
     }
 
-    // --- Test 8: poisoned context → both methods return normally ---
+    // --- poisoned context → both methods return normally ---
 
     @Nested
     @DisplayName("Poisoned context — never throws")
@@ -299,7 +299,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
         }
     }
 
-    // --- Test 9: swallowed failures log class name only, no throwable proxy ---
+    // --- swallowed failures log class name only, no throwable proxy ---
 
     @Nested
     @DisplayName("Swallowed failures log the exception class name only")

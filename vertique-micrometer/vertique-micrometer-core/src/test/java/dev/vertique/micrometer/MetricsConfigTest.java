@@ -167,7 +167,7 @@ class MetricsConfigTest {
         }
     }
 
-    // --- Explicit JSON null on nested sections falls back to defaults (W2) ---
+    // --- Explicit JSON null on nested sections falls back to defaults ---
 
     @Nested
     @DisplayName("explicit JSON null on nested sections falls back to defaults")

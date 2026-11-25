@@ -20,11 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FROZEN §3b always-applied {@code outcome} / {@code error.type} tags on the {@code @Timed}
+ * Verifies the always-applied {@code outcome} / {@code error.type} tags on the {@code @Timed}
  * timer: {@code SUCCESS}/{@code none} on success and {@code ERROR}/{@code <ExcSimpleName>} on a failing
  * {@code Future}.
- *
- * <p><strong>RED:</strong> {@link TimedAspect} is a failing stub, so no {@code Timer} is recorded.
  */
 class TimedTagsOutcomeAndErrorTypeTest {
 

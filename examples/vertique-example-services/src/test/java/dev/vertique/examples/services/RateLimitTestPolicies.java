@@ -7,7 +7,7 @@ import io.vertx.core.json.JsonObject;
 
 /**
  * Shared {@code rateLimit.policies} fixture for {@link
- * dev.vertique.examples.services.service.RateLimitProbeService#POLICY_NAME} (T013).
+ * dev.vertique.examples.services.service.RateLimitProbeService#POLICY_NAME}.
  *
  * <p>{@code RateLimitProbeServiceHandler#probe} carries {@code @RateLimited}, and the aspect
  * resolves its policy handle at proxy-construction time, so every {@code VertiqueAppExtension}-booted test in this module

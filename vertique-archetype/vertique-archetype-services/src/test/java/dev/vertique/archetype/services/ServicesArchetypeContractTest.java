@@ -178,7 +178,7 @@ class ServicesArchetypeContractTest {
 
     /**
      * The complete dependency contract of the archetype module itself, in declaration order: one
-     * Surefire harness edge plus the frozen §4.5 staging set that populates the isolated
+     * Surefire harness edge plus the frozen staging set that populates the isolated
      * integration-test repository. The list is exhaustive so a staging edge cannot be added or
      * dropped silently — a missing edge would let the nested build fall back to a coordinate this
      * reactor did not produce.
@@ -234,7 +234,7 @@ class ServicesArchetypeContractTest {
             "@Produces",
             "@Consumes");
 
-    /** The exact {@code -D} property set and values of the frozen §4.6 non-interactive generation command. */
+    /** The exact {@code -D} property set and values of the frozen non-interactive generation command. */
     private static final Map<String, String> EXPECTED_GENERATE_PROPERTIES = Map.of(
             "archetypeGroupId", "dev.vertique",
             "archetypeArtifactId", "vertique-archetype-services",
@@ -247,7 +247,7 @@ class ServicesArchetypeContractTest {
             "interactiveMode", "false");
 
     /**
-     * The frozen leading tokens of the §4.6 generation command. Everything after them must be a
+     * The frozen leading tokens of the generation command. Everything after them must be a
      * {@code -D} flag from {@link #EXPECTED_GENERATE_PROPERTIES} — no extra goal, profile, or shell
      * syntax may ride along in the documented command.
      */
@@ -492,7 +492,7 @@ class ServicesArchetypeContractTest {
                 GENERATE_PROPERTY.matcher(flag).matches(),
                 () -> "generation command must carry only -Dkey=value flags after the goal, found: " + flag));
 
-        // And those flags are exactly the frozen §4.6 properties, each with its frozen value — a
+        // And those flags are exactly the frozen properties, each with its frozen value — a
         // duplicated flag fails the parse rather than being silently collapsed.
         assertEquals(EXPECTED_GENERATE_PROPERTIES, generationPropertiesOf(generationCommand));
 

@@ -50,11 +50,10 @@ import org.slf4j.LoggerFactory;
  * may still be in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive
  * before a body handler is attached, so under load {@code body()} can succeed with zero bytes while
  * the status code is correct — which every scrape assertion below, reading the rendered exposition
- * text, would surface as a content mismatch unrelated to the endpoint (issues #167, #330). A
+ * text, would surface as a content mismatch unrelated to the endpoint. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  * Each real-HTTP case also closes its {@code HttpServer} via {@code Future.eventually} before the
- * extension tears down {@link Vertx}, so the listener is not left for reclaim-only cleanup
- * (issue #333).
+ * extension tears down {@link Vertx}, so the listener is not left for reclaim-only cleanup.
  *
  * <p>No case here answers 3xx, so {@link WebClient}'s follow-redirects default (a raw
  * {@code HttpClient} follows none) never engages.

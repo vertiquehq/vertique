@@ -181,7 +181,7 @@ class CronSchedulerTest {
      * <p>The invocation ordinal is the causal window-closing signal these tests need: the stubbed
      * collaborator is consulted exactly once per admitted fire, so reaching the {@code n}-th
      * invocation proves {@code n} separate fires really were admitted and reached the failing path.
-     * That is the same "a fire really was admitted" evidence a fixed wall-clock deadline used to
+     * That is the same "a fire really was admitted" evidence a fixed wall-clock deadline would
      * buy, without waiting for it — and it is what stops the assertions from passing vacuously on a
      * run where no cron tick ever fired at all.
      *
@@ -328,8 +328,8 @@ class CronSchedulerTest {
         // start() iterates jobs and schedules a timer per job via scheduleNext(), which puts the
         // timer id into activeTimers. A second start() with no intervening stop() would orphan
         // the prior timer (it keeps firing) and overwrite activeTimers with the new id, doubling
-        // every job's fires per tick. Today's only caller is CronLifecycleVerticle (Vert.x calls
-        // start() once per deploy) so this is latent — but the fix is the symmetric counterpart
+        // every job's fires per tick. The only caller is CronLifecycleVerticle (Vert.x calls
+        // start() once per deploy), so this is latent — but the guard is the symmetric counterpart
         // to register() idempotency.
         Vertx spyVertx = spy(vertx);
         AtomicInteger setTimerCalls = new AtomicInteger();
@@ -547,7 +547,7 @@ class CronSchedulerTest {
         scheduler = compressedScheduler(vertx, Set.of(), null, stubTargetResolver(), testEventBusClient(vertx));
 
         // Inspect the FQCN-keyed dispatch-context map carried in the DispatchEnvelope: the cron
-        // boundary must bind a DeferredExecutionOrigin proving deferred (cron) execution (W2/A6).
+        // boundary must bind a DeferredExecutionOrigin proving deferred (cron) execution.
         vertx.eventBus().consumer("test.origin.address", msg -> {
             if (!(msg.body() instanceof DispatchEnvelope<?> body) || !asserted.compareAndSet(false, true)) {
                 return;
@@ -1413,22 +1413,21 @@ class CronSchedulerTest {
         }
     }
 
-    // --- Service-target execution handler tests (GH-41) ---
+    // --- Service-target execution handler tests ---
 
     /**
-     * Regression coverage for GH-41: {@link CronJobRegistrar} resolves every {@code @CronJob}
+     * Regression coverage for service-target jobs: {@link CronJobRegistrar} resolves every {@code @CronJob}
      * annotated with a service target to a {@link CronTargetReference.ServiceTarget} with
      * {@code handlerAddress = null} (by design — the runtime address is resolved late via
      * {@link ServiceTargetResolver}).
      *
-     * <p>The defect these tests pin against: {@link CronScheduler#buildExecution} used to copy
-     * {@code job.handlerAddress()} straight into {@link JobExecution#handler()}, so a tracked
-     * {@link ExecutionMode#SINGLE_INSTANCE} service-target job persisted a {@code null} handler —
-     * fatal against a {@code NOT NULL} column in {@code vertique-job-postgresql}.
-     * {@link CronJobDispatcher#dispatch} resolved the target correctly, but only at send time —
-     * too late for the already-persisted record.
+     * <p>Copying {@code job.handlerAddress()} straight into {@link JobExecution#handler()} would
+     * make a tracked {@link ExecutionMode#SINGLE_INSTANCE} service-target job persist a {@code null}
+     * handler — fatal against a {@code NOT NULL} column in {@code vertique-job-postgresql} — because
+     * {@link CronJobDispatcher#dispatch} resolves the target only at send time, too late for the
+     * already-persisted record.
      *
-     * <p>That is now fixed: the effective event bus address is resolved once per fire
+     * <p>So the effective event bus address is resolved once per fire
      * by {@link CronScheduler#resolveEffectiveAddress}, before any execution record is written and
      * before {@link CronJobDispatcher#dispatch} is even called, so the address a tracked execution
      * persists is by construction the address actually dispatched to. The tests below pin that
@@ -1725,7 +1724,7 @@ class CronSchedulerTest {
             ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
             verify(repo, timeout(6000).atLeast(2)).save(captor.capture());
 
-            // Persistence-coherence pin (F5): CronJobDispatcher.updateFireTimes writes last_fired_at
+            // Persistence-coherence pin: CronJobDispatcher.updateFireTimes writes last_fired_at
             // from the fire's scheduledAt but recomputes next_fire_at from real Instant.now(), so the
             // two are only coherent while scheduledAt tracks wall clock. This test is deliberately
             // left on the production SystemCronTickPlanner for exactly that reason; the assertion
@@ -1877,18 +1876,17 @@ class CronSchedulerTest {
         }
 
         /**
-         * GREEN regression guard: unlike tests 1-3, this uses a mock {@link JobRepository} that
-         * tolerates a {@code null} handler — it only goes red against a real {@code NOT NULL}
-         * handler column (e.g. {@code vertique-job-postgresql}), which this unit test doesn't
-         * exercise. The scheduler resolves the {@link CronTargetReference.ServiceTarget} once per
-         * fire, before {@link CronJobDispatcher#dispatch} is even called (see
+         * Unlike the surrounding tests, this uses a mock {@link JobRepository} that tolerates a
+         * {@code null} handler; a {@code null} handler would only be rejected by a real
+         * {@code NOT NULL} handler column (e.g. {@code vertique-job-postgresql}), which this unit
+         * test doesn't exercise. The scheduler resolves the {@link CronTargetReference.ServiceTarget}
+         * once per fire, before {@link CronJobDispatcher#dispatch} is even called (see
          * {@link CronScheduler#resolveEffectiveAddress}), so the message lands at
-         * {@link #RESOLVED_ADDRESS} regardless of the persisted-handler bug. Its lasting value is
-         * pinning that the address a persisted execution records equals the address actually
-         * dispatched to — an invariant the fix makes true by construction.
+         * {@link #RESOLVED_ADDRESS}. It pins that the address a persisted execution records equals
+         * the address actually dispatched to — an invariant that holds by construction.
          */
         @Test
-        @DisplayName("GREEN regression guard: SINGLE_INSTANCE service-target dispatch lands at the resolved address")
+        @DisplayName("SINGLE_INSTANCE service-target dispatch lands at the resolved address")
         void serviceTargetDispatchLandsAtTheResolvedAddress(Vertx vertx, VertxTestContext ctx) {
             vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> ctx.completeNow());
 
@@ -1911,21 +1909,21 @@ class CronSchedulerTest {
         }
 
         /**
-         * Guards against a rejected design that would resolve the service target at the top of
-         * {@code fire()}, before {@code tryAcquireInFlight}. Under that rejected design, an
-         * overlapping tick would consult the resolver before being refused for the in-flight
-         * execution. The discriminating assertion is {@code resolveCallsWhileArmed == 0}: under
-         * the correct ordering an overlapping tick is refused at {@code tryAcquireInFlight} and
+         * Guards against resolving the service target at the top of {@code fire()}, before
+         * {@code tryAcquireInFlight}: an overlapping tick would then consult the resolver before
+         * being refused for the in-flight execution. The discriminating assertion is
+         * {@code resolveCallsWhileArmed == 0}: under the correct ordering an overlapping tick is
+         * refused at {@code tryAcquireInFlight} and
          * routed to {@code handleOverlap} <em>without ever consulting the resolver</em>, so the
          * resolver must never be invoked while the failure window is armed. The hit count alone
          * (both ticks eventually reaching the resolved address) does not discriminate the two
          * orderings — it passes either way — so it is a secondary sanity check, not the guard.
          * The resolver failure is keyed on a time window (armed while the first execution is
          * held, disarmed just before it replies) rather than an invocation count, because
-         * invocation ordinals shift once the fix adds a resolution call at admission time.
+         * invocation ordinals shift when a resolution call is added at admission time.
          */
         @Test
-        @DisplayName("GREEN regression guard: overlap admission never calls the resolver, so a queued tick "
+        @DisplayName("overlap admission never calls the resolver, so a queued tick "
                 + "still runs even if the resolver fails during the overlap window")
         void unresolvableTargetDuringOverlapStillQueuesTheTick(Vertx vertx, VertxTestContext ctx) {
             AtomicInteger hitCount = new AtomicInteger();
@@ -2115,8 +2113,7 @@ class CronSchedulerTest {
         }
 
         @Test
-        @DisplayName(
-                "GREEN regression guard: plain EventBusTarget dispatch is untouched by service-target" + " resolution")
+        @DisplayName("plain EventBusTarget dispatch is untouched by service-target resolution")
         void eventBusTargetStillDispatchesToItsAddress(Vertx vertx, VertxTestContext ctx) {
             vertx.eventBus().consumer("plain.address", msg -> ctx.completeNow());
 
@@ -2145,10 +2142,10 @@ class CronSchedulerTest {
         }
     }
 
-    // --- Synchronous failure containment tests (GH-41 follow-up) ---
+    // --- Synchronous failure containment tests ---
 
     /**
-     * Regression coverage for the defect tracked alongside GH-41:
+     * Regression coverage for synchronous failures during dispatch:
      * {@link CronConcurrencyManager#acquireSlotAndRun} increments {@code activeConcurrentCount}
      * and then invokes {@code dispatchAction.run()} with no {@code try/finally}, and the only path
      * that releases the in-flight guard and the concurrency slot is
@@ -2811,7 +2808,7 @@ class CronSchedulerTest {
      * <p>{@link #persistsEntriesAppendedDuringAnInFlightTickWrite} is the end-to-end counterpart of
      * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
      * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
-     * ending-site flush used to lose.
+     * ending-site flush could lose.
      *
      * <p>{@link #shutdownDrainsBufferedLogsOfInFlightExecutions} covers
      * {@code CronJobDispatcher.shutdown()}. That dispatcher is package-private and constructed

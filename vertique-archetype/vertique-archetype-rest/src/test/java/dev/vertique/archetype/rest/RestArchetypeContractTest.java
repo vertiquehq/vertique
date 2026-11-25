@@ -167,7 +167,7 @@ class RestArchetypeContractTest {
 
     /**
      * The complete dependency contract of the archetype module itself, in declaration order: one
-     * Surefire harness edge plus the frozen §4.5 staging set that populates the isolated
+     * Surefire harness edge plus the frozen staging set that populates the isolated
      * integration-test repository. The list is exhaustive so a staging edge cannot be added or
      * dropped silently — a missing edge would let the nested build fall back to a coordinate this
      * reactor did not produce.
@@ -191,7 +191,7 @@ class RestArchetypeContractTest {
     /** The annotations every deployment provider must carry; membership is order-insensitive. */
     private static final Set<String> REQUIRED_PROVIDER_ANNOTATIONS = Set.of("@Provides", "@IntoSet");
 
-    /** The exact {@code -D} property set and values of the frozen §4.6 non-interactive generation command. */
+    /** The exact {@code -D} property set and values of the frozen non-interactive generation command. */
     private static final Map<String, String> EXPECTED_GENERATE_PROPERTIES = Map.of(
             "archetypeGroupId", "dev.vertique",
             "archetypeArtifactId", "vertique-archetype-rest",
@@ -204,7 +204,7 @@ class RestArchetypeContractTest {
             "interactiveMode", "false");
 
     /**
-     * The frozen leading tokens of the §4.6 generation command. Everything after them must be a
+     * The frozen leading tokens of the generation command. Everything after them must be a
      * {@code -D} flag from {@link #EXPECTED_GENERATE_PROPERTIES} — no extra goal, profile, or shell
      * syntax may ride along in the documented command.
      */
@@ -348,7 +348,7 @@ class RestArchetypeContractTest {
     }
 
     @Test
-    @DisplayName("documents exactly one non-interactive REST generation command with the frozen §4.6 shape")
+    @DisplayName("documents exactly one non-interactive REST generation command with the frozen shape")
     void documentsOnlyTheRestGenerationCommand() throws IOException {
         // Given the REST archetype's own README.
         String readme = read(ARCHETYPE_README);
@@ -376,7 +376,7 @@ class RestArchetypeContractTest {
                 GENERATE_PROPERTY.matcher(flag).matches(),
                 () -> "generation command must carry only -Dkey=value flags after the goal, found: " + flag));
 
-        // And those flags are exactly the frozen §4.6 properties, each with its frozen value.
+        // And those flags are exactly the frozen properties, each with its frozen value.
         assertEquals(EXPECTED_GENERATE_PROPERTIES, generationPropertiesOf(command));
 
         // And the JDK and Maven prerequisites are stated.

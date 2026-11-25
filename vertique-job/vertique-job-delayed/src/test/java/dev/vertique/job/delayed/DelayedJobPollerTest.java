@@ -335,7 +335,7 @@ class DelayedJobPollerTest {
 
             // Inspect the FQCN-keyed dispatch-context map carried in the DispatchEnvelope: the
             // delayed-job boundary must bind a DeferredExecutionOrigin proving deferred execution
-            // (W2/A6), keyed alongside the JobDispatchContext entry. The reference is the handler's
+            // keyed alongside the JobDispatchContext entry. The reference is the handler's
             // event-bus address (a stable, resolver-mappable id), not the jobId.
             vertx.eventBus().consumer(handlerAddress, msg -> {
                 if (!(msg.body() instanceof DispatchEnvelope<?> body) || !asserted.compareAndSet(false, true)) {
@@ -370,7 +370,7 @@ class DelayedJobPollerTest {
             String handlerAddress = "test.stable.handler";
             // Auto-generated form produced by DelayedJobService: "delayed-" + UUID. It is distinct
             // from the handler address and is NOT resolver-mappable, so the origin reference must be
-            // the handler address instead (Codex W2).
+            // the handler address instead.
             String generatedJobId = "delayed-" + UUID.randomUUID();
             JobExecution execution = sampleExecution(generatedJobId, handlerAddress);
 
@@ -456,7 +456,7 @@ class DelayedJobPollerTest {
     }
 
     @Nested
-    @DisplayName("carrier binding (F5 row binding)")
+    @DisplayName("carrier binding (row binding)")
     class CarrierBinding {
 
         /** Test-only ContextValue whose decoder records the DurableDecodeContext it is handed. */
@@ -1010,7 +1010,7 @@ class DelayedJobPollerTest {
      * <p>{@link #persistsEntriesAppendedDuringAnInFlightTickWrite} is the end-to-end counterpart of
      * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
      * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
-     * ending-site flush used to lose.
+     * ending-site flush could lose.
      *
      * <p>The two {@code stop*} tests cover the verticle-shutdown flush site, which the
      * {@code "stops cleanly"} lifecycle test cannot reach: that test stubs {@code claimNextJob} to

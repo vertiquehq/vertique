@@ -25,12 +25,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
- * The reactor's first AOP-on-a-JAX-RS-resource-method proof over real HTTP (T013, TP-001):
+ * The reactor's first AOP-on-a-JAX-RS-resource-method proof over real HTTP:
  * {@code HelloResource#greetLimited} carries {@code @RateLimited}, resolved through the generated
- * {@code $AopProxy} Dagger substitution (plan.md Pre-flight finding 1 — the proxy is reached only
- * through {@code Provider.get()}), admits requests up to a small configured capacity, then denies
+ * {@code $AopProxy} Dagger substitution (the proxy is reached only through {@code
+ * Provider.get()}), admits requests up to a small configured capacity, then denies
  * the next one with {@code 429} carrying {@code Retry-After}/{@code Cache-Control: no-store},
- * mapped by T010's {@code RestRateLimitModule}.
+ * mapped by {@code RestRateLimitModule}.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class RateLimitedGreetingIT {

@@ -19,11 +19,10 @@ import org.junit.jupiter.api.Test;
  * custom {@link Deferring @Deferring} aspect, whose {@link DeferringAspect} interceptor calls
  * {@code proceed()} but returns a never-completing future (it does not await {@code proceed()}). The
  * generated {@code DeferringBean$AopProxy} therefore finds the around-chain incomplete when it must
- * produce a plain value, and the FR-013-05 guard throws {@link IllegalStateException} naming the
+ * produce a plain value, and the sync guard throws {@link IllegalStateException} naming the
  * sync-returning method — proving a sync method cannot carry a deferring aspect.
  *
- * <p>This validates already-shipped guard code ({@code AopProxyEmitter.emitSyncGuard}); the test is
- * expected to pass.
+ * <p>This exercises the guard emitted by {@code AopProxyEmitter.emitSyncGuard}.
  */
 class CustomDeferringAspectOnSyncMethodThrowsTest {
 

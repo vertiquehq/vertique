@@ -26,8 +26,7 @@ import org.slf4j.LoggerFactory;
  * Unit tests for {@link CardinalityGuard} — verifies per-key tag-value capping,
  * one-time WARN emission (without logging overflowing values), non-vertique meters' exemption from
  * the <em>per-key</em> filters, independent-key counting, and the global meter cap
- * ({@code maxMeters > 0}) — including that the global cap is name-agnostic, which the class javadoc
- * used to deny.
+ * ({@code maxMeters > 0}) — including that the global cap is name-agnostic.
  *
  * <p>Tests apply the guard filters directly to a {@link SimpleMeterRegistry} (no composite
  * needed) except for the assembly-integration test which uses a full {@link MicrometerAssembly}.
@@ -68,7 +67,7 @@ class CardinalityGuardTest {
                 .cardinality();
     }
 
-    // --- Test 1: cap=5, v1..v5 allowed, v6 denied ---
+    // --- cap=5, v1..v5 allowed, v6 denied ---
 
     @Nested
     class TagValueCap {
@@ -254,7 +253,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- Test 2: exactly one WARN per overflow, message contains key but NOT overflowing value ---
+    // --- exactly one WARN per overflow, message contains key but NOT overflowing value ---
 
     @Nested
     class WarnLogging {
@@ -316,7 +315,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- Test 3: non-vertique meters are NOT affected by the guard ---
+    // --- non-vertique meters are NOT affected by the guard ---
 
     @Nested
     class NonVertiqueMeterExemption {
@@ -343,7 +342,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- Test 4: untagged vertique meters are unaffected by per-key filters ---
+    // --- untagged vertique meters are unaffected by per-key filters ---
 
     @Nested
     class UntaggedVertiqueMeter {
@@ -365,7 +364,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- Test 5: overflow on 'method' does NOT affect 'route' cap ---
+    // --- overflow on 'method' does NOT affect 'route' cap ---
 
     @Nested
     class IndependentKeys {
@@ -394,7 +393,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- Test 6: maxMeters cap, and maxMeters=0 means no global cap appended ---
+    // --- maxMeters cap, and maxMeters=0 means no global cap appended ---
 
     @Nested
     class MaxMetersCap {
@@ -438,7 +437,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- The global cap counts every meter, whatever its name (GH-56) ---
+    // --- The global cap counts every meter, whatever its name ---
 
     @Nested
     class GlobalCapIsNameAgnostic {
@@ -501,7 +500,7 @@ class CardinalityGuardTest {
         }
     }
 
-    // --- Test 7: Assembly integration — cardinality cap wired through MicrometerAssembly ---
+    // --- Assembly integration — cardinality cap wired through MicrometerAssembly ---
 
     @Nested
     class AssemblyIntegration {

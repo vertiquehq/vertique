@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
- * Mechanism-level integration test proving AC-9: when a sampled OpenTelemetry span is active,
+ * Mechanism-level integration test proving that when a sampled OpenTelemetry span is active,
  * Prometheus exemplars are attached to timer observations, and the exemplar {@code trace_id}
  * appears in the OpenMetrics scrape body.
  *
@@ -89,7 +89,7 @@ public class PrometheusExemplarIT {
         return registry;
     }
 
-    // --- Test 1: OpenMetrics scrape contains exemplar with matching trace_id ---
+    // --- OpenMetrics scrape contains exemplar with matching trace_id ---
 
     @Test
     @DisplayName("sampled span: OpenMetrics scrape body contains exemplar with trace_id matching the active span")
@@ -130,7 +130,7 @@ public class PrometheusExemplarIT {
                 "OpenMetrics body must contain exemplar block '# {'; body:\n" + openMetricsBody);
     }
 
-    // --- Test 2: Prometheus text format scrape contains NO exemplar ---
+    // --- Prometheus text format scrape contains NO exemplar ---
 
     @Test
     @DisplayName("sampled span: Prometheus text format scrape body contains NO exemplar")
@@ -158,7 +158,7 @@ public class PrometheusExemplarIT {
                 "Prometheus text format must NOT contain exemplar block '# {'; body:\n" + textBody);
     }
 
-    // --- Test 3: verify the span was recorded by the extension (sanity check) ---
+    // --- verify the span was recorded by the extension (sanity check) ---
 
     @Test
     @DisplayName("sanity: OpenTelemetryExtension captures spans when they are ended")

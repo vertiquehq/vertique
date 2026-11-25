@@ -25,7 +25,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  *   <li>Header {@code Accept-Language: sv-SE} → negotiated locale is {@code sv},
  *       source is {@code rest-accept-language}.</li>
  *   <li>Query parameter {@code ?lang=fi} with header {@code Accept-Language: sv-SE} → negotiated
- *       locale is {@code fi}, source is {@code query-param} (custom source C12 wins).</li>
+ *       locale is {@code fi}, source is {@code query-param} (custom source wins).</li>
  *   <li>No {@code Accept-Language}, no {@code ?lang=} → negotiated locale is {@code en}
  *       (configured default), source is {@code default-locale}.</li>
  * </ol>
@@ -72,7 +72,7 @@ public class LocaleResourceIT {
     }
 
     @Test
-    @DisplayName("?lang=fi with Accept-Language sv-SE resolves to fi via query-param source (C12)")
+    @DisplayName("?lang=fi with Accept-Language sv-SE resolves to fi via query-param source")
     void shouldPreferQueryParamOverAcceptLanguageHeader() {
         given().header("Accept-Language", "sv-SE")
                 .queryParam("lang", "fi")

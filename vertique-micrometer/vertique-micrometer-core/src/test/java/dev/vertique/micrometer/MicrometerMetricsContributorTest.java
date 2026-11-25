@@ -57,7 +57,7 @@ class MicrometerMetricsContributorTest {
         assertInstanceOf(ConfigurationException.class, new MetricsBootstrapException("test"));
     }
 
-    // --- Test 1: Active path ---
+    // --- Active path ---
 
     @Nested
     @DisplayName("active path — one provider, eventBus=false")
@@ -107,7 +107,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 2: Labels override ---
+    // --- Labels override ---
 
     @Nested
     @DisplayName("labels override")
@@ -186,7 +186,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 3: Zero providers ---
+    // --- Zero providers ---
 
     @Nested
     @DisplayName("zero providers — fully inert")
@@ -213,7 +213,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 4: metrics.enabled=false ---
+    // --- metrics.enabled=false ---
 
     @Nested
     @DisplayName("metrics.enabled=false — fully inert even with providers")
@@ -240,7 +240,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 5: Double bootstrap guard ---
+    // --- Double bootstrap guard ---
 
     @Nested
     @DisplayName("double bootstrap guard")
@@ -269,7 +269,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 6: Provider failure rollback ---
+    // --- Provider failure rollback ---
 
     @Nested
     @DisplayName("provider failure rollback")
@@ -328,7 +328,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 7: Sentinel secrecy ---
+    // --- Sentinel secrecy ---
 
     @Nested
     @DisplayName("sentinel secrecy — no config values leak into logs or cause chain")
@@ -400,7 +400,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 8: Failure after assemble ---
+    // --- Failure after assemble ---
 
     @Nested
     @DisplayName("failure after assemble")
@@ -444,7 +444,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 9: onShutdown ---
+    // --- onShutdown ---
 
     @Nested
     @DisplayName("onShutdown lifecycle")
@@ -529,7 +529,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 10: Validation wiring ---
+    // --- Validation wiring ---
 
     @Nested
     @DisplayName("validation wiring")
@@ -564,7 +564,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 11: Malformed metrics section ---
+    // --- Malformed metrics section ---
 
     @Nested
     @DisplayName("malformed metrics section throws ConfigurationException, not MetricsBootstrapException")
@@ -613,10 +613,10 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 13: W4 — provider failure preserves backend name through contributor ---
+    // --- provider failure preserves backend name through contributor ---
 
     @Nested
-    @DisplayName("W4: provider failure preserves backend name in MetricsBootstrapException through contributor")
+    @DisplayName("provider failure preserves backend name in MetricsBootstrapException through contributor")
     class ProviderFailureBackendNamePreservation {
 
         @Test
@@ -711,10 +711,10 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 14: W2 contributor smoke — null nested section does not NPE ---
+    // --- contributor smoke — null nested section does not NPE ---
 
     @Nested
-    @DisplayName("W2 contributor smoke: explicit JSON null on tags section does not NPE in contribute()")
+    @DisplayName("contributor smoke: explicit JSON null on tags section does not NPE in contribute()")
     class NullTagsSectionSmokeTest {
 
         @Test
@@ -744,7 +744,7 @@ class MicrometerMetricsContributorTest {
         }
     }
 
-    // --- Test 12: ServiceLoader smoke ---
+    // --- ServiceLoader smoke ---
 
     @Nested
     @DisplayName("ServiceLoader smoke test")

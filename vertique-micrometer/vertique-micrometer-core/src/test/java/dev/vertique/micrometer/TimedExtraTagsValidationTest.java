@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the FR (Bug F6) even-length validation of {@link Timed#extraTags()} in
+ * Verifies the even-length validation of {@link Timed#extraTags()} in
  * {@link TimedAspect#interceptor}.
  *
  * <p>The {@code extraTags} are hoisted into {@code interceptor(...)} (proxy-construction time), so a

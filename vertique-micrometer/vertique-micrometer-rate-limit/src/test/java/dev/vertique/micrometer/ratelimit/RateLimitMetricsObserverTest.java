@@ -232,8 +232,6 @@ class RateLimitMetricsObserverTest {
         }
     }
 
-    // --- TP-002 ---
-
     @Test
     @DisplayName("a registry failure on a later event never escapes the observer or discards earlier meters")
     void shouldIsolateObserverFailureFromAdmission() {
