@@ -625,9 +625,10 @@ A completion never needs a rollback by the caller for these failures. The checks
 transaction (unknown decision, bounds, schema, a task that is no longer open, a mismatched assignment) run
 before the idempotency claim and write nothing, so there is nothing to keep or undo.
 
-Starting an instance validates the start payload the same way and rejects caller-caused problems with
-`WorkflowInvalidPayloadException` (HTTP 400 class, message `invalid start payload`, structured details with
-a root pointer path):
+The executor validates the start payload the same way when it initialises the instance, not in the caller's
+transaction, so a violation is not thrown to the caller of the start call: the executor fails the start command
+and its instance with a `WorkflowInvalidPayloadException` finding (HTTP 400 class, message `invalid start payload`,
+structured details with a root pointer path):
 
 - a missing payload for a start type that needs one, or a payload for a start type without one (`void`),
   is reported with type `payload`;
@@ -635,18 +636,17 @@ a root pointer path):
 
 The details the engine builds are value-free: they carry no payload value, class name, decode message or map
 key. The decode cause is logged at DEBUG level only, and the same caution applies: do not log it at INFO or
-above. The rejection happens before the instance is started and rolls the start transaction back, so no
-instance row, history entry or deduplication claim is kept; a retry with the same idempotency key and a corrected
-payload starts the instance. The application's initial-state function and subject resolver run in the executor, not in the
-caller: one that throws (a `WorkflowDefinitionException` with the thrown exception as its cause and without its message) rolls
-the segment back and is logged at error level, and the instance stays `PENDING` while the claim lapses and is claimed again.
+above. The failed start is recorded on the command and the instance; correct the payload and start a new instance. The
+application's initial-state function and subject resolver run in the executor too: an initial-state function that
+throws (a `WorkflowDefinitionException` with the thrown exception as its cause and without its message) fails the start
+command and the instance the same way and is logged at error level.
 
 #### Payload Constraint Enforcement
 
 When a `BeanValidator` is bound, the engine also checks the coerced payload against its Bean Validation
 constraints: the decision payload (instance and branch tasks) and the start payload. The check runs after
 coercion and before the task is completed or the instance initialised, in the executor's segment: a decision
-payload violation settles the recorded completion `REJECTED` (see Recorded Task Completions). Either way the
+payload violation settles the recorded completion `REJECTED` (see Recorded Task Completions), and a start payload violation fails the start command. Either way the
 finding carries one detail per violation:
 
 - **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`

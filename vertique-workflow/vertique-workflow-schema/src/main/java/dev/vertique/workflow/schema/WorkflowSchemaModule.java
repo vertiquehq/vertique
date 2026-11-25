@@ -34,8 +34,8 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
  * come from {@code DeclaredSignalNames} in the core module.
  *
  * <p>Registration validators run synchronously on the registering thread. The lifecycle builds the plan for
- * {@code publish} and {@code activate} through {@code executeBlocking} on the current Vert.x context, so a caller
- * already on a Vert.x context need not leave it.
+ * {@code publish} and {@code reinstate} (and the definition service's {@code load}) through
+ * {@code executeBlocking} on the current Vert.x context, so a caller already on a Vert.x context need not leave it.
  */
 @Module
 public abstract class WorkflowSchemaModule {

@@ -183,7 +183,7 @@ linear-safe, or review them before they enter a payload type.
 
 ### Threading and class loading
 
-- Validators run synchronously on the registering thread. The lifecycle builds the plan for `publish` and `activate` through `executeBlocking` on the current Vert.x context, so a caller already on a Vert.x context need not leave it; the validators still block the thread they run on, so keep registration off a thread that must not block.
+- Validators run synchronously on the registering thread. The lifecycle builds the plan for `publish` and `reinstate` (and the definition service's `load`) through `executeBlocking` on the current Vert.x context, so a caller already on a Vert.x context need not leave it; the validators still block the thread they run on, so keep registration off a thread that must not block.
 - This module loads no class. It describes the classes the type-name index holds, so a split class-loader
   layout needs nothing from it.
 - **Behaviour change.** An earlier version loaded a payload type name the index did not know as a binary class
@@ -441,7 +441,7 @@ profile override; the original exception is chained as the cause. The start payl
 - **Declaring a scalar or array payload type.** `String`, `int`, `List<X>` and single-value records
   are rejected at registration. Wrap the value in a record.
 - **Registering a definition on a thread that must not block.** Schema generation and pattern compilation block the
-  registering thread. `publish` and `activate` run their plan build through `executeBlocking` on the current Vert.x
+  registering thread. `publish` and `reinstate` (and the definition service's `load`) run their plan build through `executeBlocking` on the current Vert.x
   context, so a caller on a Vert.x context does not need to leave it.
 - **Expecting a pattern limit on the engine path.** A `@Pattern` constraint checked by the engine's
   bean-validation path runs on strings of any length; only keyed validation is bounded. Do not rely
