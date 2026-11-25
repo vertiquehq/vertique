@@ -86,7 +86,7 @@ public class DigestFilter implements RequestInterceptor {
 
         return Future.succeededFuture(Response.fromResponse(response)
                 .header("Digest", "sha-256=" + digest)
-                .header("Content-Type", "application/json")
+                .type("application/json")
                 .entity(Buffer.buffer(bytes))
                 .build());
     }

@@ -21,7 +21,9 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -549,12 +551,22 @@ class ResponsePipeline {
     private Future<Void> applyToWire(RoutingContext ctx, Response response) {
         HttpServerResponse httpResponse = ctx.response().setStatusCode(response.getStatus());
 
-        // Copy JAX-RS response headers to the HTTP response
+        // Copy JAX-RS response headers to the HTTP response. The first value of a header name replaces
+        // whatever an earlier handler wrote; every further value of the same name (whatever its
+        // letter case) is added, so a repeated header such as Set-Cookie or WWW-Authenticate keeps
+        // all of its values.
         var headers = response.getStringHeaders();
         if (headers != null) {
+            Set<String> written = new HashSet<>();
             for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+                String name = entry.getKey();
+                String key = name.toLowerCase(Locale.ROOT);
                 for (String value : entry.getValue()) {
-                    httpResponse.putHeader(entry.getKey(), value);
+                    if (written.add(key)) {
+                        httpResponse.putHeader(name, value);
+                    } else {
+                        httpResponse.headers().add(name, value);
+                    }
                 }
             }
         }

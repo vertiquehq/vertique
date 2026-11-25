@@ -395,12 +395,14 @@ public abstract class RestModule {
                         return original;
                     }
                     // The carried headers (Location, WWW-Authenticate, Retry-After, Allow, ...) stay on the
-                    // problem response; those describing the carried body or its media type do not.
+                    // problem response; those describing the carried body or its media type do not, except
+                    // ETag on a 304 and Content-Range on a 416, which describe the resource.
                     return ErrorPipeline.rebuildWithHeaders(
                             original,
                             Response.status(original.getStatus())
                                     .entity(ProblemDetail.of(original.getStatus(), ex.getMessage()))
                                     .type("application/problem+json"),
+                            original.getStatus(),
                             true,
                             true);
                 })

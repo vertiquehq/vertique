@@ -244,6 +244,15 @@ as a `jakarta.ws.rs.core.Response` and then sent through one pipeline: `transfor
 interceptors → status and headers onto the wire → `ResponseSerializer` for the body →
 `afterResponse` observers → wire-completion observation.
 
+Every value of a repeated header is sent — two `Set-Cookie` headers, two `WWW-Authenticate`
+challenges — for every header name, not only the ones HTTP allows to repeat. The first value replaces
+what an earlier handler wrote under that name and the rest are added after it, whatever the letter
+case of the keys the `Response` holds them under. That includes a header such as `Content-Type` that
+a `transformResponse` interceptor appended a second time: calling `.header("Content-Type", ...)` on
+`Response.fromResponse(response)` adds to the value the response already has, as Jakarta REST
+specifies, and the client now receives both lines. To change a value, replace it: use `type(...)`
+for `Content-Type`, or remove the old value from the headers before adding the new one.
+
 Two consequences matter to application code. `afterResponse` fires at **handoff**, while a streamed
 body may still be in flight, because observers need the routing context and tracing span still
 active. And status plus headers are already on the wire before a `ResponseSerializer` runs — a
@@ -663,7 +672,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 
 | Exception | Status | Body |
 |-----------|--------|------|
-| `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | the JAX-RS `Response` as-is — entity passthrough when present, else a problem detail that keeps the carried response's headers (`Location`, `WWW-Authenticate`, `Retry-After`, `Allow` and the rest), except those that describe the carried body (`Content-Length`, `Content-Encoding`, `ETag` and the like) and its media type (`Content-Type`, `Content-Language`) |
+| `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | the JAX-RS `Response` as-is — entity passthrough when present, else a problem detail that keeps the carried response's headers (`Location`, `WWW-Authenticate`, `Retry-After`, `Allow` and the rest), except those that describe the carried body (`Content-Length`, `Content-Encoding`, `ETag` and the like) and its media type (`Content-Type`, `Content-Language`); `ETag` on a carried `304` and `Content-Range` on a carried `416` are kept, because they describe the resource, not the body |
 | `RestValidationException` (rest-core) | 400 | `ValidationProblemDetail` with an `errors` array |
 | any `ValidationException` implementing `ViolationCarrier` (core.validation), including `BeanValidationException` | 400 | `ValidationProblemDetail`; violations become `ValidationErrorDetail` with `location` `null` |
 | `ValidationException` (core.exception) that is not a carrier | 400 | `ProblemDetail` |
@@ -855,7 +864,10 @@ the client never receives. Every other header survives, including `Content-Type`
 `Content-Language`, and response-level headers such as `WWW-Authenticate`, `Retry-After` and
 `Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. The one
 exception is a non-`ProblemDetail` entity replaced by a fresh problem document, which also loses
-`Content-Type` and `Content-Language`. Set a
+`Content-Type` and `Content-Language`. Two of the dropped headers name the resource, not the body, on
+one status each, and stay there: `ETag` on a `304` and `Content-Range` (`bytes */length`) on a `416`.
+That holds only when the status is the one the response carried; a status Vert.x overrode drops them.
+Set a
 representation header on an error response only if the body is one the framework will not touch
 (a response that is not a problem document, or a `ProblemDetail` that already carries its own
 `instance` and no synthesized `detail`, on a status Vert.x did not override).

@@ -319,7 +319,7 @@ public class ErrorPipeline {
         ProblemDetail stamped =
                 pd.toBuilder().instance("urn:uuid:" + UUID.randomUUID()).build();
         Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(stamped);
-        return rebuildWithHeaders(response, rb, true);
+        return rebuildWithHeaders(response, rb, response.getStatus(), true);
     }
 
     private static String occurrenceOf(Response response) {
@@ -421,7 +421,7 @@ public class ErrorPipeline {
             // instance carries over; a mapper set it for this occurrence and it is status-independent.
             Response.ResponseBuilder rb =
                     Response.status(vertxStatus).entity(ProblemDetail.of(vertxStatus, null, pd.instance()));
-            return rebuildWithHeaders(response, rb, true, false);
+            return rebuildWithHeaders(response, rb, vertxStatus, true, false);
         }
         // Fail closed: a non-ProblemDetail entity (or a missing one) describes the superseded status —
         // including via its Content-Type. Replace it with a fresh problem document for the winning
@@ -429,7 +429,7 @@ public class ErrorPipeline {
         Response.ResponseBuilder rb = Response.status(vertxStatus)
                 .entity(ProblemDetail.of(vertxStatus, null))
                 .type("application/problem+json");
-        return rebuildWithHeaders(response, rb, true, true);
+        return rebuildWithHeaders(response, rb, vertxStatus, true, true);
     }
 
     /**
@@ -465,7 +465,7 @@ public class ErrorPipeline {
         // (or any extension members) that rode along with a synthesized detail cannot survive either.
         Response.ResponseBuilder rb = Response.status(response.getStatus())
                 .entity(ProblemDetail.of(response.getStatus(), null, pd.instance()));
-        return rebuildWithHeaders(response, rb, true);
+        return rebuildWithHeaders(response, rb, response.getStatus(), true);
     }
 
     /**
@@ -492,16 +492,25 @@ public class ErrorPipeline {
      *
      * @param source            the original response whose headers should be preserved
      * @param builder           the response builder (with status and entity already set)
+     * @param status            the status the builder carries; decides which entity-describing headers
+     *                          are kept, see {@link #keptOnStatus}; a header the superseded
+     *                          response carried under another status is never kept
      * @param entityReplaced    whether the builder carries a different entity than {@code source} did
      * @param mediaTypeReplaced whether the builder's media type replaces the source's (fail-closed
      *                          non-{@code ProblemDetail} override)
      * @return the built response with the source's headers
      */
     static Response rebuildWithHeaders(
-            Response source, Response.ResponseBuilder builder, boolean entityReplaced, boolean mediaTypeReplaced) {
+            Response source,
+            Response.ResponseBuilder builder,
+            int status,
+            boolean entityReplaced,
+            boolean mediaTypeReplaced) {
         source.getStringHeaders().forEach((name, values) -> {
             String lower = name.toLowerCase(Locale.ROOT);
-            if (entityReplaced && ENTITY_DESCRIBING_HEADERS.contains(lower)) {
+            if (entityReplaced
+                    && ENTITY_DESCRIBING_HEADERS.contains(lower)
+                    && !keptOnStatus(lower, status, source.getStatus())) {
                 return;
             }
             if (mediaTypeReplaced && MEDIA_TYPE_HEADERS.contains(lower)) {
@@ -515,16 +524,38 @@ public class ErrorPipeline {
     }
 
     /**
+     * Returns whether an entity-describing header names the resource rather than the body on this
+     * status, and so stays on the rebuilt response: {@code ETag} on a {@code 304 Not Modified}
+     * identifies the representation the client already holds, and {@code Content-Range} on a
+     * {@code 416 Range Not Satisfiable} states the length of the
+     * representation. Every other status drops them with the superseded body, and so does a status
+     * override: a header the superseded response carried under another status described that
+     * response, not the winning one.
+     *
+     * @param lowerName    the lower-cased header name
+     * @param status       the status of the rebuilt response
+     * @param sourceStatus the status of the response the header was carried by
+     * @return {@code true} when the header is kept
+     */
+    private static boolean keptOnStatus(String lowerName, int status, int sourceStatus) {
+        if (status != sourceStatus) {
+            return false;
+        }
+        return (status == 304 && "etag".equals(lowerName)) || (status == 416 && "content-range".equals(lowerName));
+    }
+
+    /**
      * Copies the source response's headers into the builder when the entity was replaced but the
      * media type still describes the rebuilt body (equal-status detail sanitization).
      *
      * @param source         the original response whose headers should be preserved
      * @param builder        the response builder (with status and entity already set)
+     * @param status         the status the builder carries
      * @param entityReplaced whether the builder carries a different entity than {@code source} did
      * @return the built response with the source's headers
      */
     private static Response rebuildWithHeaders(
-            Response source, Response.ResponseBuilder builder, boolean entityReplaced) {
-        return rebuildWithHeaders(source, builder, entityReplaced, false);
+            Response source, Response.ResponseBuilder builder, int status, boolean entityReplaced) {
+        return rebuildWithHeaders(source, builder, status, entityReplaced, false);
     }
 }
