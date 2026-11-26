@@ -267,6 +267,7 @@ run on every stop and failure path.
 | Providers found | Outcome |
 |---|---|
 | Zero | `IllegalStateException` naming the SPI resource and the discovery classloader |
+| Zero, but `META-INF/services/dev.vertique.core.VertiqueComponentFactory` is on the classpath | `IllegalStateException` naming that old resource with its URL and telling you to rename it to `META-INF/services/dev.vertique.application.VertiqueComponentFactory` or regenerate the factory |
 | Exactly one | Normal startup |
 | More than one | `IllegalStateException` listing every discovered fully-qualified name, plus the SPI resource and classloader |
 
@@ -276,13 +277,16 @@ the expected type. `ServiceLoader` erases the component type parameter, so this 
 component is built rather than at discovery.
 
 Every one of these failures reaches the launcher as a deploy failure (exit `15`). The messages carry
-class names and classloader identity only — never resolved config values.
+class names, the stale resource URL and classloader identity only — never resolved config values.
 
 **Common mistakes:**
 
 - Overriding a launcher hook without calling `super` (see the subclassing contract above).
 - Expecting `vertx.close()` to run contributor shutdown hooks — it does not; call
   `runShutdownSequence()`.
+- Keeping a hand-written `META-INF/services/dev.vertique.core.VertiqueComponentFactory` file from an
+  earlier release. The factory now registers under `dev.vertique.application`, so startup fails until
+  you rename the file. A stale old-name file next to a working new-name registration is ignored.
 - Registering two `VertiqueComponentFactory` providers, usually by adding a manual SPI file to an
   application that also uses `@VertiqueApp`. Pick one path.
 - Setting programmatic, non-JSON-representable `VertxOptions` state in a contributor while also

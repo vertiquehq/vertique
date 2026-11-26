@@ -6,6 +6,7 @@ package dev.vertique.launcher;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.application.VertiqueComponentFactory;
 import dev.vertique.application.VertiqueRuntime;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
@@ -20,7 +21,9 @@ import java.util.stream.Collectors;
  * {@code META-INF/services/dev.vertique.application.VertiqueComponentFactory}) and requires
  * <strong>exactly one</strong>:
  * <ul>
- *   <li><strong>zero</strong> discovered → fail-fast: no application factory is registered;</li>
+ *   <li><strong>zero</strong> discovered → fail-fast: no application factory is registered (when the
+ *       classpath still carries the former {@code dev.vertique.core} service file, the failure names
+ *       that file and says to rename it);</li>
  *   <li><strong>more than one</strong> → fail-fast listing the discovered FQNs (the framework cannot
  *       pick between competing application graphs).</li>
  * </ul>
@@ -37,6 +40,12 @@ final class VertiqueComponentFactoryLoader {
 
     /** The {@code META-INF/services} resource name a provider config file must use. */
     static final String SERVICE_RESOURCE = "META-INF/services/" + VertiqueComponentFactory.class.getName();
+
+    /**
+     * The resource name the registration used before the factory moved to {@code dev.vertique.application}.
+     * Built from a literal because the former class no longer exists.
+     */
+    private static final String STALE_SERVICE_RESOURCE = "META-INF/services/dev.vertique.core.VertiqueComponentFactory";
 
     private VertiqueComponentFactoryLoader() {}
 
@@ -71,7 +80,27 @@ final class VertiqueComponentFactoryLoader {
         // start() catches Throwable so it is surfaced as a clean failed start promise.
         ServiceLoader.load(VertiqueComponentFactory.class, classLoader).forEach(discovered::add);
 
+        if (discovered.isEmpty()) {
+            failOnStaleRegistration(classLoader);
+        }
         return selectFactory(discovered, classLoader);
+    }
+
+    /**
+     * Fails startup when no provider was discovered but the classloader still carries a service file
+     * under the name used before the factory moved to {@code dev.vertique.application}.
+     *
+     * @param classLoader the classloader used for discovery
+     * @throws IllegalStateException if the former service file is present
+     */
+    private static void failOnStaleRegistration(ClassLoader classLoader) {
+        URL stale = classLoader.getResource(STALE_SERVICE_RESOURCE);
+        if (stale != null) {
+            throw new IllegalStateException("No application " + VertiqueComponentFactory.class.getSimpleName()
+                    + " found, but the classpath still registers one under the former name "
+                    + STALE_SERVICE_RESOURCE + " (" + stale + "). Rename it to " + SERVICE_RESOURCE
+                    + " or regenerate the factory. Discovery classloader: " + classLoader + ".");
+        }
     }
 
     /**
