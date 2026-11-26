@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.validation.JakartaPathPointers;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.PropertyPath.Index;
 import dev.vertique.core.validation.PropertyPath.Property;

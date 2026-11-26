@@ -733,3 +733,5 @@ implementations, typed clients, authorization, and lifecycle wiring.
 - Dagger and Jakarta Inject — application wiring and extension multibindings.
 
 For an internal dispatch marked for sensitive diagnostics, framework callback-failure logs omit exception messages and causes. Fatal handlers receive a value-free error with the original error class name, and virtual-machine failures still propagate as fatal errors without their original message or cause. Ordinary dispatches keep their existing diagnostics.
+
+`DispatchFailureDiagnostics.REDACT_FATAL` (in `dev.vertique.services.dispatch`) is an internal dispatch-context marker for value-free failure diagnostics.

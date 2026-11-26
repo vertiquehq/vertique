@@ -17,7 +17,6 @@ import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.util.NameTransformer;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.json.JacksonBindings;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;

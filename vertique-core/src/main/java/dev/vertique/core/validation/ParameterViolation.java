@@ -15,10 +15,9 @@ import jakarta.annotation.Nullable;
  * @param parameterIndex zero-based index of the violated parameter in the method signature;
  *                       {@code -1} if the parameter index could not be determined
  * @param detail         the violation detail; its path is the Java path relative to the parameter
- * @param propertyPath   INTERNAL framework seam: the structured path relative to the parameter value,
+ * @param propertyPath   the structured path relative to the parameter value,
  *                       {@link PropertyPath#root()} for a violation of the value itself, or
- *                       {@code null} when the producer supplies none or conversion failed; outside the
- *                       Stable promise like {@link PropertyPath}
+ *                       {@code null} when the producer supplies none or conversion failed
  */
 public record ParameterViolation(
         int parameterIndex,

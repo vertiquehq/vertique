@@ -14,7 +14,6 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchDecodeContext;
 import dev.vertique.core.eventbus.DispatchEnvelope;
-import dev.vertique.core.eventbus.DispatchFailureDiagnostics;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.security.authz.InvocationOrigin;
