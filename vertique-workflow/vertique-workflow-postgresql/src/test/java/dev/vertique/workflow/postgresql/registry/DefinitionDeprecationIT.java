@@ -8,7 +8,7 @@ import static org.assertj.core.api.Assertions.tuple;
 
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationHandle;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;

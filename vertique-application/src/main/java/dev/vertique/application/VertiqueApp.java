@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
 
 /**
  * Marks an application's Dagger {@code @Component} interface so the framework generates its
- * {@link dev.vertique.core.VertiqueComponentFactory} implementation and the matching
+ * {@link VertiqueComponentFactory} implementation and the matching
  * {@code META-INF/services} registration at compile time.
  *
  * <p>Place this annotation <strong>on the Dagger {@code @Component} interface</strong> that

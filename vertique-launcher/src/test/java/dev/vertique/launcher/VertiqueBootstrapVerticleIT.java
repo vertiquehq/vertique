@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.application.VertiqueApplicationComponent;
-import dev.vertique.core.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueComponentFactory;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployer;
 import dev.vertique.deploy.VerticleDeployment;
@@ -43,7 +43,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * undeploy) triggers the handle's reverse-order shutdown without closing {@code Vertx}.
  *
  * <p>The factory is registered in
- * {@code src/test/resources/META-INF/services/dev.vertique.core.VertiqueComponentFactory} and builds
+ * {@code src/test/resources/META-INF/services/dev.vertique.application.VertiqueComponentFactory} and builds
  * {@link TestApplicationComponent} (an empty verticle set + a single CONFIGURE startup step that sets
  * a marker, plus a real {@link dev.vertique.deploy.VerticleDeploymentManager} over an empty
  * deployment set). Determinism: no fixed sleeps; all waits are gated on {@link VertxTestContext}.

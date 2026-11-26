@@ -11,7 +11,7 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationComponent;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;

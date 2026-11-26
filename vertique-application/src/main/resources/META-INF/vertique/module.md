@@ -121,7 +121,7 @@ The `VertiqueComponentFactory` can be registered in two ways:
   in `docs/packaging.md`. The `vertique-codegen-application` processor owns factory-class and
   `META-INF/services` generation.
 - **Manual (explicit)** — write a `VertiqueComponentFactory` implementation and register it in
-  `META-INF/services/dev.vertique.core.VertiqueComponentFactory` by hand. Both paths are
+  `META-INF/services/dev.vertique.application.VertiqueComponentFactory` by hand. Both paths are
   supported simultaneously; only one may be registered per application (exactly-one rule).
 
 See `dev.vertique:vertique-launcher` for the full standalone entry sequence, factory discovery
@@ -130,6 +130,29 @@ rules, and the opt-out system property. For container and local-run packaging, s
 ---
 
 ## Key Classes
+
+### `VertiqueRuntime` and `VertiqueComponentFactory<C>`
+
+```java
+public record VertiqueRuntime(Vertx vertx, JsonObject config) {
+    public static VertiqueRuntime of(Vertx vertx, JsonObject config);
+}
+
+@FunctionalInterface
+public interface VertiqueComponentFactory<C> {
+    C build(VertiqueRuntime runtime);
+}
+
+VertiqueComponentFactory<AppComponent> factory = rt -> DaggerAppComponent.builder()
+        .vertxModule(new VertxModule(rt.vertx(), rt.config()))
+        .build();
+
+AppComponent component = factory.build(VertiqueRuntime.of(vertx, config));
+```
+
+Both record components are required: the compact constructor calls `Objects.requireNonNull` on
+each, so a `null` throws at construction rather than surfacing later as a missing binding. Prefer
+the static `of` factory, which delegates to the canonical constructor.
 
 ### `VertiqueApplicationComponent`
 
@@ -370,7 +393,7 @@ For the validator to run, the application `@Component` must include `CoreLifecyc
 
 ## Dependencies
 
-- **`vertique-core`** — `VertiqueRuntime`, `VertiqueComponentFactory`, `LifecyclePhase`,
+- **`vertique-core`** — `VertxModule`, `LifecyclePhase`,
   `LifecycleOrdered`, `ApplicationStartupStep`, `ApplicationShutdownStep`, `ComposeValidator`
 - **`vertique-deploy`** — `VerticleDeploymentManager` (drives `deployPhase()` and `undeployAll()`)
 

@@ -32,7 +32,8 @@ import org.junit.jupiter.api.Test;
 class VertiqueAppProcessorTest {
 
     private static final String GENERATED_FACTORY_FQN = "com.example.app.TestAppComponentVertiqueComponentFactory";
-    private static final String SERVICE_RESOURCE_PATH = "META-INF/services/dev.vertique.core.VertiqueComponentFactory";
+    private static final String SERVICE_RESOURCE_PATH =
+            "META-INF/services/dev.vertique.application.VertiqueComponentFactory";
 
     /**
      * A minimal Dagger {@code @Module} that satisfies {@code VertiqueApplicationComponent}'s

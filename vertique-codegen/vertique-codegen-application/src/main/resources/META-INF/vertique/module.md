@@ -43,7 +43,7 @@ additive: switching to `@VertiqueApp` requires removing the hand-written factory
 ### Zero-boilerplate standalone entry
 
 The standard standalone entry sequence (described in `dev.vertique:vertique-launcher`) requires one
-`VertiqueComponentFactory` registered in `META-INF/services/dev.vertique.core.VertiqueComponentFactory`.
+`VertiqueComponentFactory` registered in `META-INF/services/dev.vertique.application.VertiqueComponentFactory`.
 Before this module existed, every application wrote:
 
 ```java
@@ -59,7 +59,7 @@ public final class AppComponentVertiqueComponentFactory
 }
 ```
 
-and a corresponding `META-INF/services/dev.vertique.core.VertiqueComponentFactory` file.
+and a corresponding `META-INF/services/dev.vertique.application.VertiqueComponentFactory` file.
 
 With `@VertiqueApp`, the processor generates both artifacts from the `@Component` interface itself:
 
@@ -162,7 +162,7 @@ For a component `AppComponent` in package `com.example`, emits:
    }
    ```
 
-2. **`META-INF/services/dev.vertique.core.VertiqueComponentFactory`** — one line containing
+2. **`META-INF/services/dev.vertique.application.VertiqueComponentFactory`** — one line containing
    `com.example.AppComponentVertiqueComponentFactory`.
 
 On an `IOException` writing either artifact, a compiler error is emitted via `Diagnostics` and
@@ -194,8 +194,8 @@ For a component `com.example.AppComponent`, the processor emits two artifacts:
 ```java
 package com.example;
 
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.VertxModule;
 
 public final class AppComponentVertiqueComponentFactory
@@ -212,7 +212,7 @@ public final class AppComponentVertiqueComponentFactory
 The generated class also carries the `dev.vertique.core.codegen.Generated` class-file marker, which
 keeps it out of coverage reports; it has no `javax.annotation.processing.Generated` annotation.
 
-### Resource: `META-INF/services/dev.vertique.core.VertiqueComponentFactory`
+### Resource: `META-INF/services/dev.vertique.application.VertiqueComponentFactory`
 
 ```
 com.example.AppComponentVertiqueComponentFactory

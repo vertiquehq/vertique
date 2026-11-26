@@ -10,7 +10,7 @@ import groovy.xml.XmlSlurper
         "target/generated-sources/annotations/dev/vertique/it/rest/DaggerRestStarterConsumer.java",
         "target/classes/dev/vertique/it/rest/RestStarterConsumerVertiqueComponentFactory.class",
         "target/classes/dev/vertique/it/rest/DaggerRestStarterConsumer.class",
-        "target/classes/META-INF/services/dev.vertique.core.VertiqueComponentFactory",
+        "target/classes/META-INF/services/dev.vertique.application.VertiqueComponentFactory",
         "target/test-classes/dev/vertique/it/rest/RestStarterConsumerTest.class"
 ].each { String path ->
     assert new File(basedir, path).isFile(): "Missing required fixture output ${path}"

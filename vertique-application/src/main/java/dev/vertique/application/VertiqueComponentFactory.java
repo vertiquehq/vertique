@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core;
+package dev.vertique.application;
 
 /**
  * Application- or bridge-supplied factory that builds a Dagger {@code @Component} from a neutral
@@ -13,8 +13,8 @@ package dev.vertique.core;
  * built component {@code C}.
  *
  * <p>On the standalone path a factory typically constructs the framework's
- * {@link VertxModule} from the runtime — {@code new VertxModule(rt.vertx(), rt.config())} (the
- * config flows into the {@link VertxConfig}-qualified binding) — alongside the application's own
+ * {@link dev.vertique.core.VertxModule} from the runtime — {@code new VertxModule(rt.vertx(), rt.config())} (the
+ * config flows into the {@link dev.vertique.core.VertxConfig}-qualified binding) — alongside the application's own
  * modules, then returns the generated {@code DaggerXxx} component. An embedding host (Spring,
  * Quarkus) supplies a factory that additionally wires <em>typed</em> Dagger adapter modules
  * {@code @Provides}-ing host beans — there is no host-bean service locator; a missing adapter is a

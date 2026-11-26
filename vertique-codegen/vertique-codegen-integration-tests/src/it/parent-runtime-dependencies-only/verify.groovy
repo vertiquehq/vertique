@@ -16,7 +16,7 @@ String stagedVersion = vertiqueVersion.toString()
         "target/classes/dev/vertique/it/CodegenApp_get_0_ExecutionPlan.class",
         "target/classes/dev/vertique/it/GeneratedJaxRsResourcesModule.class",
         "target/classes/dev/vertique/it/DaggerAppComponent.class",
-        "target/classes/META-INF/services/dev.vertique.core.VertiqueComponentFactory"
+        "target/classes/META-INF/services/dev.vertique.application.VertiqueComponentFactory"
 ].each { path ->
     assert new File(basedir, path).isFile(): "Missing required generated output ${path}"
 }

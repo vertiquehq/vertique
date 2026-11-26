@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dagger.Module;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.security.AuthModule;

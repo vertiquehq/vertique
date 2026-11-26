@@ -5,9 +5,9 @@
  * Host-neutral application lifecycle runner.
  *
  * <p>This module owns the framework's startup/shutdown choreography, decoupled from any host
- * (standalone launcher, Spring, Quarkus). It depends only on {@code vertique-core} (the neutral
- * {@link dev.vertique.core.VertiqueRuntime} / {@link dev.vertique.core.VertiqueComponentFactory}
- * seam and the {@link dev.vertique.core.lifecycle lifecycle} step contracts) and {@code
+ * (standalone launcher, Spring, Quarkus), and the neutral {@link VertiqueRuntime} /
+ * {@link VertiqueComponentFactory} seam hosts build on. It depends only on {@code vertique-core}
+ * ({@code VertxModule} and the {@link dev.vertique.core.lifecycle lifecycle} step contracts) and {@code
  * vertique-deploy} (the {@link dev.vertique.deploy.VerticleDeploymentManager} verticle-phase
  * helper). It deliberately does <em>not</em> depend on {@code vertique-services}, {@code
  * vertique-workflow}, or {@code vertique-launcher}.
@@ -23,7 +23,7 @@
  *       exposing idempotent {@code shutdown()} plus access to the component and runtime</li>
  *   <li>{@link dev.vertique.application.VertiqueApp} — the source-retained marker placed on an
  *       application's Dagger {@code @Component}; the {@code vertique-codegen-application} annotation
- *       processor generates the {@link dev.vertique.core.VertiqueComponentFactory} implementation
+ *       processor generates the {@link VertiqueComponentFactory} implementation
  *       and its {@code META-INF/services} registration from it</li>
  * </ul>
  */

@@ -22,7 +22,7 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.application.VertiqueApplicationHandle;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;

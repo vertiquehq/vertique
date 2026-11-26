@@ -71,14 +71,13 @@ settle in the background.
 ### The graph-input seam
 
 Every bootstrap path funnels two values into the application's Dagger graph: the `Vertx` instance
-and the root configuration `JsonObject`. `VertiqueRuntime` carries exactly those two, and
-`VertiqueComponentFactory<C>` turns them into the built component. Nothing host-specific crosses
-this seam — no `ApplicationContext`, no service locator. A host that embeds Vertique adapts its own
-beans through ordinary typed Dagger modules, so a missing adapter is a compile-time missing-binding
-error rather than a runtime lookup failure.
-
-`VertxModule` is the Dagger module on the other side of the seam: constructed with the runtime's two
-values, it publishes them plus the event bus and the low-level event-bus client.
+and the root configuration `JsonObject`. `VertxModule` is the Dagger module on the receiving side of
+that seam: constructed with those two values, it publishes them plus the event bus and the low-level
+event-bus client. The carrier (`VertiqueRuntime`) and the factory (`VertiqueComponentFactory<C>`)
+that hands the values to the component live in `dev.vertique:vertique-application`. Nothing
+host-specific crosses the seam — no `ApplicationContext`, no service locator. A host that embeds
+Vertique adapts its own beans through ordinary typed Dagger modules, so a missing adapter is a
+compile-time missing-binding error rather than a runtime lookup failure.
 
 ### Configuration is parsed at the boundary
 
@@ -224,29 +223,6 @@ application `@Component` and supply it through the generated builder. Bindings p
 | `EventBus` | — | `vertx.eventBus()` |
 | `EventBusExceptionMapper` | — | Translates Vert.x `ReplyException`s into typed exceptions |
 | `EventBusClient` | — | Low-level dispatch transport |
-
-### `VertiqueRuntime` and `VertiqueComponentFactory<C>`
-
-```java
-public record VertiqueRuntime(Vertx vertx, JsonObject config) {
-    public static VertiqueRuntime of(Vertx vertx, JsonObject config);
-}
-
-@FunctionalInterface
-public interface VertiqueComponentFactory<C> {
-    C build(VertiqueRuntime runtime);
-}
-
-VertiqueComponentFactory<AppComponent> factory = rt -> DaggerAppComponent.builder()
-        .vertxModule(new VertxModule(rt.vertx(), rt.config()))
-        .build();
-
-AppComponent component = factory.build(VertiqueRuntime.of(vertx, config));
-```
-
-Both record components are required: the compact constructor calls `Objects.requireNonNull` on
-each, so a `null` throws at construction rather than surfacing later as a missing binding. Prefer
-the static `of` factory, which delegates to the canonical constructor.
 
 ### `FailureMapper`
 

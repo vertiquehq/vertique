@@ -5,7 +5,7 @@ package dev.vertique.workflow.postgresql.registry;
 
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationHandle;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
