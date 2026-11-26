@@ -3,6 +3,7 @@
 
 package dev.vertique.launcher;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -56,6 +57,18 @@ class StaleComponentFactoryRegistrationTest {
         write(NEW_FILE, ValidProvider.class.getName());
 
         assertNotNull(discoverWithFixture(), "the provider registered under the new name is selected");
+    }
+
+    @Test
+    @DisplayName("discover: no service file at all keeps the generic no-factory failure")
+    void discover_noFiles_failsWithGenericMessage() {
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> discoverWithFixture());
+
+        String message = ex.getMessage();
+        assertTrue(
+                message.contains("Register exactly one via META-INF/services/" + NEW_FILE),
+                "generic message names the new resource: " + message);
+        assertFalse(message.contains(OLD_FILE), "generic message does not mention the former name: " + message);
     }
 
     private VertiqueComponentFactory<VertiqueApplicationComponent> discoverWithFixture() {
