@@ -93,7 +93,7 @@ class ServiceMethodInvokerTest {
                 null,
                 inboundScope,
                 scopes);
-        var marker = dev.vertique.core.eventbus.DispatchFailureDiagnostics.REDACT_FATAL;
+        var marker = dev.vertique.services.dispatch.DispatchFailureDiagnostics.REDACT_FATAL;
         ((io.vertx.core.internal.ContextInternal) vertx.getOrCreateContext())
                 .duplicate()
                 .runOnContext(ignored -> testContext.verify(() -> {
@@ -109,7 +109,7 @@ class ServiceMethodInvokerTest {
                     assertEquals(sensitive.value(), original.getMessage());
                     var marked = dev.vertique.core.eventbus.DispatchMetadata.of(Map.of(
                             SensitiveInbound.class.getName(), sensitive,
-                            dev.vertique.core.eventbus.DispatchFailureDiagnostics.class.getName(), marker));
+                            dev.vertique.services.dispatch.DispatchFailureDiagnostics.class.getName(), marker));
                     org.mockito.Mockito.doReturn(DispatchEnvelope.of("x", marked))
                             .when(message)
                             .body();

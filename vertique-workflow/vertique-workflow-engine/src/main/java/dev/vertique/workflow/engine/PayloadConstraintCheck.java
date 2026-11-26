@@ -5,8 +5,8 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.core.validation.JakartaPathPointers;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.json.JakartaPathPointers;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;

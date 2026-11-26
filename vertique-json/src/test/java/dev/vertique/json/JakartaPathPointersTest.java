@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.validation;
+package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.PropertyPath.Index;
 import dev.vertique.core.validation.PropertyPath.Opaque;
 import dev.vertique.core.validation.PropertyPath.Property;

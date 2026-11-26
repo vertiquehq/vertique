@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
-package dev.vertique.core.eventbus;
+package dev.vertique.services.dispatch;
 
 import dev.vertique.core.context.ContextValue;
 

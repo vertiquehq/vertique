@@ -1519,6 +1519,7 @@ which case `WorkflowReminderComposeValidator` refuses the plan (aborting startup
 
 ## Dependencies
 
+- **vertique-json** — `JakartaPathPointers`, which turns a payload constraint violation's property path into an RFC 6901 pointer.
 - **cache-core** and **cache-caffeine** — the `CacheObserver` event vocabulary and the size-bounded, single-flight object cache behind the plan cache. Neither needs `cache.enabled`.
 - **zjsonpatch** (`io.github.vishwakarma:zjsonpatch` 0.6.4, Apache-2.0) and its compile dependency **commons-collections4** 4.6.0 (Apache-2.0) — the RFC 6902 diff of the decision log. Versions are managed in the root `pom.xml`; both are listed in `THIRD-PARTY-NOTICES.md`.
 - **workflow-core** — workflow DSL types, `WorkflowRegistry`, `WorkflowOperations` and transactional

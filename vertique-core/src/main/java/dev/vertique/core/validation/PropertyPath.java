@@ -10,16 +10,13 @@ import java.util.List;
  * A Java-side path from a validated value to a violated element: property names, list and array
  * positions, and opaque markers where the position has no stable identity.
  *
- * <p>INTERNAL framework seam for sibling framework modules; outside the Stable maturity promise and
- * may change without a deprecation cycle. It is not an application extension point.
- *
  * <p>The path is mapper-independent and free of Jakarta Validation types. It never stores a map key,
  * a set member or any validated value; a property segment may record the runtime class of the object
  * that hosts it.
  *
- * <p>Immutable; segments are non-null and in order from the validated value. New segment kinds may be
- * added; a consumer treats a segment it does not recognize like {@link Opaque}. The type's name and
- * package are fixed for sibling framework modules; its contents may evolve.
+ * <p>Stable. Immutable; segments are non-null and in order from the validated value. Only the
+ * framework adds segment kinds; a consumer treats a segment it does not recognize like {@link Opaque}
+ * (an opaque position with no stable identity) rather than failing.
  *
  * @param segments the steps from the validated value to the violated element, in order; empty for the
  *                 validated value itself

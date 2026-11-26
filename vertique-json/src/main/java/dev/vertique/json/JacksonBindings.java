@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.json;
+package dev.vertique.json;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
@@ -15,13 +15,11 @@ import java.util.List;
  * Decides, from a mapper's deserialization introspection, whether the properties it reports are what
  * the mapper actually binds a type through.
  *
- * <p>INTERNAL framework seam for sibling framework modules that read a mapper's declaration view (the
- * field-name projection and the JSON pointer resolver); outside the Stable maturity promise and may
- * change without a deprecation cycle. Not an application extension point.
+ * <p>Shared by this package's field-name projection and JSON pointer resolver, so one rule decides both.
  *
  * <p>Uses only public Jackson introspection and holds no state.
  */
-public final class JacksonBindings {
+final class JacksonBindings {
 
     private JacksonBindings() {}
 
@@ -37,7 +35,7 @@ public final class JacksonBindings {
      * @param description the type's deserialization-side bean description from {@code config}
      * @return {@code true} when the reported properties are what the mapper binds
      */
-    public static boolean bindsThroughItsProperties(DeserializationConfig config, BeanDescription description) {
+    static boolean bindsThroughItsProperties(DeserializationConfig config, BeanDescription description) {
         AnnotationIntrospector introspector = config.getAnnotationIntrospector();
         if (introspector.findDeserializer(description.getClassInfo()) != null
                 || introspector.findDeserializationConverter(description.getClassInfo()) != null

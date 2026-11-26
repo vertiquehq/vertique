@@ -175,8 +175,7 @@ A violation of the parameter value itself (a scalar parameter, a class-level con
 empty path. `check(Object)` and `validate(...)` keep Hibernate Validator's property-path string
 unchanged.
 
-`propertyPath` is an internal framework seam for sibling framework modules, outside the Stable
-promise like `PropertyPath` itself. It holds the same path as structured segments: property names,
+`propertyPath` holds the same path as structured segments: property names,
 list and array positions, and opaque markers for map entries and set members. A property segment
 records the runtime class of the object hosting it (a `Dog` in a `List<Animal>`), or `null` when it
 cannot be derived: a root list that is not random-access (for example a `LinkedList`), or a
@@ -669,3 +668,4 @@ The module takes no constructor arguments and reads no configuration section.
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on SPI signatures |
 | `org.slf4j:slf4j-api` | Diagnostic logging in the validator factory |
 | `org.projectlombok:lombok` | Compile-time only |
+| `dev.vertique:vertique-json` | Test scope: the pointer-overload parity test |

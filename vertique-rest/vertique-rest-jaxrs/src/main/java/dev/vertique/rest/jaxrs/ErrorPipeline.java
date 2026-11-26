@@ -4,10 +4,10 @@
 package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.async.Combinators;
-import dev.vertique.core.validation.JakartaPathPointers;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.core.validation.ViolationPathForm;
+import dev.vertique.json.JakartaPathPointers;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.RestExceptionMapper;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
