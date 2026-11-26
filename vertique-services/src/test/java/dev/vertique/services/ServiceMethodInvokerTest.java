@@ -1007,6 +1007,280 @@ class ServiceMethodInvokerTest {
                 })));
     }
 
+    // --- Error and reply-address paths ---
+
+    record DropWarnValue(String v) implements dev.vertique.core.context.ContextValue {}
+
+    private static TestService failingWith(Throwable failure) {
+        return new TestServiceImpl() {
+            @Override
+            public Future<String> failAlways(String input) {
+                return Future.failedFuture(failure);
+            }
+        };
+    }
+
+    private ServiceMethodMeta failMeta(TestService impl, String address) throws Exception {
+        Method method = TestService.class.getMethod("failAlways", String.class);
+        return ServiceMethodMeta.ofDirect(
+                impl,
+                ServiceMethodDescriptor.of(method),
+                address,
+                null,
+                "test",
+                "svc",
+                "failAlways",
+                String.class,
+                String.class,
+                List.of(new ParamMeta("input", ParamSource.PAYLOAD, String.class)),
+                ResilienceAnnotations.NONE,
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static void sendWithReplyAddress(Vertx vertx, String address, String replyAddress) {
+        vertx.eventBus()
+                .send(
+                        address,
+                        DispatchEnvelope.of("x", dev.vertique.core.eventbus.DispatchMetadata.empty(), replyAddress),
+                        BODY_OPTIONS);
+    }
+
+    @Test
+    @DisplayName("a failed dispatch with a reply address sends the failure Result to that address")
+    void shouldSendFailureResultToReplyAddress(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String address = uniqueAddress("fail-reply-address");
+        String replyAddress = uniqueAddress("fail-reply-target");
+        vertx.eventBus()
+                .consumer(
+                        address,
+                        new ServiceMethodInvoker(
+                                failAlwaysMeta(address), emptyExceptionMapper(), List.of(), null, null, vertx, null));
+        vertx.eventBus()
+                .<DispatchEnvelope<Result<?>>>consumer(
+                        replyAddress,
+                        m -> ctx.verify(() -> {
+                            Result<?> result = m.body().payload();
+                            assertTrue(result.isFailure());
+                            assertEquals("boom", result.cause().getMessage());
+                            ctx.completeNow();
+                        }));
+        sendWithReplyAddress(vertx, address, replyAddress);
+    }
+
+    @Test
+    @DisplayName("a recovered failure with a reply address sends a success Result to that address")
+    void shouldSendRecoveredResultToReplyAddress(Vertx vertx, VertxTestContext ctx) throws Exception {
+        ServiceInterceptor recover = new ServiceInterceptor() {
+            @Override
+            public Future<Void> recoverError(ServiceDispatchContext dispatchCtx, Throwable error) {
+                return Future.succeededFuture();
+            }
+        };
+        String address = uniqueAddress("recover-reply-address");
+        String replyAddress = uniqueAddress("recover-reply-target");
+        vertx.eventBus()
+                .consumer(
+                        address,
+                        new ServiceMethodInvoker(
+                                failAlwaysMeta(address),
+                                emptyExceptionMapper(),
+                                List.of(recover),
+                                null,
+                                null,
+                                vertx,
+                                null));
+        vertx.eventBus()
+                .<DispatchEnvelope<Result<?>>>consumer(
+                        replyAddress,
+                        m -> ctx.verify(() -> {
+                            Result<?> result = m.body().payload();
+                            assertTrue(result.isSuccess());
+                            assertNull(result.get());
+                            ctx.completeNow();
+                        }));
+        sendWithReplyAddress(vertx, address, replyAddress);
+    }
+
+    @Test
+    @DisplayName("a virtual-machine error from the handler is reported as a failure and the scope is closed")
+    void shouldReportVirtualMachineErrorAsFailureAndCloseScope(Vertx vertx, VertxTestContext ctx) throws Exception {
+        InternalError vmError = new InternalError("vm-failure");
+        Promise<Result<?>> terminal = Promise.promise();
+        String address = uniqueAddress("vme");
+        vertx.eventBus()
+                .consumer(
+                        address,
+                        new ServiceMethodInvoker(
+                                failMeta(failingWith(vmError), address),
+                                emptyExceptionMapper(),
+                                List.of(captureTerminal(terminal)),
+                                null,
+                                null,
+                                vertx,
+                                null));
+        vertx.eventBus()
+                .<Result<?>>request(address, DispatchEnvelope.of("x"), BODY_OPTIONS)
+                .compose(reply -> terminal.future().map(t -> reply.body()))
+                .onComplete(ctx.succeeding(result -> ctx.verify(() -> {
+                    assertTrue(result.isFailure());
+                    assertSame(vmError, result.cause());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a FatalErrorHandler is notified of a fatal error and its own exception is swallowed")
+    void shouldNotifyFatalHandlerAndSwallowItsFailure(Vertx vertx, VertxTestContext ctx) throws Exception {
+        AssertionError fatal = new AssertionError("fatal-failure");
+        AtomicReference<Throwable> notified = new AtomicReference<>();
+        ServiceMethodInvoker.FatalErrorHandler handler = error -> {
+            notified.set(error);
+            throw new IllegalStateException("handler failed");
+        };
+        String address = uniqueAddress("fatal-handler");
+        vertx.eventBus()
+                .consumer(
+                        address,
+                        new ServiceMethodInvoker(
+                                failMeta(failingWith(fatal), address),
+                                emptyExceptionMapper(),
+                                List.of(),
+                                null,
+                                handler,
+                                vertx,
+                                null));
+        vertx.eventBus()
+                .<Result<?>>request(address, DispatchEnvelope.of("x"), BODY_OPTIONS)
+                .onComplete(ctx.succeeding(reply -> ctx.verify(() -> {
+                    assertSame(fatal, notified.get());
+                    assertTrue(reply.body().isFailure(), "the failure is still replied after the handler threw");
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a reply that cannot be sent is logged and does not break the dispatch")
+    void shouldSwallowReplySendFailure(Vertx vertx, VertxTestContext ctx) throws Exception {
+        Promise<Result<?>> terminal = Promise.promise();
+        ServiceMethodInvoker invoker = new ServiceMethodInvoker(
+                greetMeta(SERVICE_IMPL, uniqueAddress("reply-throws")),
+                emptyExceptionMapper(),
+                List.of(captureTerminal(terminal)),
+                null,
+                null,
+                vertx,
+                null);
+        @SuppressWarnings("unchecked")
+        var message = (io.vertx.core.eventbus.Message<DispatchEnvelope<?>>)
+                org.mockito.Mockito.mock(io.vertx.core.eventbus.Message.class);
+        org.mockito.Mockito.doReturn(DispatchEnvelope.of("World")).when(message).body();
+        org.mockito.Mockito.doThrow(new IllegalStateException("reply refused"))
+                .when(message)
+                .reply(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        ((io.vertx.core.internal.ContextInternal) vertx.getOrCreateContext())
+                .duplicate()
+                .runOnContext(ignored -> invoker.handle(message));
+        terminal.future()
+                .onComplete(ctx.succeeding(result -> ctx.verify(() -> {
+                    assertTrue(result.isSuccess());
+                    org.mockito.Mockito.verify(message)
+                            .reply(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a synchronous failure while starting the dispatch closes the context scope and rethrows")
+    void shouldCloseScopeAndRethrowOnSynchronousFailure(Vertx vertx, VertxTestContext ctx) throws Exception {
+        var inboundScope = new dev.vertique.context.InboundDispatchScope();
+        String key = DropWarnValue.class.getName();
+        // A null annotation element makes building the interceptor dispatch context throw an NPE
+        // synchronously, after the inbound scope has been installed.
+        Method method = TestService.class.getMethod("greet", String.class);
+        ServiceMethodMeta meta = ServiceMethodMeta.ofDirect(
+                SERVICE_IMPL,
+                ServiceMethodDescriptor.of(method),
+                uniqueAddress("sync-failure"),
+                null,
+                "test",
+                "svc",
+                "greet",
+                String.class,
+                String.class,
+                List.of(new ParamMeta("name", ParamSource.PAYLOAD, String.class)),
+                ResilienceAnnotations.NONE,
+                java.util.Arrays.asList((java.lang.annotation.Annotation) null),
+                List.of(),
+                false);
+        ServiceMethodInvoker invoker = new ServiceMethodInvoker(
+                meta, emptyExceptionMapper(), List.of(), null, null, vertx, null, inboundScope, null);
+        @SuppressWarnings("unchecked")
+        var message = (io.vertx.core.eventbus.Message<DispatchEnvelope<?>>)
+                org.mockito.Mockito.mock(io.vertx.core.eventbus.Message.class);
+        org.mockito.Mockito.doReturn(DispatchEnvelope.of(
+                        "World",
+                        dev.vertique.core.eventbus.DispatchMetadata.of(Map.of(key, new DropWarnValue("bound")))))
+                .when(message)
+                .body();
+        ((io.vertx.core.internal.ContextInternal) vertx.getOrCreateContext())
+                .duplicate()
+                .runOnContext(ignored -> ctx.verify(() -> {
+                    org.junit.jupiter.api.Assertions.assertThrows(
+                            NullPointerException.class, () -> invoker.handle(message));
+                    assertNull(inboundScope.currentRawValueByKey(key), "the scope is closed after the failure");
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    @DisplayName("a decoder that returns only warnings drops the entry and does not fail the dispatch")
+    void shouldDropEntryWhenDecoderReturnsOnlyWarnings(Vertx vertx, VertxTestContext ctx) throws Exception {
+        dev.vertique.core.context.ServiceDispatchContextDecoder<DropWarnValue> decoder =
+                new dev.vertique.core.context.ServiceDispatchContextDecoder<>() {
+                    @Override
+                    public Class<DropWarnValue> type() {
+                        return DropWarnValue.class;
+                    }
+
+                    @Override
+                    public dev.vertique.core.context.ContextDecodeResult<DropWarnValue> decode(
+                            Object value, dev.vertique.core.context.ServiceDispatchDecodeContext context) {
+                        return dev.vertique.core.context.ContextDecodeResult.failure(
+                                List.of(new dev.vertique.core.context.ContextDecodeWarning(
+                                        type().getName(), "v", "unsupported-shape")));
+                    }
+                };
+        ServiceDispatchContextRegistry registry =
+                new ServiceDispatchContextRegistry(java.util.Set.of(), java.util.Set.of(decoder));
+        String address = uniqueAddress("decoder-warning");
+        vertx.eventBus()
+                .consumer(
+                        address,
+                        new ServiceMethodInvoker(
+                                greetMeta(SERVICE_IMPL, address),
+                                emptyExceptionMapper(),
+                                List.of(),
+                                null,
+                                null,
+                                vertx,
+                                registry));
+        vertx.eventBus()
+                .<Result<?>>request(
+                        address,
+                        DispatchEnvelope.of(
+                                "World",
+                                dev.vertique.core.eventbus.DispatchMetadata.of(
+                                        Map.of(DropWarnValue.class.getName(), "carrier"))),
+                        BODY_OPTIONS)
+                .onComplete(ctx.succeeding(reply -> ctx.verify(() -> {
+                    assertTrue(reply.body().isSuccess());
+                    assertEquals("Hello World", reply.body().get());
+                    ctx.completeNow();
+                })));
+    }
+
     // --- Helpers ---
 
     private SecurityContext testSecurityContext(String userId) {
