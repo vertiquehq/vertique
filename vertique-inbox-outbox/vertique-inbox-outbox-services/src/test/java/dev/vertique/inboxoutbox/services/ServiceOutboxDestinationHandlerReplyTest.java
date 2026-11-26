@@ -279,62 +279,35 @@ class ServiceOutboxDestinationHandlerReplyTest {
     }
 
     @Test
-    void replyFailuresHideExceptionMessages() {
-        String secret = "SECRET-TOKEN-77";
+    void replyFailuresKeepTheirOriginalMessage() {
+        String detail = "service-failure-detail-77";
         ready();
         var h = handler(Optional.of(consumer));
 
         when(sender.send(any(), any()))
-                .thenReturn(Future.succeededFuture(Result.failure(new IllegalStateException(secret))));
+                .thenReturn(Future.succeededFuture(Result.failure(new IllegalStateException(detail))));
         var serviceFailure = assertInstanceOf(
                 OutboxPublishResult.RetryableFailure.class,
                 h.publish(row(0, true, false)).result());
-        assertFalse(serviceFailure.message().contains(secret));
-        assertEquals("Reply delivery failed for service target: test.target", serviceFailure.message());
-        assertEquals(secret, serviceFailure.cause().getMessage());
+        assertEquals(detail, serviceFailure.message());
+        assertEquals(detail, serviceFailure.cause().getMessage());
 
         when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("reply")));
-        when(consumer.onOutcome(any())).thenReturn(Future.failedFuture(new IllegalStateException(secret)));
+        when(consumer.onOutcome(any())).thenReturn(Future.failedFuture(new IllegalStateException(detail)));
         var recordingFailure = assertInstanceOf(
                 OutboxPublishResult.RetryableFailure.class,
                 h.publish(row(0, true, false)).result());
-        assertFalse(recordingFailure.message().contains(secret));
-        assertEquals(secret, recordingFailure.cause().getMessage());
+        assertEquals(detail, recordingFailure.message());
+        assertEquals(detail, recordingFailure.cause().getMessage());
     }
 
     @Test
-    void ordinaryFailuresKeepTheirOriginalMessage() {
-        String secret = "SECRET-TOKEN-77";
-        ready();
-        when(sender.send(any(), any()))
-                .thenReturn(Future.succeededFuture(Result.failure(new IllegalStateException(secret))));
-        var ordinaryFailure = assertInstanceOf(
-                OutboxPublishResult.RetryableFailure.class,
-                handler(Optional.of(consumer)).publish(row(0, false, false)).result());
-        assertEquals(secret, ordinaryFailure.message());
-    }
-
-    @Test
-    void synchronousResolverAndWaitErrorsAreRedactedForReplyRows() {
-        String secret = "SECRET-SYNC-77";
+    void synchronousErrorsPropagateForReplyRowsAsForOrdinaryRows() {
         var h = handler(Optional.of(consumer));
-        var resolverError = new AssertionError(secret);
+        var resolverError = new AssertionError("resolver-error");
         when(resolver.resolve("test.target")).thenThrow(resolverError);
-        var resolverResult = assertInstanceOf(
-                OutboxPublishResult.RetryableFailure.class,
-                h.publish(row(0, true, false)).result());
-        assertFalse(resolverResult.message().contains(secret));
-        assertSame(resolverError, resolverResult.cause());
+        assertSame(resolverError, assertThrows(AssertionError.class, () -> h.publish(row(0, true, false))));
         assertSame(resolverError, assertThrows(AssertionError.class, () -> h.publish(row(0, false, false))));
-
-        reset(resolver);
-        when(resolver.resolve("test.target")).thenReturn(target);
-        when(consumer.awaits("handle")).thenThrow(new AssertionError(secret));
-        var waitResult = assertInstanceOf(
-                OutboxPublishResult.RetryableFailure.class,
-                h.publish(row(0, true, false)).result());
-        assertFalse(waitResult.message().contains(secret));
-        assertEquals(secret, waitResult.cause().getMessage());
     }
 
     @Test

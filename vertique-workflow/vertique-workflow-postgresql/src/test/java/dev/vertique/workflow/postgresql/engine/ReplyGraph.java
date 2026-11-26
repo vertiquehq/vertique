@@ -107,15 +107,10 @@ final class ReplyGraph implements AutoCloseable {
         public Future<Void> later(Start request, TransactionalMessageContext context) {
             handles.computeIfAbsent(request.reference(), ignored -> new java.util.concurrent.CopyOnWriteArrayList<>())
                     .add(context.replyHandle());
-            if (request.reference().equals("callback-reply")
-                    || request.reference().equals("callback-ordinary"))
-                return Future.failedFuture(new IllegalStateException("SECRET-CALLBACK " + context.replyHandle()));
-            if (request.reference().equals("fatal-redaction"))
-                return Future.failedFuture(new AssertionError("SECRET-FATAL " + context.replyHandle()));
+            if (request.reference().equals("callback-ordinary"))
+                return Future.failedFuture(new IllegalStateException("SECRET-CALLBACK"));
             if (request.reference().equals("fatal-ordinary"))
                 return Future.failedFuture(new AssertionError("SECRET-ORDINARY"));
-            if (request.reference().equals("redaction"))
-                return Future.failedFuture(new PermanentProblem("SECRET-77 " + context.replyHandle()));
             if (request.reference().equals("early"))
                 return replies.get()
                         .complete(context.replyHandle(), new Reserved("early"))
@@ -131,13 +126,7 @@ final class ReplyGraph implements AutoCloseable {
     }
 
     static final class PermanentProblem extends RuntimeException
-            implements dev.vertique.inboxoutbox.OutboxPermanentFailure {
-        PermanentProblem() {}
-
-        PermanentProblem(String message) {
-            super(message);
-        }
-    }
+            implements dev.vertique.inboxoutbox.OutboxPermanentFailure {}
 
     static final class Definition implements WorkflowDefinition<State, Contract> {
         @Override
@@ -558,11 +547,7 @@ final class ReplyGraph implements AutoCloseable {
                         java.time.Instant end) {
                     if (!terminalCase(ctx)) return;
                     probe.terminalContext.set(Vertx.currentContext());
-                    var message = (TransactionalMessageContext) ctx.envelope()
-                            .metadata()
-                            .dispatchContext()
-                            .get(TransactionalMessageContext.class.getName());
-                    throw new AssertionError("SECRET-TERMINAL " + (message == null ? null : message.replyHandle()));
+                    throw new AssertionError("SECRET-TERMINAL");
                 }
             };
         }

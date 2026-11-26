@@ -24,7 +24,6 @@ import dev.vertique.inboxoutbox.TransactionalMessageContext;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceTargetResolver;
-import dev.vertique.services.dispatch.DispatchFailureDiagnostics;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
@@ -162,31 +161,6 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
      */
     @Override
     public Future<OutboxPublishResult> publish(OutboxEnvelope outboxEnvelope) {
-        boolean reply = outboxEnvelope.metadata().delivery().reply().isPresent();
-        if (!reply) return publishEntry(outboxEnvelope);
-        String message = "Reply delivery failed for service target: " + outboxEnvelope.destination();
-        try {
-            return publishEntry(outboxEnvelope)
-                    .map(result -> redactReplyFailure(result, message))
-                    .recover(cause -> Future.succeededFuture(OutboxPublishResult.retryable(message, cause)));
-        } catch (Exception | LinkageError | AssertionError | StackOverflowError cause) {
-            return Future.succeededFuture(OutboxPublishResult.retryable(message, cause));
-        }
-    }
-
-    private static OutboxPublishResult redactReplyFailure(OutboxPublishResult result, String message) {
-        return switch (result) {
-            case OutboxPublishResult.RetryableFailure failure ->
-                OutboxPublishResult.retryable(message, failure.cause());
-            case OutboxPublishResult.PermanentFailure failure ->
-                OutboxPublishResult.permanent(message, failure.cause());
-            case OutboxPublishResult.Unresolvable ignored ->
-                OutboxPublishResult.unresolvable("Reply delivery unavailable");
-            case OutboxPublishResult.Success success -> success;
-        };
-    }
-
-    private Future<OutboxPublishResult> publishEntry(OutboxEnvelope outboxEnvelope) {
         ResolvedServiceTarget target;
         try {
             target = resolver.resolve(outboxEnvelope.destination());
@@ -302,8 +276,6 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
         Map<String, Object> callerOverrides = new java.util.HashMap<>(decodedDurable.size() + 2);
         callerOverrides.putAll(decodedDurable);
         callerOverrides.put(TransactionalMessageContext.class.getName(), txCtx);
-        if (handle != null)
-            callerOverrides.put(DispatchFailureDiagnostics.class.getName(), DispatchFailureDiagnostics.REDACT_FATAL);
         // Provenance proving this is deferred (outbox relay) execution so the receive-side identity
         // reconstruction initializer may mint a bounded SYSTEM context. Keyed by FQCN like
         // the TransactionalMessageContext entry; reinstated before InboundContextInitializers run.
