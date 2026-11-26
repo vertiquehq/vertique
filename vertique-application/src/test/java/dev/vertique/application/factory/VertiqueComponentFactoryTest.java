@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.factory;
+package dev.vertique.application.factory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.VertxModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  * host-native bean ({@link FakeDataSource}) reaches a framework consumer by <em>typed</em> Dagger
  * injection — no host-bean locator.
  *
- * <p>This test lives in {@code vertique-core} test scope, which structurally has no
+ * <p>This test lives in {@code vertique-application} test scope, which structurally has no
  * {@code vertique-launcher} on its classpath, proving the seam is launcher-free.
  *
  * <p>A Mockito mock {@link Vertx} is sufficient: the reached bindings ({@code consumer}, {@code

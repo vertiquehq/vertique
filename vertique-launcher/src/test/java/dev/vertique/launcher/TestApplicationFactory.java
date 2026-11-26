@@ -4,8 +4,8 @@
 package dev.vertique.launcher;
 
 import dev.vertique.application.VertiqueApplicationComponent;
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.deploy.VerticleDeployer;
 import dev.vertique.deploy.VerticleDeploymentManager;
 import io.vertx.core.json.JsonObject;
@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Test {@link VertiqueComponentFactory} registered via the test
- * {@code META-INF/services/dev.vertique.core.VertiqueComponentFactory} entry so that
+ * {@code META-INF/services/dev.vertique.application.VertiqueComponentFactory} entry so that
  * {@link VertiqueComponentFactoryLoader#discover()} resolves it during {@link VertiqueBootstrapVerticleIT}.
  *
  * <p>It builds a minimal {@link TestApplicationComponent} with one CONFIGURE startup step, one

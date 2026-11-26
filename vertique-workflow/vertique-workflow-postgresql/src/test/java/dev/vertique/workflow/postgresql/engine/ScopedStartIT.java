@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationHandle;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.exception.UniqueConstraintViolationException;
 import dev.vertique.db.test.DatabaseExtension;

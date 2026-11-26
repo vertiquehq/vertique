@@ -3,8 +3,8 @@
 
 package dev.vertique.application.test;
 
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.VertxModule;
 
 /**

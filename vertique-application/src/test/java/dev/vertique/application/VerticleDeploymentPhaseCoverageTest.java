@@ -12,8 +12,6 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.DeployerModule;

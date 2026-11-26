@@ -48,7 +48,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Annotation + contract source for test fixtures: @VertiqueApp, VertiqueApplicationComponent.
-             Brings in vertique-core (VertiqueComponentFactory / VertiqueRuntime / VertxModule) and
+             Brings in vertique-application (VertiqueComponentFactory / VertiqueRuntime), vertique-core (VertxModule) and
              vertique-deploy transitively. Test scope only — the processor references these types by
              FQN string (ClassName / @SupportedAnnotationTypes), so they stay off the processor jar's
              runtime classpath. -->

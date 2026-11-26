@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core;
+package dev.vertique.application;
 
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -20,8 +20,8 @@ import java.util.Objects;
  * inputs were produced.
  *
  * <p>On the standalone path, the supplied values flow straight into a
- * {@link VertxModule} — {@code new VertxModule(rt.vertx(), rt.config())} — which then
- * {@code @Provides} {@link Vertx} and the {@link VertxConfig}-qualified {@link JsonObject} to the
+ * {@link dev.vertique.core.VertxModule} — {@code new VertxModule(rt.vertx(), rt.config())} — which then
+ * {@code @Provides} {@link Vertx} and the {@link dev.vertique.core.VertxConfig}-qualified {@link JsonObject} to the
  * rest of the graph. An embedding host bridge constructs the same {@code VertxModule} from a
  * {@code VertiqueRuntime} it assembles from host-native equivalents, then adds its own typed Dagger
  * adapter modules for host beans (no locator).

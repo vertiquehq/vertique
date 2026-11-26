@@ -175,7 +175,7 @@ interface AppComponent extends VertiqueApplicationComponent {}  // (3) exposes l
 Three things are required:
 
 1. **`@VertiqueApp`** — tells `vertique-codegen-application` to generate
-   `AppComponentVertiqueComponentFactory` and write `META-INF/services/dev.vertique.core.VertiqueComponentFactory`.
+   `AppComponentVertiqueComponentFactory` and write `META-INF/services/dev.vertique.application.VertiqueComponentFactory`.
    No hand-written factory or SPI file is needed.
 2. **`CoreLifecycleStepsModule`** — contributes the `VALIDATE`-phase `ComposeValidationStep` and the `AFTER_START` `StartupReadinessCheck` (the `startup` readiness check).
    Omitting this module means compose-validators do not run and readiness does not wait for startup. (The `CONFIGURE`-phase step that
@@ -352,7 +352,7 @@ To migrate an existing application from `maven-shade` + hand-written `MainVertic
    if you had one). The `VertiqueBootstrapVerticle` in `vertique-launcher` takes its place
    automatically.
 
-4. **Delete the `META-INF/services/dev.vertique.core.VertiqueComponentFactory`** file if you wrote
+4. **Delete the `META-INF/services/dev.vertique.application.VertiqueComponentFactory`** file if you wrote
    one manually — `vertique-codegen-application` generates it now.
 
 5. **Replace `maven-shade-plugin` with `jib-maven-plugin`** using the configuration shown above.

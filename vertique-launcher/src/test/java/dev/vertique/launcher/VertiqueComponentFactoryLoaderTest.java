@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.application.VertiqueApplicationComponent;
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.deploy.VerticleDeploymentManager;
@@ -51,7 +51,7 @@ class VertiqueComponentFactoryLoaderTest {
                 message.contains(VertiqueComponentFactoryLoader.SERVICE_RESOURCE),
                 "message names the META-INF/services resource: " + message);
         assertTrue(
-                message.contains("META-INF/services/dev.vertique.core.VertiqueComponentFactory"),
+                message.contains("META-INF/services/dev.vertique.application.VertiqueComponentFactory"),
                 "message names the concrete SPI resource path: " + message);
     }
 

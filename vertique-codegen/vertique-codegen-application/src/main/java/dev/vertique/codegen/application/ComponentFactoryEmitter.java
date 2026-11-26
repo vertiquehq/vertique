@@ -22,7 +22,7 @@ import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 
 /**
- * JavaPoet emitter that generates an application's {@link dev.vertique.core.VertiqueComponentFactory}
+ * JavaPoet emitter that generates an application's {@link dev.vertique.application.VertiqueComponentFactory}
  * implementation from a {@code @VertiqueApp}-annotated Dagger {@code @Component}, plus the matching
  * {@code META-INF/services} registration.
  *
@@ -43,22 +43,23 @@ import javax.tools.StandardLocation;
  * at the final javac compile with no reflection.
  *
  * <p>The emitter also writes the resource
- * {@code META-INF/services/dev.vertique.core.VertiqueComponentFactory} containing the generated
+ * {@code META-INF/services/dev.vertique.application.VertiqueComponentFactory} containing the generated
  * factory's fully-qualified name on a single line — the exact file the framework's runtime
  * {@code ServiceLoader} path reads.
  */
 public final class ComponentFactoryEmitter {
 
     private static final ClassName VERTIQUE_COMPONENT_FACTORY =
-            ClassName.get("dev.vertique.core", "VertiqueComponentFactory");
-    private static final ClassName VERTIQUE_RUNTIME = ClassName.get("dev.vertique.core", "VertiqueRuntime");
+            ClassName.get("dev.vertique.application", "VertiqueComponentFactory");
+    private static final ClassName VERTIQUE_RUNTIME = ClassName.get("dev.vertique.application", "VertiqueRuntime");
     private static final ClassName VERTX_MODULE = ClassName.get("dev.vertique.core", "VertxModule");
 
     /** Suffix appended to the component's simple name to form the generated factory's simple name. */
     private static final String FACTORY_SUFFIX = "VertiqueComponentFactory";
 
     /** The SPI resource path the generated factory FQN is registered under. */
-    private static final String SERVICE_RESOURCE_PATH = "META-INF/services/dev.vertique.core.VertiqueComponentFactory";
+    private static final String SERVICE_RESOURCE_PATH =
+            "META-INF/services/dev.vertique.application.VertiqueComponentFactory";
 
     private final CodegenContext ctx;
 
@@ -122,7 +123,7 @@ public final class ComponentFactoryEmitter {
     // --- Internal helpers ---
 
     /**
-     * Writes the {@code META-INF/services/dev.vertique.core.VertiqueComponentFactory} resource
+     * Writes the {@code META-INF/services/dev.vertique.application.VertiqueComponentFactory} resource
      * containing the generated factory's FQN on a single line.
      *
      * @param component   the originating component element (for error attribution); must not be

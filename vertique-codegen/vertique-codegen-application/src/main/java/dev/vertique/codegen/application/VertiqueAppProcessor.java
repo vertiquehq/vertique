@@ -21,7 +21,7 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.ElementFilter;
 
 /**
- * Annotation processor that generates an application's {@link dev.vertique.core.VertiqueComponentFactory}
+ * Annotation processor that generates an application's {@link dev.vertique.application.VertiqueComponentFactory}
  * implementation — plus its {@code META-INF/services} registration — from a single
  * {@link dev.vertique.application.VertiqueApp}-annotated Dagger {@code @Component}.
  *
@@ -49,7 +49,7 @@ import javax.lang.model.util.ElementFilter;
  *       {@code Dagger<Component>.builder().vertxModule(...).build()}, which is only valid with the
  *       default Dagger builder; a custom factory or builder would make the generated code fail to
  *       compile with a confusing error. Users who need a custom factory/builder must hand-write a
- *       {@link dev.vertique.core.VertiqueComponentFactory} and register it via
+ *       {@link dev.vertique.application.VertiqueComponentFactory} and register it via
  *       {@code META-INF/services} instead of {@code @VertiqueApp}; and</li>
  *   <li>at most one {@code @VertiqueApp} may appear per <em>compilation</em> — the distinct count is
  *       accumulated across processing rounds, so two {@code @VertiqueApp} types reject whether they

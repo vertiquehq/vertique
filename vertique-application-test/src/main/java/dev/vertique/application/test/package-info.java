@@ -14,9 +14,10 @@
  * {@link dev.vertique.application.VertiqueApplicationHandle handle}, its built component, its
  * configuration, the {@code Vertx} instance, and (when an HTTP server started) its bound port.
  *
- * <p>This module depends only on {@code vertique-application} (the host-neutral lifecycle runner),
- * {@code vertique-core} (the neutral {@link dev.vertique.core.VertiqueRuntime} /
- * {@link dev.vertique.core.VertiqueComponentFactory} seam), {@code vertx-core}, and the JUnit 5 API.
+ * <p>This module depends only on {@code vertique-application} (the host-neutral lifecycle runner and
+ * the neutral {@link dev.vertique.application.VertiqueRuntime} /
+ * {@link dev.vertique.application.VertiqueComponentFactory} seam), {@code vertique-core},
+ * {@code vertx-core}, and the JUnit 5 API.
  * It carries no host (Spring, Quarkus) coupling and no production runtime concern.
  */
 package dev.vertique.application.test;

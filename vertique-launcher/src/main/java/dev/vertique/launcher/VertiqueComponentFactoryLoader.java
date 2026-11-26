@@ -4,8 +4,8 @@
 package dev.vertique.launcher;
 
 import dev.vertique.application.VertiqueApplicationComponent;
-import dev.vertique.core.VertiqueComponentFactory;
-import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.application.VertiqueComponentFactory;
+import dev.vertique.application.VertiqueRuntime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  * <p>The standalone entry ({@link VertiqueBootstrapVerticle}) has no compile-time knowledge of which
  * Dagger component a given application assembles. It discovers the application's
  * {@link VertiqueComponentFactory} from the classpath via {@link ServiceLoader} (registered in
- * {@code META-INF/services/dev.vertique.core.VertiqueComponentFactory}) and requires
+ * {@code META-INF/services/dev.vertique.application.VertiqueComponentFactory}) and requires
  * <strong>exactly one</strong>:
  * <ul>
  *   <li><strong>zero</strong> discovered → fail-fast: no application factory is registered;</li>

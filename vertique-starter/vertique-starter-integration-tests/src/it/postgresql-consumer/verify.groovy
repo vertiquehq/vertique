@@ -19,7 +19,7 @@ import groovy.xml.XmlSlurper
 }
 
 // No application factory service file may exist: this consumer composes no application.
-assert !new File(basedir, "target/classes/META-INF/services/dev.vertique.core.VertiqueComponentFactory").exists():
+assert !new File(basedir, "target/classes/META-INF/services/dev.vertique.application.VertiqueComponentFactory").exists():
         "PostgreSQL consumer must not register an application component factory"
 
 // --- Test proof: the consumer's four contract tests ran and passed ---

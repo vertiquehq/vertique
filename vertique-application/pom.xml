@@ -69,5 +69,21 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>logback-classic</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- In-memory compilation harness for the compile-time-safety negative test
+             (VertiqueComponentFactory): proves a missing Dagger host-bean adapter module is a
+             build-time missing-binding error, not a runtime failure. -->
+        <dependency>
+            <groupId>com.google.testing.compile</groupId>
+            <artifactId>compile-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Dagger annotation processor on test scope only — runs the real ComponentProcessor
+             over the in-memory negative-test sources via compile-testing. -->
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger-compiler</artifactId>
+            <version>${dagger.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

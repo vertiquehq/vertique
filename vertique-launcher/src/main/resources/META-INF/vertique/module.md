@@ -84,7 +84,7 @@ delegates to `VertiqueApplicationBootstrap.start(runtime, factory)` in
 `dev.vertique:vertique-application`.
 
 **Factory registration.** The SPI resource is
-`META-INF/services/dev.vertique.core.VertiqueComponentFactory`, and **exactly one** provider must be
+`META-INF/services/dev.vertique.application.VertiqueComponentFactory`, and **exactly one** provider must be
 registered. Two supported ways to produce that entry:
 
 - **`@VertiqueApp` (zero boilerplate)** — inherit `vertique-app-parent`, declare the application
@@ -298,10 +298,10 @@ class names and classloader identity only — never resolved config values.
 - **`vertique-bootstrap`** — `VertxBuilderContributor` SPI, `BootstrapContext`, `ContributorRunner`,
   `ContributorFailureException`. The bootstrap kernel is a separate artifact so bridge adapters can
   depend on it without pulling in the standalone launcher entrypoint.
-- **`vertique-core`** — `VertiqueRuntime` and `VertiqueComponentFactory` (the standalone entry seam),
-  `JsonConfigPaths` (config-section navigation), and the `OrderedExtension`/`ExtensionPhase` ordering
+- **`vertique-core`** — `JsonConfigPaths` (config-section navigation), and the `OrderedExtension`/`ExtensionPhase` ordering
   contract used to sort contributors.
-- **`vertique-application`** — `VertiqueApplicationBootstrap` (host-neutral lifecycle runner),
+- **`vertique-application`** — `VertiqueRuntime` and `VertiqueComponentFactory` (the standalone entry seam),
+  `VertiqueApplicationBootstrap` (host-neutral lifecycle runner),
   `VertiqueApplicationComponent` (the component interface the factory must produce),
   `VertiqueApplicationHandle` (returned on successful startup; drives teardown from
   `VertiqueBootstrapVerticle.stop()`), and the `VertiqueApp` annotation.
