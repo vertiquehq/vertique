@@ -353,7 +353,10 @@ To migrate an existing application from `maven-shade` + hand-written `MainVertic
    automatically.
 
 4. **Delete the `META-INF/services/dev.vertique.application.VertiqueComponentFactory`** file if you wrote
-   one manually — `vertique-codegen-application` generates it now.
+   one manually — `vertique-codegen-application` generates it now. A leftover
+   `META-INF/services/dev.vertique.core.VertiqueComponentFactory` file (the name used by earlier
+   releases) is not read: if no factory is found under the new name, startup fails naming that old
+   file and its URL. Rename it, or regenerate the factory.
 
 5. **Replace `maven-shade-plugin` with `jib-maven-plugin`** using the configuration shown above.
    Remove the shade `<transformer>` and `<filter>` sections.
