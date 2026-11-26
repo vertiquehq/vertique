@@ -9,9 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.validation.CharacterPolicy;
-import dev.vertique.core.validation.CharacterPolicyBinding;
-import dev.vertique.core.validation.CharacterPolicyResult;
 import jakarta.validation.ValidationException;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;

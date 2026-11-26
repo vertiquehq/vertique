@@ -16,10 +16,6 @@
  *   <li>{@link dev.vertique.core.validation.PropertyPath} — structured Java-side path to a violated
  *       element, carried optionally by {@code ParameterViolation}</li>
  *   <li>{@link dev.vertique.core.validation.ValidateWith} — annotation for specifying validation groups</li>
- *   <li>{@link dev.vertique.core.validation.CharacterPolicy} — character-set validation policy SPI</li>
- *   <li>{@link dev.vertique.core.validation.CharacterPolicyResult} — result of character policy validation</li>
- *   <li>{@link dev.vertique.core.validation.CharacterPolicyBinding} — Dagger multibinding wrapper for character policies</li>
- *   <li>{@link dev.vertique.core.validation.SkipAllowedCharacters} — opt-out annotation for object-level character validation</li>
  * </ul>
  *
  * <p>Implementations are provided by the {@code validation} module (Hibernate Validator backed).

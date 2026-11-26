@@ -12,9 +12,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-validation` is the Hibernate Validator-backed implementation of Jakarta Bean Validation
 (JSR 380) for Vertique. The HTTP-agnostic API — `BeanValidator`, `ViolationDetail`,
-`ParameterViolation`, `BeanValidationException`, `@ValidateWith`, and the character-policy types —
-lives in `dev.vertique:vertique-core`; this artifact supplies the validator factory, the
-Dagger-aware `ConstraintValidatorFactory`, the violation-classification pipeline, and the
+`ParameterViolation`, `BeanValidationException` and `@ValidateWith` — lives in
+`dev.vertique:vertique-core`; this artifact supplies the validator factory, the Dagger-aware
+`ConstraintValidatorFactory`, the violation-classification pipeline, and the character-policy home
+(`dev.vertique.validation.constraints`): the `CharacterPolicy` SPI, `CharacterPolicyResult`,
+`CharacterPolicyBinding`, the `@SkipAllowedCharacters` marker, the built-in policies and the
 `@AllowedCharacters` constraint family.
 
 Installing `ValidationModule` does two things: it makes `BeanValidator` injectable anywhere, and it
@@ -253,13 +255,15 @@ inside `Collection` and `Map` values and inside nested application DTOs. Travers
 (identity-based visited set) and skips JDK types, primitives, boxed primitives, enums, and arrays.
 
 Object-level traversal skips an element that carries its own `@AllowedCharacters` (it validates
-itself at field level) or `dev.vertique.core.validation.SkipAllowedCharacters`. Static fields are
+itself at field level) or `dev.vertique.validation.constraints.SkipAllowedCharacters`. Static fields are
 never traversed. Meta-annotations composed from either annotation are recognised.
 
 The `InputValueContext` handed to a policy from this constraint is synthetic: `location()` is
 always `BODY` and `ownerType()` is always `Object.class` (object traversal does supply a real
 `path`). Bean Validation has no accurate provenance for a value, so a policy must not branch on
-`location()` — see the `vertique-core` reference for the full contract.
+`location()`: one validation pass can cover values from several locations at once, so no accurate
+location exists to report. Canonicalizers and sanitizers run earlier and do receive accurate
+provenance.
 
 ```java
 @AllowedCharacters(policy = UnicodeCommonTextPolicy.class)
@@ -272,7 +276,7 @@ public record Article(
 
 ### `CharacterPolicy`
 
-`dev.vertique.core.validation.CharacterPolicy` is the policy SPI.
+`dev.vertique.validation.constraints.CharacterPolicy` is the policy SPI.
 
 ```java
 public interface CharacterPolicy {
@@ -659,7 +663,7 @@ The module takes no constructor arguments and reads no configuration section.
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-core` | `BeanValidator`, `ViolationDetail`, `ParameterViolation`, `BeanValidationException`, `@ValidateWith`, `CharacterPolicy` and friends, `InputValueContext` |
+| `dev.vertique:vertique-core` | `BeanValidator`, `ViolationDetail`, `ParameterViolation`, `BeanValidationException`, `@ValidateWith`, `InputValueContext` |
 | `jakarta.validation:jakarta.validation-api` | The Bean Validation API this module implements against |
 | `org.hibernate.validator:hibernate-validator` | The validation engine backing `ValidatorFactory` |
 | `org.glassfish.expressly:expressly` | EL implementation Hibernate Validator requires for message interpolation |

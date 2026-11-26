@@ -13,7 +13,7 @@ import java.util.Map;
  * {@link AllowedCharacters} constraint violations.
  *
  * <p>When an {@code @AllowedCharacters} constraint fails, this inspector contributes a
- * {@code "policy"} argument with the simple name of the {@link dev.vertique.core.validation.CharacterPolicy}
+ * {@code "policy"} argument with the simple name of the {@link dev.vertique.validation.constraints.CharacterPolicy}
  * implementation class. This argument can be used by API error formatters to produce
  * descriptive validation error messages.
  *

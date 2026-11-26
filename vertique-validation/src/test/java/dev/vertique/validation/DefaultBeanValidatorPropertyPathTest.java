@@ -13,14 +13,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.validation.CharacterPolicy;
-import dev.vertique.core.validation.CharacterPolicyResult;
 import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.PropertyPath.Index;
 import dev.vertique.core.validation.PropertyPath.Opaque;
 import dev.vertique.core.validation.PropertyPath.Property;
 import dev.vertique.validation.constraints.AllowedCharacters;
+import dev.vertique.validation.constraints.CharacterPolicy;
+import dev.vertique.validation.constraints.CharacterPolicyResult;
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;

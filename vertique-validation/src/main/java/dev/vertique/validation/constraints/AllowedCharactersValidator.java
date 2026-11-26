@@ -5,8 +5,6 @@ package dev.vertique.validation.constraints;
 
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.validation.CharacterPolicy;
-import dev.vertique.core.validation.CharacterPolicyResult;
 import jakarta.annotation.Nullable;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
