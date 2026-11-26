@@ -3,18 +3,13 @@
 
 package dev.vertique.mcp.server;
 
-import com.fasterxml.jackson.core.JacksonException;
-import com.fasterxml.jackson.core.StreamWriteFeature;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.MultiMap;
 import jakarta.annotation.Nullable;
-import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -24,10 +19,9 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Strict, bounded final-2026 JSON-RPC codec for the MCP wire layer.
  *
- * <p>The codec canonically encodes a JSON value to compact, insertion-order-preserving UTF-8 bytes,
- * strictly decodes and validates an incoming JSON-RPC request envelope, and produces bounded
- * JSON-RPC error responses. It never leaks internal exception text: an internal codec failure
- * settles through a pre-encoded internal-error response written exactly once. Protocol failures use
+ * <p>The codec strictly decodes, validates and classifies an incoming JSON-RPC request envelope; it
+ * serializes nothing. The dispatcher writes every response, errors included, through its size-capped
+ * encoder, and no error carries internal exception text. Protocol failures use
  * the final-spec JSON-RPC codes — {@code -32700} (malformed JSON or a strict-reader rejection such
  * as a duplicate key or trailing token), {@code -32600} (invalid envelope/request), {@code -32601}
  * (unknown method, classified against the bounded supported-method set), and {@code -32603}
@@ -78,7 +72,6 @@ final class McpProtocolCodec {
     private static final String MSG_INVALID_REQUEST = "Invalid Request";
     private static final String MSG_METHOD_NOT_FOUND = "Method not found";
     private static final String MSG_INVALID_PARAMS = "Invalid params";
-    private static final String MSG_INTERNAL_ERROR = "Internal error";
 
     /**
      * The standard, non-leaking message paired with {@link #NEGOTIATION_MISMATCH}: never echoes the
@@ -162,11 +155,6 @@ final class McpProtocolCodec {
 
     private static final String JSONRPC_VERSION = "2.0";
 
-    /** Compact, insertion-order-preserving encoder; writes big decimals in plain (non-scientific) form. */
-    private static final ObjectMapper ENCODER = JsonMapper.builder()
-            .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
-            .build();
-
     private final McpEnvelopeJsonCodec envelopeCodec;
     private final McpProtocolSchemaValidator schemaValidator;
 
@@ -183,29 +171,12 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Canonically encodes a JSON value to compact, insertion-order-preserving UTF-8 bytes.
-     *
-     * @param value the JSON value to encode
-     * @return the canonical UTF-8 byte encoding
-     */
-    byte[] encode(JsonNode value) {
-        try {
-            return ENCODER.writeValueAsBytes(value);
-        } catch (JacksonException encodeFailure) {
-            // An in-memory JsonNode tree cannot fail to serialize; a failure here is a programming
-            // error, not a wire condition, so it is surfaced rather than silently swallowed.
-            // JacksonException extends IOException, so it is a valid UncheckedIOException cause.
-            throw new UncheckedIOException(encodeFailure);
-        }
-    }
-
-    /**
      * Strictly decodes and validates one JSON-RPC request envelope.
      *
      * @param utf8 the raw UTF-8 request bytes
      * @return a validated envelope on success, or a bounded classified error carrying the original
      *     usable request id (or {@code null}), so a failing caller never needs to re-analyze {@code
-     *     utf8} a second time just to recover the id to echo (see {@link #errorResponseFor})
+     *     utf8} a second time just to recover the id to echo
      */
     Decoded decodeEnvelope(byte[] utf8) {
         Analysis analysis = analyze(utf8);
@@ -462,7 +433,7 @@ final class McpProtocolCodec {
      */
     private static CodecError negotiationError(NegotiationReason reason) {
         logRejection(reason);
-        ObjectNode data = ENCODER.createObjectNode();
+        ObjectNode data = JsonNodeFactory.instance.objectNode();
         data.put(DATA_REASON, reason.name());
         return new CodecError(NEGOTIATION_MISMATCH, MSG_NEGOTIATION_MISMATCH, data);
     }
@@ -472,7 +443,7 @@ final class McpProtocolCodec {
     }
 
     private static CodecError unsupportedProtocolVersionError(String requested) {
-        ObjectNode data = ENCODER.createObjectNode();
+        ObjectNode data = JsonNodeFactory.instance.objectNode();
         data.putArray("supported").add(McpCursorCodec.PROTOCOL_VERSION);
         data.put("requested", requested);
         data.put(DATA_REASON, NegotiationReason.UNSUPPORTED_VERSION.name());
@@ -571,80 +542,6 @@ final class McpProtocolCodec {
         }
     }
 
-    // --- Unbounded wire-format helpers: test-only, unreachable from any write path ---
-    //
-    // Every one of the three methods below serializes through an unrestricted writeValueAsBytes: none
-    // of them observes mcp.output.maxBytes. Every dispatcher write path instead routes through
-    // McpRequestDispatcher#boundedErrorResponse, which streams through the capped
-    // stream. What remains here exists solely so McpGoldenWireTest and McpCodecFailureTest can
-    // pin this codec's own canonical error bytes without a dispatcher, a routing context, or a cap in
-    // the way.
-    //
-    // The three survivors are held off every write path by McpBoundedWritePathArchitectureTest, an
-    // ArchUnit rule over the compiled production bytecode: no production class other than this one may
-    // call them. That rule — not a javadoc note — is what keeps this comment true.
-
-    /**
-     * Produces the external JSON-RPC error response for a failing request frame, stamping the
-     * original usable request id or a null id, and never leaking internal exception text.
-     *
-     * <p><strong>Test-only.</strong> Bounded in <em>content</em> — the message text is a
-     * fixed constant and never carries internal detail — but not in <em>bytes</em>: it has no {@code
-     * mcp.output.maxBytes} check. No production caller exists, and none may be added; see this
-     * section's banner comment.
-     *
-     * <p>Re-analyzes {@code utf8} from scratch: a full strict-UTF-8 validation and Jackson parse of up
-     * to the body limit, exactly like {@link #decodeEnvelope} did. Prefer {@link #errorResponseFor}
-     * when a {@link Decoded} for the same bytes was already produced by {@link #decodeEnvelope} — this
-     * method exists for a caller (or test) that has only the raw bytes and no prior {@link Decoded}.
-     *
-     * @param utf8 the raw UTF-8 request bytes
-     * @return the complete, bounded JSON-RPC error response bytes
-     */
-    byte[] errorResponse(byte[] utf8) {
-        Analysis analysis = analyze(utf8);
-        CodecError error =
-                analysis.error() != null ? analysis.error() : new CodecError(INTERNAL_ERROR, MSG_INTERNAL_ERROR, null);
-        return encodeError(analysis.id(), error.code(), error.message());
-    }
-
-    /**
-     * Produces the same external JSON-RPC error response {@link #errorResponse} does, from an
-     * already-computed {@link Decoded} failure rather than re-decoding the original bytes — the body
-     * is analyzed exactly once per request on the {@link #decodeEnvelope} call that produced {@code
-     * decoded}.
-     *
-     * <p><strong>Test-only.</strong> Byte-unbounded, exactly like {@link #errorResponse};
-     * no production caller exists and none may be added — see this section's banner comment.
-     *
-     * @param decoded a failed decode this codec already produced for the same request
-     * @return the complete, bounded JSON-RPC error response bytes
-     * @throws IllegalArgumentException if {@code decoded} is not an error ({@link Decoded#isError()}
-     *     is {@code false})
-     */
-    byte[] errorResponseFor(Decoded decoded) {
-        if (!decoded.isError()) {
-            throw new IllegalArgumentException("errorResponseFor requires a failed Decoded");
-        }
-        return encodeError(decoded.id(), decoded.error().code(), decoded.error().message());
-    }
-
-    /**
-     * Settles an internal codec failure through the pre-encoded internal-error response, written
-     * exactly once and never carrying the cause's text.
-     *
-     * <p><strong>Test-only.</strong> Byte-unbounded, exactly like {@link #errorResponse};
-     * no production caller exists and none may be added — see this section's banner comment.
-     *
-     * @param id the original usable request id, or {@code null} when none is available
-     * @param cause the internal failure whose text must never reach the client
-     * @return the complete, bounded internal-error response bytes
-     */
-    byte[] internalFallback(@Nullable JsonNode id, Throwable cause) {
-        // The cause is deliberately never read: only its occurrence matters, never its text.
-        return encodeError(id, INTERNAL_ERROR, MSG_INTERNAL_ERROR);
-    }
-
     // --- Envelope analysis ---
 
     /**
@@ -706,25 +603,6 @@ final class McpProtocolCodec {
             return id;
         }
         return null;
-    }
-
-    /**
-     * Builds and encodes the pinned bounded JSON-RPC error response.
-     *
-     * @param id the usable id to stamp, or {@code null} for a null id
-     * @param code the final-spec JSON-RPC error code
-     * @param message the standard JSON-RPC error message
-     * @return the complete, bounded response bytes
-     */
-    private byte[] encodeError(@Nullable JsonNode id, int code, String message) {
-        ObjectNode response = ENCODER.createObjectNode();
-        response.put("jsonrpc", JSONRPC_VERSION);
-        response.set("id", id != null ? id : NullNode.getInstance());
-        ObjectNode error = ENCODER.createObjectNode();
-        error.put("code", code);
-        error.put("message", message);
-        response.set("error", error);
-        return encode(response);
     }
 
     /**

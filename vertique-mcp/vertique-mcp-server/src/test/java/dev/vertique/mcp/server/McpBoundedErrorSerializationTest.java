@@ -61,12 +61,12 @@ import org.mockito.ArgumentCaptor;
  * internal error — otherwise a mutation that always degraded would pass the over-cap rows undetected.
  *
  * <p><strong>Known limitation, stated rather than hidden.</strong> A call site that bypasses the
- * capped stream (e.g. calling {@code codec.errorResponseFor(...)} from {@code
+ * capped stream (e.g. serializing the error node directly from {@code
  * writePreDispatchProtocolRejection}) would not fail any assertion on the live outcome: bounded and
  * unbounded serialization degrade to the identical final bytes for any id short of triggering an
- * {@code OutOfMemoryError}, so no external, mock-observable signal distinguishes them. That protection
- * comes from {@code McpBoundedWritePathArchitectureTest}, which keeps the byte-unbounded helpers off every
- * production write path. {@link #assertCappedStreamAbortsBeforeMaterializing} is decisive against a
+ * {@code OutOfMemoryError}, so no external, mock-observable signal distinguishes them. The codec has no
+ * serializer, so the dispatcher's capped stream is the only error serializer; a direct write from the
+ * dispatcher is a code-review item. {@link #assertCappedStreamAbortsBeforeMaterializing} is decisive against a
  * regression in the shared {@link McpRequestDispatcher.CappedOutputStream} mechanism itself (for example,
  * checking its bound after the write instead of before fails both over-cap rows), which is the only
  * non-flaky signal available for this response shape — a plain id-echoing object has no per-element

@@ -700,12 +700,5 @@
       "module": "vertique-rest-core",
       "reason": "Its MCP-related surface is already final; no planned MCP change alters it."
     }
-  ],
-  "delegatedModules": [
-    {
-      "module": "vertique-audit-mcp",
-      "delegated": "enterprise-build",
-      "guard": "dev.vertique.audit.mcp.McpAuditArchitectureTest"
-    }
   ]
 }
