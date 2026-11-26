@@ -1595,9 +1595,10 @@ every compile-scope dependency it declares lands on every consumer's classpath.
 | `com.google.dagger:dagger` | `@Module`, `@Provides`, `@Multibinds` for `VertxModule`, `HealthCheckModule`, `CoreLifecycleStepsModule` |
 | `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton`, `@Qualifier`, `Provider` on the injectable types and qualifiers |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on nullable record components, SPI parameters, and return values |
-| `jakarta.ws.rs:jakarta.ws.rs-api` | Declared at compile scope; core's own sources do not reference it, so every consumer receives the JAX-RS API on its classpath transitively |
 | `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper` on the profile contracts and the process codec, and the serialization annotations on result records |
 | `org.slf4j:slf4j-api` | Logging in `VertiqueJson` and the other core collaborators |
-| `org.projectlombok:lombok` | `provided` scope, so it never reaches runtime; core's own sources do not use it |
+
+Core does not bring the JAX-RS API (`jakarta.ws.rs:jakarta.ws.rs-api`). A module that uses JAX-RS
+types gets them from `vertique-rest-core` or `vertique-rest-jaxrs`, or declares the API itself.
 
 `DispatchFailureDiagnostics.REDACT_FATAL` is an internal dispatch-context marker for value-free failure diagnostics.
