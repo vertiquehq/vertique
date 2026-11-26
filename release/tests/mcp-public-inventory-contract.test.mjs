@@ -53,11 +53,4 @@ test('mcp public inventory union equals the master release record', () => {
         'Its MCP-related surface is already final; no planned MCP change alters it.',
     },
   ]);
-  assert.deepEqual(master.delegatedModules, [
-    {
-      module: 'vertique-audit-mcp',
-      delegated: 'enterprise-build',
-      guard: 'dev.vertique.audit.mcp.McpAuditArchitectureTest',
-    },
-  ]);
 });

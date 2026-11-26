@@ -46,7 +46,7 @@ class McpGoldenWireTest {
             assertThat(parsed.isRejected())
                     .as("valid frame decodes without rejection: %s", rendered)
                     .isFalse();
-            byte[] canonical = codec.encode(parsed.value());
+            byte[] canonical = McpCodecErrorBytes.encode(parsed.value());
             assertThat(canonical)
                     .as("valid frame round-trips byte-identically: %s", rendered)
                     .isEqualTo(frame);
@@ -64,7 +64,7 @@ class McpGoldenWireTest {
                     .as("invalid frame yields the pinned JSON-RPC message: %s", invalid.name())
                     .isEqualTo(invalid.message());
 
-            byte[] errorResponse = codec.errorResponse(invalid.frame());
+            byte[] errorResponse = McpCodecErrorBytes.errorResponse(codec, invalid.frame());
             assertThat(errorResponse)
                     .as("invalid frame re-encodes to the pinned canonical error-response bytes: %s", invalid.name())
                     .isEqualTo(invalid.expectedResponse());
@@ -72,12 +72,9 @@ class McpGoldenWireTest {
                     .as("invalid frame echoes exactly the pinned request id: %s", invalid.name())
                     .isEqualTo(invalid.expectedId());
 
-            // McpRequestDispatcher#emitProtocolError builds the error
-            // response from the already-decoded Decoded via errorResponseFor, never by re-analyzing the
-            // raw bytes a second time through errorResponse(byte[]). This pins errorResponseFor as a
-            // byte-identical drop-in for every golden invalid case, so that production switch is provably
-            // behavior-preserving.
-            byte[] errorResponseFromDecoded = codec.errorResponseFor(decoded);
+            // The error response built from the already-decoded Decoded must be byte-identical to the
+            // one built from the raw bytes, without re-decoding.
+            byte[] errorResponseFromDecoded = McpCodecErrorBytes.errorResponseFor(decoded);
             assertThat(errorResponseFromDecoded)
                     .as(
                             "errorResponseFor(decoded) must be byte-identical to errorResponse(bytes) without "
@@ -87,7 +84,7 @@ class McpGoldenWireTest {
         }
 
         McpProtocolCodec.Decoded successfulDecode = codec.decodeEnvelope(validFrames.getFirst());
-        assertThatThrownBy(() -> codec.errorResponseFor(successfulDecode))
+        assertThatThrownBy(() -> McpCodecErrorBytes.errorResponseFor(successfulDecode))
                 .as("errorResponseFor must refuse a non-error Decoded rather than silently succeeding")
                 .isInstanceOf(IllegalArgumentException.class);
 
@@ -145,7 +142,8 @@ class McpGoldenWireTest {
         }
 
         static byte[] firstErrorResponse(McpProtocolCodec codec, List<InvalidCase> invalidCases) {
-            return codec.errorResponse(invalidCases.getFirst().frame());
+            return McpCodecErrorBytes.errorResponse(
+                    codec, invalidCases.getFirst().frame());
         }
 
         static byte[] flipFirstByte(byte[] response) {

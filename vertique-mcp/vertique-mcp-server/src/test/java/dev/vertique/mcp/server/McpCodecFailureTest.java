@@ -5,8 +5,6 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.IntNode;
 import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
@@ -21,19 +19,18 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Malformed JSON, an invalid envelope, an unknown method, and a duplicate-id frame each produce
  * the pinned bounded JSON-RPC error with the original usable id or a null id and never leak internal
- * text. An internal codec failure carrying the text {@code SECRET} settles through the pre-encoded
- * internal-error fallback, which writes exactly one complete response and never carries the cause.
+ * text.
  */
 class McpCodecFailureTest {
 
     @Test
-    @DisplayName("failure frames yield the pinned bounded error and the internal fallback never leaks SECRET")
-    void shouldUsePreEncodedInternalFallbackOrDeterministicReset() {
+    @DisplayName("failure frames yield the pinned bounded error and never leak SECRET")
+    void shouldYieldPinnedBoundedErrorWithoutLeakingInternalText() {
         McpProtocolCodec codec = new McpProtocolCodec(
                 HttpConfig.builder().build(), McpServerConfig.defaults().ingressMaxTokens());
 
         for (McpCodecFailureTestFixture.Row row : McpCodecFailureTestFixture.decodeRows()) {
-            byte[] response = codec.errorResponse(row.frame());
+            byte[] response = McpCodecErrorBytes.errorResponse(codec, row.frame());
             JsonObject decoded = McpCodecFailureTestFixture.parse(response);
             assertThat(decoded.getJsonObject("error").getInteger("code"))
                     .as("frame %s yields the pinned JSON-RPC code", row.name())
@@ -45,22 +42,6 @@ class McpCodecFailureTest {
                     .as("frame %s leaks no internal text", row.name())
                     .doesNotContain("SECRET");
         }
-
-        JsonNode usableId = IntNode.valueOf(9);
-        byte[] fallback = codec.internalFallback(usableId, new IllegalStateException("SECRET boom"));
-        JsonObject decoded = McpCodecFailureTestFixture.parse(fallback);
-        assertThat(new String(fallback, StandardCharsets.UTF_8))
-                .as("the internal fallback never leaks the cause text")
-                .doesNotContain("SECRET");
-        assertThat(decoded.getJsonObject("error").getInteger("code"))
-                .as("the internal fallback carries the pinned internal-error code")
-                .isEqualTo(-32603);
-        assertThat(decoded.getValue("id"))
-                .as("the internal fallback stamps the original usable id")
-                .isEqualTo(9);
-        assertThat(decoded.getString("jsonrpc"))
-                .as("the internal fallback writes one complete JSON-RPC response")
-                .isEqualTo("2.0");
     }
 
     /** Framework wiring for the failure proof: the pinned failure rows and response parsing. */

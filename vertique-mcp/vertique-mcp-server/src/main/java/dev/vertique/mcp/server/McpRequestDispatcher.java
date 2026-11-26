@@ -174,11 +174,10 @@ final class McpRequestDispatcher {
     private static final int MAX_HANDLER_FAILURE_CAUSE_HOPS = 8;
 
     /**
-     * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. Mirrors {@link
-     * McpProtocolCodec}'s own private {@code MSG_INTERNAL_ERROR} constant of the same value — this class
-     * already redeclares every other codec-classified code/message it needs locally (see {@link
-     * #NEGOTIATION_MISMATCH} below) rather than routing a bounded response through a codec call whose own
-     * serialization step is unbounded (see {@link #boundedErrorResponse}).
+     * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. This class redeclares
+     * every codec-classified code/message it needs locally (see {@link #NEGOTIATION_MISMATCH} below)
+     * because the codec has no serializer: every error response is built and encoded here through the
+     * capped stream (see {@link #boundedErrorResponse}).
      */
     private static final String INTERNAL_ERROR_MESSAGE = "Internal error";
 
@@ -1238,9 +1237,8 @@ final class McpRequestDispatcher {
     /**
      * Settles the defensive, practically-unreachable {@link #dispatchByMethod} default branch through
      * the bounded internal-error fallback, exactly like {@link #writeToolsListFallback}. Bounded through
-     * {@link #boundedErrorResponse} rather than an unchecked {@link McpProtocolCodec#internalFallback}
-     * call, so the fallback response is always subject to the same {@code mcp.output.maxBytes} cap
-     * check as every other terminal writer in this class.
+     * {@link #boundedErrorResponse}, so the fallback response is always subject to the same
+     * {@code mcp.output.maxBytes} cap check as every other terminal writer in this class.
      */
     private void writeDispatchFallback(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
@@ -1280,9 +1278,8 @@ final class McpRequestDispatcher {
             McpMethod method,
             @Nullable SecurityContextSnapshot security,
             Throwable cause) {
-        // cause is deliberately never read, mirroring McpProtocolCodec#internalFallback's own established
-        // convention: only its occurrence matters, routed through boundedErrorResponse like every
-        // other terminal writer in this class.
+        // cause is deliberately never read: only its occurrence matters, routed through
+        // boundedErrorResponse like every other terminal writer in this class.
         byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
@@ -3738,8 +3735,6 @@ final class McpRequestDispatcher {
      * {@code codec.decodeEnvelope} call, reused here, not repeated) — and serializes it exactly once
      * through the capped stream {@link #encodeCapped} every other terminal writer in this class uses,
      * so a large client-controlled id can never allocate the full response before the cap is checked.
-     * {@link McpProtocolCodec#errorResponseFor} itself is unchanged and
-     * still used directly by {@code McpGoldenWireTest} to pin the codec's own wire-format bytes.
      *
      * @param context the request context
      * @param decoded the already-decoded envelope this dispatch produced, reused so the body is
@@ -4036,16 +4031,11 @@ final class McpRequestDispatcher {
      * #INTERNAL_ERROR_MESSAGE} shape — itself encoded the same bounded way, never assumed to fit without
      * going through the cap — only when the with-id shape would exceed {@code mcp.output.maxBytes}.
      *
-     * <p>Every error-writing path in this class builds and encodes its own error node this way rather
-     * than through {@link McpProtocolCodec#errorResponseFor} or {@link
-     * McpProtocolCodec#internalFallback} — both an unrestricted {@code writeValueAsBytes} that only
-     * compares the <em>completed</em> array's length against the cap after fully allocating it, so a
-     * large client-controlled id (the only unbounded element in any of these shapes) would force the
-     * full allocation before the cap could ever apply. Those two codec methods remain unchanged and are
-     * still used directly by {@code McpGoldenWireTest} and {@code McpCodecFailureTest} to pin the
-     * codec's own wire-format bytes, which have no {@code mcp.output.maxBytes} to honor; this dispatcher
-     * never calls either of them for a client-facing write — every terminal writer below builds and
-     * encodes its own error node instead.
+     * <p>Every error-writing path in this class builds and encodes its own error node this way: an
+     * unrestricted {@code writeValueAsBytes} would compare the <em>completed</em> array's length against
+     * the cap only after fully allocating it, so a large client-controlled id (the only unbounded
+     * element in any of these shapes) would force the full allocation before the cap could ever apply.
+     * The codec has no serializer, so every terminal writer below builds and encodes its own error node.
      *
      * @param id the request id to echo, or {@code null} to build the id-less shape directly
      * @param code the final-spec or implementation-defined JSON-RPC error code
