@@ -9,8 +9,8 @@ import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.core.validation.CharacterPolicyBinding;
 import dev.vertique.validation.constraints.AllowedCharacters;
+import dev.vertique.validation.constraints.CharacterPolicyBinding;
 import dev.vertique.validation.constraints.CharacterPolicyResolver;
 import jakarta.inject.Singleton;
 import jakarta.validation.ConstraintValidator;
@@ -254,7 +254,7 @@ public abstract class ValidationModule {
      * <p>This factory ensures that {@link dev.vertique.validation.constraints.AllowedCharactersValidator}
      * and {@link dev.vertique.validation.constraints.AllowedCharactersObjectValidator} instances
      * receive a {@link dev.vertique.validation.constraints.CharacterPolicyResolver}, enabling
-     * validation of {@link dev.vertique.core.validation.CharacterPolicy} implementations that
+     * validation of {@link dev.vertique.validation.constraints.CharacterPolicy} implementations that
      * require Dagger-injected dependencies (i.e., have no public no-arg constructor).
      *
      * @param resolver the character policy resolver backed by the Dagger multibinding

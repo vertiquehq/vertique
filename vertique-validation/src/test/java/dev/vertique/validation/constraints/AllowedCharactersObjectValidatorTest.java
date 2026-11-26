@@ -8,9 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.validation.CharacterPolicy;
-import dev.vertique.core.validation.CharacterPolicyResult;
-import dev.vertique.core.validation.SkipAllowedCharacters;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;

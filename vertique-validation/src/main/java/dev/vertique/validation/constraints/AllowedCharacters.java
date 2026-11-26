@@ -3,7 +3,6 @@
 
 package dev.vertique.validation.constraints;
 
-import dev.vertique.core.validation.CharacterPolicy;
 import jakarta.validation.Constraint;
 import jakarta.validation.Payload;
 import java.lang.annotation.Documented;

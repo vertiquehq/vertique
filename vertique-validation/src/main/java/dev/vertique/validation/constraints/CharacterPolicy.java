@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.validation;
+package dev.vertique.validation.constraints;
 
 import dev.vertique.core.sanitization.InputValueContext;
 
 /**
  * Defines a character-set validation policy that rejects input containing disallowed characters.
  *
- * <p>Used by the {@code @AllowedCharacters} annotation (defined in the {@code sanitization} module)
+ * <p>Used by the {@link AllowedCharacters} constraint
  * to enforce that string values contain only the characters permitted by this policy. Implementations
  * should scan the value and return a {@link CharacterPolicyResult} indicating the first violation
- * found, or {@link CharacterPolicyResult#valid()} if the value is fully compliant.
+ * found, or {@link CharacterPolicyResult#passed()} if the value is fully compliant.
  *
  * <p>Implementations MUST be:
  * <ul>
@@ -41,7 +41,7 @@ public interface CharacterPolicy {
      *                report. Implementations invoked through that path MUST NOT branch on
      *                {@code location()}. Canonicalizers and sanitizers, which run earlier in the
      *                input-processing pipeline, do receive accurate provenance.
-     * @return {@link CharacterPolicyResult#valid()} if all characters are permitted,
+     * @return {@link CharacterPolicyResult#passed()} if all characters are permitted,
      *         or a failed result identifying the first offending character
      */
     CharacterPolicyResult validate(String value, InputValueContext context);

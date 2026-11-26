@@ -1027,7 +1027,7 @@ enclosing type. `InputValueContext` is a `record (InputLocation location, String
 logicalName, Class<?> ownerType)`; `InputLocation` is `PATH`, `QUERY`, `HEADER`, `COOKIE`, `FORM`,
 `BODY`, `BEAN_PARAM`, `PAYLOAD`. `PAYLOAD` marks values from message or protocol payloads (e.g.
 WebSocket messages); REST request bodies remain `BODY`. A custom `Canonicalizer`, `Sanitizer`, or
-`CharacterPolicy` that branches on `InputLocation.BODY` must also handle `PAYLOAD` to keep
+`CharacterPolicy` (from `vertique-validation`) that branches on `InputLocation.BODY` must also handle `PAYLOAD` to keep
 covering message-oriented inputs — WebSocket messages reported `BODY` before `PAYLOAD` existed.
 
 `path` and `logicalName` are deliberately different views of the same value. `path` is the **wire**
@@ -1128,33 +1128,12 @@ key would apply a policy; a promoted key that fails either is refused at startup
 wrongly, as is one on a type served by a **generated** input processor, whose field-name `switch` is
 emitted from the owner's own declared fields.
 
-### `CharacterPolicy`
+### Character policies
 
-Validates that a string contains only permitted characters.
-
-```java
-public interface CharacterPolicy {
-    CharacterPolicyResult validate(String value, InputValueContext context);
-}
-```
-
-```java
-@Provides @IntoSet
-static CharacterPolicyBinding asciiPolicy(AsciiCharacterPolicy p) {
-    return new CharacterPolicyBinding(AsciiCharacterPolicy.class, p);
-}
-```
-
-Return `CharacterPolicyResult.passed()` or
-`CharacterPolicyResult.failed(index, codePoint, reason)` naming the first offending character.
-`@SkipAllowedCharacters` opts an element out of character validation inherited from its type.
-
-When a policy runs from Bean Validation (the `@AllowedCharacters` constraint), its
-`InputValueContext` is synthetic: `location()` is always `BODY` whatever the value's real origin,
-and `ownerType()` is always `Object.class`. Validation sees the value after it has been separated
-from its transport provenance, and one validation pass can cover values from several locations at
-once, so no accurate location exists to report. Do not branch on `location()` in a policy.
-Canonicalizers and sanitizers run earlier and do receive accurate provenance.
+The character-policy contracts — `CharacterPolicy`, `CharacterPolicyResult`, `CharacterPolicyBinding`
+and `@SkipAllowedCharacters` — live in `dev.vertique:vertique-validation`
+(`dev.vertique.validation.constraints`), next to `@AllowedCharacters` and the built-in policies. A
+`CharacterPolicy` receives core's `InputValueContext`; see the `vertique-validation` module reference.
 
 ### Resilience primitives
 

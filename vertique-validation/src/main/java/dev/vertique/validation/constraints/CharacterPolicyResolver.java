@@ -3,8 +3,6 @@
 
 package dev.vertique.validation.constraints;
 
-import dev.vertique.core.validation.CharacterPolicy;
-import dev.vertique.core.validation.CharacterPolicyBinding;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.validation.ValidationException;
