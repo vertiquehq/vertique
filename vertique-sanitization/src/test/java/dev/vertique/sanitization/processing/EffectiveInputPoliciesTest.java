@@ -7,9 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

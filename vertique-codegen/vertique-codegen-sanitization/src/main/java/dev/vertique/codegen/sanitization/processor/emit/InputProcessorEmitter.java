@@ -19,6 +19,10 @@ import dev.vertique.codegen.sanitization.processor.scan.FieldModel;
 import dev.vertique.codegen.sanitization.processor.scan.FieldModel.FieldKind;
 import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.ChainResolver;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import dev.vertique.sanitization.processing.GeneratedInputProcessor;
@@ -83,14 +87,13 @@ public final class InputProcessorEmitter {
 
     private static final ClassName GENERATED_INPUT_PROCESSOR = ClassName.get(GeneratedInputProcessor.class);
     private static final ClassName EFFECTIVE_INPUT_POLICIES = ClassName.get(EffectiveInputPolicies.class);
-    private static final ClassName INPUT_LOCATION = ClassName.get("dev.vertique.core.sanitization", "InputLocation");
+    private static final ClassName INPUT_LOCATION = ClassName.get(InputLocation.class);
     private static final ClassName CHAIN_RESOLVER = ClassName.get(ChainResolver.class);
     private static final ClassName DISPATCHER = ClassName.get(GeneratedInputProcessorDispatcher.class);
     private static final ClassName INPUT_TRAVERSAL_CONTEXT = ClassName.get(InputTraversalContext.class);
-    private static final ClassName INPUT_FIELD_NAME_RESOLVER =
-            ClassName.get("dev.vertique.core.sanitization", "InputFieldNameResolver");
-    private static final ClassName CANONICALIZER = ClassName.get("dev.vertique.core.sanitization", "Canonicalizer");
-    private static final ClassName SANITIZER = ClassName.get("dev.vertique.core.sanitization", "Sanitizer");
+    private static final ClassName INPUT_FIELD_NAME_RESOLVER = ClassName.get(InputFieldNameResolver.class);
+    private static final ClassName CANONICALIZER = ClassName.get(Canonicalizer.class);
+    private static final ClassName SANITIZER = ClassName.get(Sanitizer.class);
     private static final ClassName NULLABLE = ClassName.get("jakarta.annotation", "Nullable");
     private static final ClassName LIST = ClassName.get("java.util", "List");
     private static final ClassName MAP = ClassName.get("java.util", "Map");

@@ -808,10 +808,10 @@ exactly one `HttpRequestCompletedEvent`.
 | Dependency | Why |
 |---|---|
 | `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler`, the request-completion claim for a successful upgrade |
-| `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against |
+| `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against, and the `Canonicalizer` / `Sanitizer` contracts |
 | `dev.vertique:vertique-json` | `JacksonFieldNameResolver` — the wire-name projection that lets a declared policy reach a renamed message field |
 | `dev.vertique:vertique-rest-security` | Policy enforcement, identity resolution, claim mapping |
-| `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation and sanitization contracts, including the `InputFieldNameResolver` projection contract message processing is typed against |
+| `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation, the input context types (`InputValueContext`, `InputLocation`) and the `InputFieldNameResolver` projection contract message processing is typed against |
 | `dev.vertique:vertique-context` | `ContextSnapshot`/`ContextValues` used to carry request context across the handshake |
 | `dev.vertique:vertique-security-core` | `SecurityContext`, `ChannelIdentityManager`, action-gate types |
 | `dev.vertique:vertique-security-runtime` | Security event emission for the connection lifecycle |

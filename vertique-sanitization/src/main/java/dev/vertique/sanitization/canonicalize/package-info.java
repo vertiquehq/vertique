@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Built-in {@link dev.vertique.core.sanitization.Canonicalizer} implementations.
+ * Built-in {@link dev.vertique.sanitization.Canonicalizer} implementations.
  *
  * <p>All canonicalizers in this package are stateless, deterministic, and idempotent. They can be
- * referenced by class in {@link dev.vertique.core.sanitization.Canonicalize#value()} annotations.
+ * referenced by class in {@link dev.vertique.sanitization.Canonicalize#value()} annotations.
  * The {@link dev.vertique.sanitization.SanitizationModule} registers all of them as Dagger
  * multibindings so they are available for injection-based resolution.
  *
- * @see dev.vertique.core.sanitization.Canonicalize
- * @see dev.vertique.core.sanitization.Canonicalizer
+ * @see dev.vertique.sanitization.Canonicalize
+ * @see dev.vertique.sanitization.Canonicalizer
  */
 package dev.vertique.sanitization.canonicalize;

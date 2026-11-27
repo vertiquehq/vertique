@@ -5,15 +5,15 @@ package dev.vertique.codegen.jaxrs.runtime.bench;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.SkipCanonicalization;
-import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport;
 import dev.vertique.rest.jaxrs.runtime.ResourceExecutionPlan;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.SkipCanonicalization;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.annotation.Annotation;

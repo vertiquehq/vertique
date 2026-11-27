@@ -102,7 +102,7 @@ Without this normalization `Optional` would classify as a nested DTO and emit `d
 
 The following types live in `dev.vertique.sanitization.processing` (artifact `vertique-sanitization`). All of them except `GeneratedInputProcessorDispatcher`, which is INTERNAL (see its section), are the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
 
-One type the emitted source references is **not** in that package: `InputFieldNameResolver` — the wire → Java property-name projection — is declared in `dev.vertique.core.sanitization` (artifact `vertique-core`) beside `InputLocation`, `Canonicalizer` and `Sanitizer`, and the emitter imports it from there.
+One type the emitted source references is **not** in that package: `InputFieldNameResolver` — the wire → Java property-name projection — is declared in `dev.vertique.core.sanitization` (artifact `vertique-core`) beside `InputLocation`, and the emitter imports it from there. `Canonicalizer` and `Sanitizer` are declared in `dev.vertique.sanitization` (artifact `vertique-sanitization`).
 
 ### `GeneratedInputProcessor<T>`
 
@@ -298,7 +298,7 @@ None. `vertique-codegen-sanitization` is a compile-time annotation processor wit
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers` |
 | `vertique-sanitization` | compile | Runtime types the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher` (INTERNAL), `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
-| `vertique-core` | compile (transitive) | `InputLocation`, `Canonicalizer`, `Sanitizer`, and `InputFieldNameResolver` — the sanitization vocabulary the emitted source imports |
+| `vertique-core` | compile (transitive) | `InputLocation` and `InputFieldNameResolver` — the input types the emitted source imports (`Canonicalizer` and `Sanitizer` come from `vertique-sanitization`) |
 | `vertique-rest-core` | compile | REST-rooted discovery: `RestBodyDiscovery` uses `RestContextTypes` and the `RequestPreconditions`/`RequestParams` FQNs to classify resource-method parameters |
 | `com.palantir.javapoet:javapoet` | compile | Source generation (not on runtime classpath) |
 

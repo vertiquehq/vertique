@@ -4,7 +4,7 @@
 package dev.vertique.sanitization.processing.testkit;
 
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Sanitizer;
 
 /**
  * Deterministic marker sanitizer used by {@link InvocationPolicyScenarios}; see

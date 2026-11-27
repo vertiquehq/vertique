@@ -40,7 +40,7 @@ class InputProcessorEmitterTest {
      */
     private static final JavaFileObject NESTED_DTO = SourceFiles.inline("com.example.dto.CommentDto", """
             package com.example.dto;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class CommentDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -50,9 +50,9 @@ class InputProcessorEmitterTest {
 
     private static final JavaFileObject FULL_DTO = SourceFiles.inline("com.example.dto.ArticleDto", """
             package com.example.dto;
-            import dev.vertique.core.sanitization.Canonicalize;
-            import dev.vertique.core.sanitization.Sanitize;
-            import dev.vertique.core.sanitization.SkipCanonicalization;
+            import dev.vertique.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Sanitize;
+            import dev.vertique.sanitization.SkipCanonicalization;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             import dev.vertique.sanitization.canonicalize.LowerCaseCanonicalizer;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
@@ -135,7 +135,7 @@ class InputProcessorEmitterTest {
     /** Nested DTO reached through a {@code NESTED_DTO} field of {@code OwnerRootDto}. */
     private static final JavaFileObject ADDRESS_DTO = SourceFiles.inline("com.example.owner.AddressDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class AddressDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -146,7 +146,7 @@ class InputProcessorEmitterTest {
     /** Element DTO reached through a {@code COLLECTION_OF_DTO} field of {@code OwnerRootDto}. */
     private static final JavaFileObject TAG_DTO = SourceFiles.inline("com.example.owner.TagDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class TagDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -195,7 +195,7 @@ class InputProcessorEmitterTest {
      */
     private static final JavaFileObject ATTRIBUTES_DTO = SourceFiles.inline("com.example.owner.AttributesDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             import java.util.List;
             import java.util.Map;
@@ -227,7 +227,7 @@ class InputProcessorEmitterTest {
      */
     private static final JavaFileObject PLAIN_MAP_DTO = SourceFiles.inline("com.example.owner.PlainMapDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             import java.util.Map;
             public class PlainMapDto {
@@ -256,7 +256,7 @@ class InputProcessorEmitterTest {
      */
     private static final JavaFileObject PLAIN_DTO = SourceFiles.inline("com.example.owner.PlainDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class PlainDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -280,7 +280,7 @@ class InputProcessorEmitterTest {
     /** Self-referential DTO — the origin class is both {@code targetType()} and a nested type. */
     private static final JavaFileObject NODE_DTO = SourceFiles.inline("com.example.owner.NodeDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class NodeDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -303,7 +303,7 @@ class InputProcessorEmitterTest {
     /** Nested DTO targeted by two distinct fields of {@code PairDto}. */
     private static final JavaFileObject LEAF_DTO = SourceFiles.inline("com.example.owner.LeafDto", """
             package com.example.owner;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class LeafDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -576,7 +576,7 @@ class InputProcessorEmitterTest {
         void nestedClass_nameFlattened() {
             JavaFileObject outer = SourceFiles.inline("com.example.Outer", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class Outer {
                         public static class Inner {

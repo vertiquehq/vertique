@@ -3,12 +3,12 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;

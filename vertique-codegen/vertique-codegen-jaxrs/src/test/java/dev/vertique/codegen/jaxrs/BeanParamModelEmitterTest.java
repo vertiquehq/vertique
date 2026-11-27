@@ -469,7 +469,7 @@ class BeanParamModelEmitterTest {
                             package dev.vertique.test;
 
                             import %s;
-                            import dev.vertique.core.sanitization.Canonicalize;
+                            import dev.vertique.sanitization.Canonicalize;
                             import jakarta.ws.rs.QueryParam;
 
                             public class CanonBean {
@@ -516,7 +516,7 @@ class BeanParamModelEmitterTest {
                             package dev.vertique.test;
 
                             import %s;
-                            import dev.vertique.core.sanitization.Sanitize;
+                            import dev.vertique.sanitization.Sanitize;
                             import jakarta.ws.rs.QueryParam;
 
                             public class SanitBean {
@@ -563,7 +563,7 @@ class BeanParamModelEmitterTest {
                             package dev.vertique.test;
 
                             import %s;
-                            import dev.vertique.core.sanitization.Canonicalize;
+                            import dev.vertique.sanitization.Canonicalize;
                             import jakarta.ws.rs.QueryParam;
 
                             public record CanonRecord(@QueryParam("q") @Canonicalize(%s.class) String q) {}
@@ -606,8 +606,8 @@ class BeanParamModelEmitterTest {
                             package dev.vertique.test;
 
                             import %s;
-                            import dev.vertique.core.sanitization.Canonicalize;
-                            import dev.vertique.core.sanitization.SkipCanonicalization;
+                            import dev.vertique.sanitization.Canonicalize;
+                            import dev.vertique.sanitization.SkipCanonicalization;
                             import jakarta.ws.rs.QueryParam;
 
                             @Canonicalize(%s.class)

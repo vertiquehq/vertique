@@ -6,8 +6,6 @@ package dev.vertique.sanitization;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dagger.Component;
-import dev.vertique.core.sanitization.CanonicalizerBinding;
-import dev.vertique.core.sanitization.SanitizerBinding;
 import dev.vertique.sanitization.canonicalize.CollapseWhitespaceCanonicalizer;
 import dev.vertique.sanitization.canonicalize.LowerCaseCanonicalizer;
 import dev.vertique.sanitization.canonicalize.NfcCanonicalizer;

@@ -4,8 +4,8 @@
 /**
  * Built-in canonicalizer and sanitizer implementations for Vertique's input processing pipeline.
  *
- * <p>This module provides ready-to-use implementations of the {@link dev.vertique.core.sanitization.Canonicalizer}
- * and {@link dev.vertique.core.sanitization.Sanitizer} contracts defined in {@code vertique-core}. The
+ * <p>This module provides ready-to-use implementations of the {@link dev.vertique.sanitization.Canonicalizer}
+ * and {@link dev.vertique.sanitization.Sanitizer} contracts that this module declares. The
  * implementations are registered as Dagger multibindings through {@link dev.vertique.sanitization.SanitizationModule}.
  *
  * <p>Sub-packages:

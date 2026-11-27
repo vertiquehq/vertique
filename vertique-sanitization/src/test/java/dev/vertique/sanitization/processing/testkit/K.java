@@ -3,8 +3,8 @@
 
 package dev.vertique.sanitization.processing.testkit;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.sanitization.Canonicalizer;
 
 /**
  * Deterministic marker canonicalizer used by {@link InvocationPolicyScenarios};

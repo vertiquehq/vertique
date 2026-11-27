@@ -105,7 +105,7 @@ class DtoScannerTest {
             // generated path. Both endpoints participate in the optimization.
             JavaFileObject deepNested = SourceFiles.inline("com.example.DeepDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class DeepDto {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -141,7 +141,7 @@ class DtoScannerTest {
         void nestedDtoWithTypeLevelSanitize_emitted() {
             JavaFileObject nested = SourceFiles.inline("com.example.SanitizedNested", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Sanitize;
+                    import dev.vertique.sanitization.Sanitize;
                     import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                     @Sanitize(StripControlCharsSanitizer.class)
                     public class SanitizedNested {
@@ -167,7 +167,7 @@ class DtoScannerTest {
         void nestedDtoWithOnlySkipCanonicalization_emitted() {
             JavaFileObject nested = SourceFiles.inline("com.example.SkipDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.SkipCanonicalization;
+                    import dev.vertique.sanitization.SkipCanonicalization;
                     @SkipCanonicalization
                     public class SkipDto {
                         public String data;
@@ -191,7 +191,7 @@ class DtoScannerTest {
         void listOfNestedDtoField_elementEmitted() {
             JavaFileObject elem = SourceFiles.inline("com.example.ElemDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class ElemDto {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -225,7 +225,7 @@ class DtoScannerTest {
         void selfReferencingDto_compilesCleanly() {
             JavaFileObject dto = SourceFiles.inline("com.example.TreeNode", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class TreeNode {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -244,7 +244,7 @@ class DtoScannerTest {
         void mutualCycle_compilesCleanly() {
             JavaFileObject a = SourceFiles.inline("com.example.CycleA", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class CycleA {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -254,7 +254,7 @@ class DtoScannerTest {
                     """);
             JavaFileObject b = SourceFiles.inline("com.example.CycleB", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class CycleB {
                         @Canonicalize(TrimCanonicalizer.class)

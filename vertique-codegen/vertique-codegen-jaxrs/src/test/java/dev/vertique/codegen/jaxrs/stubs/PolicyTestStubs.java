@@ -3,9 +3,9 @@
 
 package dev.vertique.codegen.jaxrs.stubs;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 
 /**
  * Public stub implementations of {@link Canonicalizer} and {@link Sanitizer} for use as policy

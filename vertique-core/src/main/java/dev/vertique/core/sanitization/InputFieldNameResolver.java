@@ -17,7 +17,7 @@ import java.util.Set;
  * switches on the same literal. An intermediate parsed from the wire, however, is keyed by whatever
  * the codec published — {@code @JsonProperty("user_name")}, a {@code SNAKE_CASE} naming strategy, or
  * a {@code @JsonAlias}. Without a projection between the two, a declared
- * {@link Canonicalize}/{@link Sanitize} on a renamed field silently never runs. This contract is
+ * {@code Canonicalize}/{@code Sanitize} on a renamed field silently never runs. This contract is
  * the seam that closes that gap while keeping both this package and the input-processing engine
  * free of any codec dependency: each codec-backed implementation lives in the module that already
  * owns that codec — the Jackson-backed one in {@code vertique-json}.

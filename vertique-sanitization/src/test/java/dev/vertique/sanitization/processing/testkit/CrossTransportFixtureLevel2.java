@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.processing.testkit;
 
-import dev.vertique.core.sanitization.Sanitize;
+import dev.vertique.sanitization.Sanitize;
 import java.util.List;
 import java.util.Map;
 

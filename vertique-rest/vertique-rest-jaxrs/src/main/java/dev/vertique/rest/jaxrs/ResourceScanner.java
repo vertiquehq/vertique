@@ -3,8 +3,6 @@
 
 package dev.vertique.rest.jaxrs;
 
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.core.validation.ValidateWith;
@@ -17,6 +15,8 @@ import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceDescriptor;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import dev.vertique.sanitization.processing.ReflectiveInvocationPolicies;
 import dev.vertique.security.authz.AccessPolicyResolver;

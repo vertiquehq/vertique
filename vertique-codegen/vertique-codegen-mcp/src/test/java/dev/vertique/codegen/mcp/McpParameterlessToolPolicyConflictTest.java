@@ -23,8 +23,8 @@ class McpParameterlessToolPolicyConflictTest {
                 new McpToolProcessor(), SourceFiles.inline("dev.vertique.test.mcp.parameterless.MethodConflict", """
                         package dev.vertique.test.mcp.parameterless;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
                         import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import jakarta.inject.Inject;
@@ -55,8 +55,8 @@ class McpParameterlessToolPolicyConflictTest {
                 new McpToolProcessor(), SourceFiles.inline("dev.vertique.test.mcp.parameterless.TypeConflict", """
                         package dev.vertique.test.mcp.parameterless;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
                         import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import jakarta.inject.Inject;
@@ -88,8 +88,8 @@ class McpParameterlessToolPolicyConflictTest {
                 SourceFiles.inline("dev.vertique.test.mcp.parameterless.SignalOnlyConflict", """
                         package dev.vertique.test.mcp.parameterless;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
                         import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.tool.McpCancellationSignal;

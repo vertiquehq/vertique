@@ -7,9 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.SkipSanitization;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
 import dev.vertique.sanitization.processing.PolicyAxis;

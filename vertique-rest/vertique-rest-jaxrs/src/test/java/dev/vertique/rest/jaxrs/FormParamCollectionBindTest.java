@@ -13,16 +13,16 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.FormFieldEntityPart;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import dev.vertique.sanitization.processing.InputObjectProcessor;
 import io.swagger.v3.oas.annotations.Operation;

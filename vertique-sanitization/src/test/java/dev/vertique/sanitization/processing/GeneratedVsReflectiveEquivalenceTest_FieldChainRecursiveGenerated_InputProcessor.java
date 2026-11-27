@@ -6,10 +6,10 @@ package dev.vertique.sanitization.processing;
 import static dev.vertique.sanitization.processing.GeneratedSupport.applyString;
 import static dev.vertique.sanitization.processing.GeneratedSupport.childPath;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.FieldChainRecursiveGenerated;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
 import jakarta.annotation.Nullable;

@@ -9,9 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.sanitization.SkipSanitization;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.Sanitizer;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;

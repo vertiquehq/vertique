@@ -3,8 +3,8 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import java.util.List;
 
 /**

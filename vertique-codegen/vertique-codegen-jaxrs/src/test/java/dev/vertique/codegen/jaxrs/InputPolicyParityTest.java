@@ -145,7 +145,7 @@ class InputPolicyParityTest {
                                     package dev.vertique.test;
 
                                     import %s;
-                                    import dev.vertique.core.sanitization.Canonicalize;
+                                    import dev.vertique.sanitization.Canonicalize;
                                     import jakarta.annotation.security.PermitAll;
                                     import jakarta.ws.rs.GET;
                                     import jakarta.ws.rs.Path;
@@ -185,7 +185,7 @@ class InputPolicyParityTest {
 
                                     import %s;
                                     import %s;
-                                    import dev.vertique.core.sanitization.Canonicalize;
+                                    import dev.vertique.sanitization.Canonicalize;
                                     import jakarta.annotation.security.PermitAll;
                                     import jakarta.ws.rs.GET;
                                     import jakarta.ws.rs.Path;
@@ -223,8 +223,8 @@ class InputPolicyParityTest {
                                     package dev.vertique.test;
 
                                     import %s;
-                                    import dev.vertique.core.sanitization.Canonicalize;
-                                    import dev.vertique.core.sanitization.SkipCanonicalization;
+                                    import dev.vertique.sanitization.Canonicalize;
+                                    import dev.vertique.sanitization.SkipCanonicalization;
                                     import jakarta.annotation.security.PermitAll;
                                     import jakarta.ws.rs.GET;
                                     import jakarta.ws.rs.Path;
@@ -262,7 +262,7 @@ class InputPolicyParityTest {
                                     package dev.vertique.test;
 
                                     import %s;
-                                    import dev.vertique.core.sanitization.Sanitize;
+                                    import dev.vertique.sanitization.Sanitize;
                                     import jakarta.annotation.security.PermitAll;
                                     import jakarta.ws.rs.GET;
                                     import jakarta.ws.rs.Path;

@@ -496,23 +496,35 @@ class ApiSurfaceTest {
 
         /**
          * Every import in {@code apt/*.java} is JDK-only ({@code java.}, {@code javax.lang.model.},
-         * {@code javax.annotation.processing.}) or references this module's own base package — the
-         * {@code apt} adapter requires only the JDK {@code java.compiler} module.
+         * {@code javax.annotation.processing.}) or names one of the eight vocabulary types in {@code
+         * dev.vertique.sanitization} or a type directly in {@code dev.vertique.sanitization.processing} —
+         * the {@code apt} adapter requires only the JDK {@code java.compiler} module.
          */
         @Test
-        @DisplayName("every import in apt/*.java is JDK-only or dev.vertique.sanitization.processing")
+        @DisplayName(
+                "every import in apt/*.java is JDK-only, a vocabulary type, or in dev.vertique.sanitization.processing")
         void aptImportsAreJdkOnlyOrOwnPackage() throws IOException {
             Path srcMain = mainSourceRoot();
-            List<String> allowedPrefixes = List.of(
-                    "java.",
-                    "javax.lang.model.",
-                    "javax.annotation.processing.",
-                    "dev.vertique.sanitization.processing.");
+            List<String> allowedPrefixes = List.of("java.", "javax.lang.model.", "javax.annotation.processing.");
+            Set<String> vocabulary = Stream.of(
+                            "Canonicalize",
+                            "Canonicalizer",
+                            "CanonicalizerBinding",
+                            "Sanitize",
+                            "Sanitizer",
+                            "SanitizerBinding",
+                            "SkipCanonicalization",
+                            "SkipSanitization")
+                    .map(name -> "dev.vertique.sanitization." + name)
+                    .collect(Collectors.toSet());
             try (Stream<Path> paths = Files.walk(srcMain)) {
                 List<String> offenders = paths.filter(p -> p.toString().endsWith(".java"))
                         .filter(p -> isUnderAptPackage(srcMain, p))
                         .flatMap(p -> importsOf(p).stream()
                                 .filter(imp -> allowedPrefixes.stream().noneMatch(imp::startsWith))
+                                .filter(imp -> !vocabulary.contains(imp))
+                                .filter(imp -> !imp.startsWith("dev.vertique.sanitization.processing.")
+                                        || imp.lastIndexOf('.') != "dev.vertique.sanitization.processing".length())
                                 .map(imp -> p + " imports " + imp))
                         .toList();
                 assertTrue(

@@ -3,9 +3,9 @@
 
 package dev.vertique.sanitization.processing.testkit;
 
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.SkipSanitization;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.InvocationPolicySource;
 import dev.vertique.sanitization.processing.PolicyAxis;
 import java.lang.reflect.Method;

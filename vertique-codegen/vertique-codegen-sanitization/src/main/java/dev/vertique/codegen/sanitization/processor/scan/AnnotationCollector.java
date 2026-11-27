@@ -6,6 +6,10 @@ package dev.vertique.codegen.sanitization.processor.scan;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.sanitization.processor.scan.FieldModel.FieldKind;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.SkipCanonicalization;
+import dev.vertique.sanitization.SkipSanitization;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -71,10 +75,10 @@ public final class AnnotationCollector {
 
     // --- Annotation FQNs ---
 
-    static final String CANONICALIZE_FQN = "dev.vertique.core.sanitization.Canonicalize";
-    static final String SANITIZE_FQN = "dev.vertique.core.sanitization.Sanitize";
-    static final String SKIP_CANON_FQN = "dev.vertique.core.sanitization.SkipCanonicalization";
-    static final String SKIP_SANIT_FQN = "dev.vertique.core.sanitization.SkipSanitization";
+    static final String CANONICALIZE_FQN = Canonicalize.class.getCanonicalName();
+    static final String SANITIZE_FQN = Sanitize.class.getCanonicalName();
+    static final String SKIP_CANON_FQN = SkipCanonicalization.class.getCanonicalName();
+    static final String SKIP_SANIT_FQN = SkipSanitization.class.getCanonicalName();
 
     // --- Well-known scalar FQNs for field classification ---
 

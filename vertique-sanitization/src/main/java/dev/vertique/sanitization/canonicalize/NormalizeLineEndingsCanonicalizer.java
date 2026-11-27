@@ -3,8 +3,8 @@
 
 package dev.vertique.sanitization.canonicalize;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.sanitization.Canonicalizer;
 
 /**
  * Canonicalizer that normalizes all line endings to Unix-style LF ({@code \n}).

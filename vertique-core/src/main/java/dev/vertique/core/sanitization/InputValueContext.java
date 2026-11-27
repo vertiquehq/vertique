@@ -6,7 +6,7 @@ package dev.vertique.core.sanitization;
 /**
  * Carries contextual metadata about a string value being processed by a canonicalizer or sanitizer.
  *
- * <p>This record is passed to every {@link Canonicalizer} and {@link Sanitizer} invocation,
+ * <p>This record is passed to every {@code Canonicalizer} and {@code Sanitizer} invocation,
  * allowing implementations to make context-aware decisions. For example, a canonicalizer may
  * apply stricter normalization for {@link InputLocation#HEADER} values than for
  * {@link InputLocation#BODY} fields.

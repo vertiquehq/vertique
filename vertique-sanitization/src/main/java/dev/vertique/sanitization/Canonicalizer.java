@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.sanitization;
+package dev.vertique.sanitization;
+
+import dev.vertique.core.sanitization.InputValueContext;
 
 /**
  * Semantics-preserving normalization of string input.

@@ -3,6 +3,10 @@
 
 package dev.vertique.sanitization.processing.apt;
 
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.SkipCanonicalization;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
 import dev.vertique.sanitization.processing.InvocationPolicyResolver;
 import dev.vertique.sanitization.processing.InvocationPolicySource;
@@ -70,10 +74,10 @@ public final class ElementInvocationPolicies {
 
     // --- Annotation FQN constants ---
 
-    private static final String CANONICALIZE_FQN = "dev.vertique.core.sanitization.Canonicalize";
-    private static final String SANITIZE_FQN = "dev.vertique.core.sanitization.Sanitize";
-    private static final String SKIP_CANONICALIZATION_FQN = "dev.vertique.core.sanitization.SkipCanonicalization";
-    private static final String SKIP_SANITIZATION_FQN = "dev.vertique.core.sanitization.SkipSanitization";
+    private static final String CANONICALIZE_FQN = Canonicalize.class.getCanonicalName();
+    private static final String SANITIZE_FQN = Sanitize.class.getCanonicalName();
+    private static final String SKIP_CANONICALIZATION_FQN = SkipCanonicalization.class.getCanonicalName();
+    private static final String SKIP_SANITIZATION_FQN = SkipSanitization.class.getCanonicalName();
 
     /** The traversal terminator: {@code java.lang.Object} carries no policy declarations. */
     private static final String OBJECT_FQN = "java.lang.Object";

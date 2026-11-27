@@ -13,9 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.validation.ValidateWith;
 import dev.vertique.rest.core.security.SecurityPolicy;
+import dev.vertique.sanitization.Sanitize;
 import dev.vertique.sanitization.processing.testkit.A;
 import dev.vertique.security.authz.AccessPolicy;
 import dev.vertique.security.authz.ActionRef;

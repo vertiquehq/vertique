@@ -3,10 +3,10 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
 import java.util.function.Function;

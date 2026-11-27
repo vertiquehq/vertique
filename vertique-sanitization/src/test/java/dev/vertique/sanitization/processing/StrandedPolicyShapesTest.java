@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.SkipSanitization;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.DefaultInputObjectProcessorTest.TestStripControlsSanitizer;
 import java.lang.reflect.Type;
 import java.util.HashMap;

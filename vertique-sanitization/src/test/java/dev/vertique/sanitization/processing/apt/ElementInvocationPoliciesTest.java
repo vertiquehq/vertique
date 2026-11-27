@@ -151,7 +151,7 @@ class ElementInvocationPoliciesTest {
         JavaFileObject iface = SourceFiles.inline(pkg + ".IDirect", """
                 package %s;
                 public interface IDirect {
-                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                     void bar(String p);
                 }
                 """.formatted(pkg));
@@ -379,7 +379,7 @@ class ElementInvocationPoliciesTest {
                     """);
             case "type-chain" -> single(pkg, "TypeChain", """
                     package %s;
-                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                     public class TypeChain {
                         public void bar(String p) {}
                     }
@@ -387,46 +387,46 @@ class ElementInvocationPoliciesTest {
             case "method-chain" -> single(pkg, "MethodChain", """
                     package %s;
                     public class MethodChain {
-                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
                         public void bar(String p) {}
                     }
                     """);
             case "method-overrides-type" -> single(pkg, "MethodOverridesType", """
                     package %s;
-                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                     public class MethodOverridesType {
-                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
                         public void bar(String p) {}
                     }
                     """);
             case "method-skip-over-type-chain" -> single(pkg, "MethodSkipOverTypeChain", """
                     package %s;
-                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                     public class MethodSkipOverTypeChain {
-                        @dev.vertique.core.sanitization.SkipSanitization
+                        @dev.vertique.sanitization.SkipSanitization
                         public void bar(String p) {}
                     }
                     """);
             case "method-skip-only" -> single(pkg, "MethodSkipOnly", """
                     package %s;
                     public class MethodSkipOnly {
-                        @dev.vertique.core.sanitization.SkipSanitization
+                        @dev.vertique.sanitization.SkipSanitization
                         public void bar(String p) {}
                     }
                     """);
             case "parameter-overrides-type" -> single(pkg, "ParameterOverridesType", """
                     package %s;
-                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                     public class ParameterOverridesType {
                         public void bar(
-                                @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.C.class) String p) {}
+                                @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.C.class) String p) {}
                     }
                     """);
             case "parameter-skip-over-type-chain" -> single(pkg, "ParameterSkipOverTypeChain", """
                     package %s;
-                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                     public class ParameterSkipOverTypeChain {
-                        public void bar(@dev.vertique.core.sanitization.SkipSanitization String p) {}
+                        public void bar(@dev.vertique.sanitization.SkipSanitization String p) {}
                     }
                     """);
             case "interface-method-chain" ->
@@ -435,7 +435,7 @@ class ElementInvocationPoliciesTest {
                                 SourceFiles.inline(pkg + ".InterfaceMethodChainIface", """
                                     package %s;
                                     public interface InterfaceMethodChainIface {
-                                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
                                         void bar(String p);
                                     }
                                     """.formatted(pkg)),
@@ -452,7 +452,7 @@ class ElementInvocationPoliciesTest {
                         List.of(
                                 SourceFiles.inline(pkg + ".SuperclassTypeChainBase", """
                                     package %s;
-                                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                                     public class SuperclassTypeChainBase {
                                         public void bar(String p) {}
                                     }
@@ -476,7 +476,7 @@ class ElementInvocationPoliciesTest {
                                     package %s;
                                     public interface InterfaceParameterChainIface {
                                         void bar(
-                                                @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.C.class) String p);
+                                                @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.C.class) String p);
                                     }
                                     """.formatted(pkg)),
                                 SourceFiles.inline(pkg + ".InterfaceParameterChain", """
@@ -489,17 +489,17 @@ class ElementInvocationPoliciesTest {
                         pkg + ".InterfaceParameterChain");
             case "independent-axes" -> single(pkg, "IndependentAxes", """
                     package %s;
-                    @dev.vertique.core.sanitization.Canonicalize(dev.vertique.sanitization.processing.testkit.K.class)
+                    @dev.vertique.sanitization.Canonicalize(dev.vertique.sanitization.processing.testkit.K.class)
                     public class IndependentAxes {
-                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
                         public void bar(String p) {}
                     }
                     """);
             case "same-method-conflict" -> single(pkg, "SameMethodConflict", """
                     package %s;
                     public class SameMethodConflict {
-                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
-                        @dev.vertique.core.sanitization.SkipSanitization
+                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                        @dev.vertique.sanitization.SkipSanitization
                         public void bar(String p) {}
                     }
                     """);
@@ -507,8 +507,8 @@ class ElementInvocationPoliciesTest {
                     package %s;
                     public class SameParameterConflict {
                         public void bar(
-                                @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.C.class)
-                                @dev.vertique.core.sanitization.SkipSanitization String p) {}
+                                @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.C.class)
+                                @dev.vertique.sanitization.SkipSanitization String p) {}
                     }
                     """);
             case "interface-method-skip" ->
@@ -517,7 +517,7 @@ class ElementInvocationPoliciesTest {
                                 SourceFiles.inline(pkg + ".InterfaceMethodSkipIface", """
                                     package %s;
                                     public interface InterfaceMethodSkipIface {
-                                        @dev.vertique.core.sanitization.SkipSanitization
+                                        @dev.vertique.sanitization.SkipSanitization
                                         void bar(String p);
                                     }
                                     """.formatted(pkg)),
@@ -535,7 +535,7 @@ class ElementInvocationPoliciesTest {
                                 SourceFiles.inline(pkg + ".IFoo", """
                                     package %s;
                                     public interface IFoo {
-                                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
                                         void bar(String p);
                                     }
                                     """.formatted(pkg)),
@@ -543,7 +543,7 @@ class ElementInvocationPoliciesTest {
                                     package %s;
                                     public class FooImpl implements IFoo {
                                         @Override
-                                        @dev.vertique.core.sanitization.SkipSanitization
+                                        @dev.vertique.sanitization.SkipSanitization
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg))),
@@ -554,7 +554,7 @@ class ElementInvocationPoliciesTest {
                                 SourceFiles.inline(pkg + ".OverrideReplacesChainBase", """
                                     package %s;
                                     public class OverrideReplacesChainBase {
-                                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
+                                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.B.class)
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg)),
@@ -562,7 +562,7 @@ class ElementInvocationPoliciesTest {
                                     package %s;
                                     public class OverrideReplacesChain extends OverrideReplacesChainBase {
                                         @Override
-                                        @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                                        @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg))),
@@ -572,14 +572,14 @@ class ElementInvocationPoliciesTest {
                         List.of(
                                 SourceFiles.inline(pkg + ".SupertypeSkipConflictBase", """
                                     package %s;
-                                    @dev.vertique.core.sanitization.SkipSanitization
+                                    @dev.vertique.sanitization.SkipSanitization
                                     public class SupertypeSkipConflictBase {
                                         public void bar(String p) {}
                                     }
                                     """.formatted(pkg)),
                                 SourceFiles.inline(pkg + ".SupertypeSkipConflict", """
                                     package %s;
-                                    @dev.vertique.core.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
+                                    @dev.vertique.sanitization.Sanitize(dev.vertique.sanitization.processing.testkit.A.class)
                                     public class SupertypeSkipConflict extends SupertypeSkipConflictBase {}
                                     """.formatted(pkg))),
                         pkg + ".SupertypeSkipConflict");

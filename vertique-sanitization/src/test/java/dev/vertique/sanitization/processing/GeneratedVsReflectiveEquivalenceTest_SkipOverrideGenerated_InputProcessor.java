@@ -7,10 +7,10 @@ import static dev.vertique.sanitization.processing.GeneratedSupport.applyString;
 import static dev.vertique.sanitization.processing.GeneratedSupport.childPath;
 import static dev.vertique.sanitization.processing.GeneratedSupport.dispatchObjectCollection;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.PlainInner;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.SkipOverrideGenerated;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;

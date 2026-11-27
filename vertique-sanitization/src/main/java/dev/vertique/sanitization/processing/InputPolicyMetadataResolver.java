@@ -4,13 +4,13 @@
 package dev.vertique.sanitization.processing;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.sanitization.SkipCanonicalization;
-import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.Sanitizer;
+import dev.vertique.sanitization.SkipCanonicalization;
+import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;

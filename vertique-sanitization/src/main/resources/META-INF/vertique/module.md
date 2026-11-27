@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 Provides built-in canonicalization and sanitization processors, Dagger multibinding wiring, the `ProcessorResolver`, and the transport-neutral input-processing engine (`dev.vertique.sanitization.processing.InputObjectProcessor`) that applies the declared policies to structured input.
 
-The module bridges the annotation model defined in `dev.vertique.core.sanitization` (interfaces and annotations) with concrete implementations. Including `SanitizationModule` in a Dagger component activates all built-in processors and wires up `InputObjectProcessor` via `InputObjectProcessor.createDefault(...)`, satisfying the `@BindsOptionalOf InputObjectProcessor` declared by `RestModule`.
+The module declares the annotation model in `dev.vertique.sanitization` (interfaces, annotations and binding records) and bridges it with concrete implementations. Including `SanitizationModule` in a Dagger component activates all built-in processors and wires up `InputObjectProcessor` via `InputObjectProcessor.createDefault(...)`, satisfying the `@BindsOptionalOf InputObjectProcessor` declared by `RestModule`.
 
 ---
 
@@ -124,7 +124,7 @@ The HTML sanitizers (`StripAllHtmlSanitizer`, `BasicHtmlSanitizer`, `LinksHtmlSa
 
 ## Annotation Model
 
-Canonicalization and sanitization are driven by annotations from `dev.vertique.core.sanitization`.
+Canonicalization and sanitization are driven by annotations from `dev.vertique.sanitization`.
 
 ### Placement and Scope
 
@@ -261,11 +261,11 @@ Custom processors are contributed via `@Provides @IntoSet` in application or lib
 
 ## Input Processing Engine
 
-The engine in `dev.vertique.sanitization.processing` is transport-neutral: it operates on already-decoded values and has no dependency on any REST or transport layer. It processes decoded input values — request bodies, message payloads or other structured input — through the canonicalization and sanitization policies declared in `dev.vertique.core.sanitization`.
+The engine in `dev.vertique.sanitization.processing` is transport-neutral: it operates on already-decoded values and has no dependency on any REST or transport layer. It processes decoded input values — request bodies, message payloads or other structured input — through the canonicalization and sanitization policies declared with the annotations in `dev.vertique.sanitization`.
 
 ### Policy Composition
 
-Input processing walks a decoded input object and applies the canonicalizers and sanitizers its declared policies select, producing a processed value with the same shape. Policies are declared with the annotation model in `dev.vertique.core.sanitization` (in the artifact `dev.vertique:vertique-core`); this module supplies the processing engine that honors them.
+Input processing walks a decoded input object and applies the canonicalizers and sanitizers its declared policies select, producing a processed value with the same shape. Policies are declared with the annotation model in `dev.vertique.sanitization`; this module supplies the processing engine that honors them.
 
 Three policy layers compose for every string value, in this order:
 
@@ -370,7 +370,7 @@ Memoization is not mutual exclusion: threads racing on a cold class may each run
 
 `processInput(...)` accepts the decoded intermediate (`Map<String, Object>` for objects, `List<Object>` for arrays, or a raw value; `null` is returned unchanged) and returns a new structure with string values transformed.
 
-`nameResolver` is a `dev.vertique.core.sanitization.InputFieldNameResolver` — the codec-neutral wire-name → Java-property-name projection the engine consults for every intermediate key before looking that field's policies up. The contract is declared in `vertique-core` beside `InputLocation`, `Canonicalizer` and `Sanitizer`; codec-backed implementations live in the module owning that codec (`JacksonFieldNameResolver` in `vertique-json`), which is what keeps this module free of any codec dependency. Pass `InputFieldNameResolver.IDENTITY` when the intermediate's keys are already Java property names — including every call that processes a bare `String`, where there is no object whose fields could be renamed.
+`nameResolver` is a `dev.vertique.core.sanitization.InputFieldNameResolver` — the codec-neutral wire-name → Java-property-name projection the engine consults for every intermediate key before looking that field's policies up. The contract is declared in `vertique-core` beside `InputLocation` and `InputValueContext`; codec-backed implementations live in the module owning that codec (`JacksonFieldNameResolver` in `vertique-json`), which is what keeps this module free of any codec dependency. Pass `InputFieldNameResolver.IDENTITY` when the intermediate's keys are already Java property names — including every call that processes a bare `String`, where there is no object whose fields could be renamed.
 
 `targetType` may be anything that reduces to a class: a class, a parameterized type, a bounded wildcard or type variable, an `Optional` of any of those, or an array of them. A type that reduces to no class at all — a `GenericArrayType` such as `List<Inner>[]`, or a foreign `Type` implementation — cannot be processed: the call throws `IllegalStateException` when `policies` is non-empty, because the caller declared processing that provably cannot run, and returns `input` unchanged when `policies` is empty.
 
@@ -575,7 +575,7 @@ The default engine implementation, the annotation-metadata resolver and its meta
 
 ## Dependencies
 
-- `dev.vertique:vertique-core` — the canonicalization and sanitization contracts and annotation model this module executes, including `InputFieldNameResolver`, the wire-name projection every engine entry point takes.
+- `dev.vertique:vertique-core` — the input types this module's contracts take, `InputLocation` and `InputValueContext`, and `InputFieldNameResolver`, the wire-name projection every engine entry point takes.
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
 - `jakarta.annotation:jakarta.annotation-api` — the `@Nullable` marker on public signatures such as `precomputeFieldNameResolution` and `GeneratedInputProcessor.process`.

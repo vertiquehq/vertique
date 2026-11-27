@@ -5,10 +5,10 @@ package dev.vertique.sanitization.processing;
 
 import static dev.vertique.sanitization.processing.GeneratedSupport.applyString;
 
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.ProjectionGenerated;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.TestStripDots;
 import dev.vertique.sanitization.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;

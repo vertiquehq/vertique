@@ -5,11 +5,11 @@ package dev.vertique.sanitization.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.Sanitizer;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
