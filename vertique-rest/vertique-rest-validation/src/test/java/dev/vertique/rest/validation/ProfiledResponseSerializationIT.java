@@ -12,10 +12,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMounts;
@@ -111,14 +111,14 @@ public class ProfiledResponseSerializationIT {
      *
      * @return the {@code response-profile} profile
      */
-    private static JsonMapperProfile opinionatedResponseProfile() {
+    private static JsonProfileCodec opinionatedResponseProfile() {
         ObjectMapper mapper = JsonMapper.builder()
                 .addModule(new JavaTimeModule())
                 .addModule(VertxJsonSupport.module())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .build();
         mapper.addMixIn(ProfiledEntity.class, NonNullMixin.class);
-        return JsonMapperProfiles.of(JsonProfileId.of(OPINIONATED_PROFILE), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of(OPINIONATED_PROFILE), mapper);
     }
 
     /** Mix-in applying {@code NON_NULL} inclusion to the response entity only (not the probe samples). */
@@ -268,7 +268,7 @@ public class ProfiledResponseSerializationIT {
             String path,
             java.util.function.Consumer<String> assertion) {
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(opinionatedResponseProfile())
+                .addJsonProfileCodec(opinionatedResponseProfile())
                 .build();
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), Set.of(resource))
                 .compose(s -> {

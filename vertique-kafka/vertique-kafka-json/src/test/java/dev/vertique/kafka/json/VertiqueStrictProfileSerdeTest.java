@@ -6,7 +6,7 @@ package dev.vertique.kafka.json;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Mirrors the direct-construction wiring used by {@link JsonSerdeProviderProfileTest} and
  * {@link JsonSerdeProviderTest}: the provider is built from a
- * {@link DefaultJsonMapperProfileRegistry} seeded with no application profiles (the {@code system},
+ * {@link DefaultJsonProfileRegistry} seeded with no application profiles (the {@code system},
  * {@code vertique}, and {@code vertique-strict} built-ins are always present) and
  * {@link JsonConfig#defaults()}, with the endpoint bag selecting {@code vertique-strict} via the
  * {@code jsonProfile} key.
@@ -35,7 +35,7 @@ class VertiqueStrictProfileSerdeTest {
     record Money(BigDecimal amount) {}
 
     private final JsonSerdeProvider provider =
-            new JsonSerdeProvider(new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults());
+            new JsonSerdeProvider(new DefaultJsonProfileRegistry(Set.of()), JsonConfig.defaults());
 
     private static JsonObject bagWithProfile(String profileId) {
         return new JsonObject().put("jsonProfile", profileId);

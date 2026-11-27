@@ -26,10 +26,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -284,7 +284,7 @@ class OperationInventoryTest {
     void responseShapeRecordsReturnTypeAndOutputProfile(Vertx vertx) throws Exception {
         // Given: a class-level profile, a method-level profile, and a configured profile
         String configProfileId = "inventory-config-profile";
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(
                 appProfile(ResponsesResource.CLASS_PROFILE_ID),
                 appProfile(ResponsesResource.METHOD_PROFILE_ID),
                 appProfile(configProfileId)));
@@ -293,7 +293,7 @@ class OperationInventoryTest {
         MountPublication publication = buildMount(
                 vertx,
                 TestFactories.builder()
-                        .jsonMapperProfileRegistry(registry)
+                        .jsonProfileRegistry(registry)
                         .jaxRsConfig(JaxRsConfig.builder()
                                 .validationStrategy(NoneValidationStrategy.ID)
                                 .jsonProfile(configProfileId)
@@ -1610,8 +1610,8 @@ class OperationInventoryTest {
                 .build());
     }
 
-    private static JsonMapperProfile appProfile(String id) {
-        return JsonMapperProfiles.of(
+    private static JsonProfileCodec appProfile(String id) {
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of(id), new ObjectMapper().registerModule(VertxJsonSupport.module()));
     }
 }

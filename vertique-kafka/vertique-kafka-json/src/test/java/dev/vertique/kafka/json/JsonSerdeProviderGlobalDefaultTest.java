@@ -13,12 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JsonConfig;
-import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
@@ -74,20 +75,20 @@ class JsonSerdeProviderGlobalDefaultTest {
      *
      * @return registry with two strict profiles
      */
-    private static DefaultJsonMapperProfileRegistry strictRegistry() {
-        JsonMapperProfile profileB = JsonMapperProfiles.of(
+    private static DefaultJsonProfileRegistry strictRegistry() {
+        JsonProfileCodec profileB = Jackson2JsonProfiles.of(
                 PROFILE_B,
                 JsonMapper.builder()
                         .addModule(VertxJsonSupport.module())
                         .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
                         .build());
-        JsonMapperProfile profileC = JsonMapperProfiles.of(
+        JsonProfileCodec profileC = Jackson2JsonProfiles.of(
                 PROFILE_C,
                 JsonMapper.builder()
                         .addModule(VertxJsonSupport.module())
                         .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
                         .build());
-        return new DefaultJsonMapperProfileRegistry(Set.of(profileB, profileC));
+        return new DefaultJsonProfileRegistry(Set.of(profileB, profileC));
     }
 
     /**
@@ -97,7 +98,7 @@ class JsonSerdeProviderGlobalDefaultTest {
      * @param jsonConfig the global JSON config carrying {@code json.jsonProfile}
      * @return the wired provider
      */
-    private static JsonSerdeProvider providerWith(DefaultJsonMapperProfileRegistry registry, JsonConfig jsonConfig) {
+    private static JsonSerdeProvider providerWith(DefaultJsonProfileRegistry registry, JsonConfig jsonConfig) {
         return new JsonSerdeProvider(registry, jsonConfig);
     }
 
@@ -138,7 +139,7 @@ class JsonSerdeProviderGlobalDefaultTest {
         @Test
         @DisplayName("bag blank + json.jsonProfile='c' → DeserializationException (strict mapper used)")
         void globalAppliesWhenBagBlank() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // When: bag has no jsonProfile but json.jsonProfile="c" (a strict profile)
@@ -157,7 +158,7 @@ class JsonSerdeProviderGlobalDefaultTest {
         @Test
         @DisplayName("bag='b', global='c' → 'b' mapper used (strict, rejects coercion)")
         void bagIdOverGlobal() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // When: bag carries "b"; global is "c". Both are strict, so coercion is rejected.
@@ -176,10 +177,11 @@ class JsonSerdeProviderGlobalDefaultTest {
         @Test
         @DisplayName("bag blank + json.jsonProfile=null → vertique mapper used (accepts string->int coercion)")
         void vertiqueFloor() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, JsonConfig.defaults()); // jsonProfile == null
 
-            // When: nothing configured — must fall back to registry.mapper(vertique) (the vertique floor).
+            // When: nothing configured — must fall back to objectMapper(registry.profile(vertique)) (the vertique
+            // floor).
             // The permissive vertique mapper accepts string->int coercion, so deserialization succeeds.
             assertDoesNotThrow(
                     () -> deserialize(provider, emptyBag()),
@@ -195,7 +197,7 @@ class JsonSerdeProviderGlobalDefaultTest {
         @DisplayName(
                 "bag blank + json.jsonProfile='no-such' → JsonProfileConfigurationException at provider construction")
         void unknownGlobalIdFailsFast() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
 
             // When: global id is not registered, the exception is thrown at provider construction time
             // (the global-default mapper is pre-resolved once in the constructor to avoid per-message
@@ -218,13 +220,13 @@ class JsonSerdeProviderGlobalDefaultTest {
      * Supporting structural check: {@link JsonSerdeProvider}, {@link JacksonKafkaSerializer} and
      * {@link JacksonKafkaDeserializer} production source contains no {@code DatabindCodec} token.
      *
-     * <p>Given: a seeded {@link DefaultJsonMapperProfileRegistry} (no application profiles — only the
+     * <p>Given: a seeded {@link DefaultJsonProfileRegistry} (no application profiles — only the
      * built-in {@code system}, {@code vertique}, {@code vertique-strict} reserved profiles) and
      * {@link JsonConfig#defaults()} (no {@code json.jsonProfile} configured).
      * When: {@code resolveMapper} runs once for a blank bag, then once for a bag carrying
      * {@code jsonProfile="system"}.
-     * Then: the blank case is {@code assertSame} to {@code registry.mapper(JsonProfileId.of("vertique"))};
-     * the {@code system} bag case is {@code assertSame} to {@code registry.mapper(JsonProfileId.SYSTEM)}
+     * Then: the blank case is {@code assertSame} to {@code objectMapper(registry.profile(JsonProfileId.of("vertique")))};
+     * the {@code system} bag case is {@code assertSame} to {@code objectMapper(registry.profile(JsonProfileId.SYSTEM))}
      * — the registry's trusted {@code system} copy — and {@code assertNotSame} to
      * {@code DatabindCodec.mapper()} directly; and no production file in this package mentions
      * {@code DatabindCodec}.
@@ -238,19 +240,19 @@ class JsonSerdeProviderGlobalDefaultTest {
     @DisplayName("blankBagResolvesVertiqueAndBagSystemResolvesSystem: blank bag -> registry vertique mapper; "
             + "bag jsonProfile=system -> registry system mapper copy, never DatabindCodec.mapper()")
     void blankBagResolvesVertiqueAndBagSystemResolvesSystem() throws IOException {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
         JsonSerdeProvider provider = providerWith(registry, JsonConfig.defaults());
 
         ObjectMapper resolvedForBlankBag = resolveMapperViaReflection(provider, emptyBag());
         assertSame(
-                registry.mapper(JsonProfileId.of("vertique")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                 resolvedForBlankBag,
                 "a blank bag must resolve the registry's 'vertique' mapper, not the raw DatabindCodec.mapper()"
                         + " floor");
 
         ObjectMapper resolvedForSystemBag = resolveMapperViaReflection(provider, bagWith("system"));
         assertSame(
-                registry.mapper(JsonProfileId.SYSTEM),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                 resolvedForSystemBag,
                 "bag jsonProfile='system' must resolve the registry's 'system' mapper copy");
         assertNotSame(
@@ -323,18 +325,18 @@ class JsonSerdeProviderGlobalDefaultTest {
         @DisplayName("deserializer: bag='system' + global='c' → registry's system mapper used (permissive, coercion"
                 + " accepted)")
         void deserializer_explicitSystemIgnoresGlobal() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
             // global is "c" (strict, rejects coercion), but the bag explicitly selects "system"
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
-            // registry.mapper(SYSTEM) is a stable, permissive mapper — verify we get it by observing
+            // objectMapper(registry.profile(SYSTEM)) is a stable, permissive mapper — verify we get it by observing
             // that string→int coercion succeeds (strict mapper would throw).
             Counter result = assertDoesNotThrow(
                     () -> deserialize(provider, bagWith("system")),
                     "bag='system' must resolve the registry's system mapper and accept coercion, not fall through"
                             + " to the strict global");
             assertSame(
-                    registry.mapper(JsonProfileId.SYSTEM),
+                    Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                     resolveMapperViaReflection(provider, bagWith("system")),
                     "resolveMapper must return the registry's system mapper for an explicit 'system' bag id"
                             + " regardless of the configured global default");
@@ -347,13 +349,13 @@ class JsonSerdeProviderGlobalDefaultTest {
         @Test
         @DisplayName("serializer: bag='system' + global='c' → registry's system mapper used")
         void serializer_explicitSystemIgnoresGlobal() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // Confirm the mapper instance is the registry's system mapper
             ObjectMapper resolved = resolveMapperViaReflection(provider, bagWith("system"));
             assertSame(
-                    registry.mapper(JsonProfileId.SYSTEM),
+                    Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                     resolved,
                     "serializer with bag='system' must use the registry's system mapper, not fall through to"
                             + " global");
@@ -382,12 +384,12 @@ class JsonSerdeProviderGlobalDefaultTest {
         @Test
         @DisplayName("bag='b', global='c' → profile-b mapper used (not profile-c, not vertx)")
         void explicitNonVertxProfileWinsOverGlobal() {
-            DefaultJsonMapperProfileRegistry registry = strictRegistry();
+            DefaultJsonProfileRegistry registry = strictRegistry();
             // global is "c" but bag explicitly selects "b"
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
-            ObjectMapper profileBMapper = registry.mapper(PROFILE_B);
-            ObjectMapper profileCMapper = registry.mapper(PROFILE_C);
+            ObjectMapper profileBMapper = Jackson2JsonProfileCodec.objectMapper(registry.profile(PROFILE_B));
+            ObjectMapper profileCMapper = Jackson2JsonProfileCodec.objectMapper(registry.profile(PROFILE_C));
 
             ObjectMapper resolved = resolveMapperViaReflection(provider, bagWith("b"));
 

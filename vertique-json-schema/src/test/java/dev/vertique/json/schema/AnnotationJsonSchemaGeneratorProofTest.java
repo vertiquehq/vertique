@@ -25,7 +25,7 @@ import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
 import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -86,7 +86,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
     @DisplayName("Input mode applies the vertique-strict BigDecimal fragment to the property")
     void inputProfileAppliesStrictBigDecimalFragment() {
         // Given: the real built-in vertique-strict profile.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
 
         // When: an input-mode generator produces the document for a BigDecimal-bearing POJO.
         String canonical =
@@ -113,7 +113,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
     @DisplayName("Output mode applies the same symmetric BOTH override byte-for-byte")
     void outputProfileAppliesStrictBigDecimalFragment() {
         // Given: the real built-in vertique-strict profile, whose only override is BOTH-directional.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
 
         // When: both directions generate the same type.
         String input =
@@ -130,7 +130,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
     @DisplayName("A property refinement conjoins with the profile fragment without overwriting it")
     void propertyRefinementConjoinsWithoutOverwrite() {
         // Given: the strict profile and a property additionally narrowed by Swagger metadata.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
 
         // When: the input-mode generator produces the document.
         String canonical = AnnotationJsonSchemaGenerator.forInputProfile(strict)
@@ -161,7 +161,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
     @DisplayName("A resolved List<BigDecimal> element receives the profile fragment")
     void listOfBigDecimalElementReceivesFragment() {
         // Given: the strict profile and a resolved List<BigDecimal>.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
 
         // When: the input-mode generator produces the document.
         String canonical = AnnotationJsonSchemaGenerator.forInputProfile(strict)
@@ -192,7 +192,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
     @DisplayName("Independent instances and repeated calls produce byte-identical documents")
     void determinismAcrossIndependentInstances() {
         // Given: two independent generators per mode, built from equal inputs.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
         AnnotationJsonSchemaGenerator defaultOne = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
         AnnotationJsonSchemaGenerator defaultTwo = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
         AnnotationJsonSchemaGenerator inputOne = AnnotationJsonSchemaGenerator.forInputProfile(strict);

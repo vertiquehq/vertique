@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.rest.core.ProblemDetail;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.ExceptionMapper;
@@ -64,7 +65,8 @@ class BusinessRuleMapperRecipeTest {
 
         // Then: the response is the application's 422 problem with code beside the standard members
         assertEquals(422, response.getStatus());
-        JsonNode body = VertiqueJson.mapper().valueToTree(assertInstanceOf(ProblemDetail.class, response.getEntity()));
+        JsonNode body = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                .valueToTree(assertInstanceOf(ProblemDetail.class, response.getEntity()));
         assertEquals("RULE001", body.path("code").asText());
         assertEquals("credit limit exceeded", body.path("detail").asText());
         assertEquals(422, body.path("status").asInt());

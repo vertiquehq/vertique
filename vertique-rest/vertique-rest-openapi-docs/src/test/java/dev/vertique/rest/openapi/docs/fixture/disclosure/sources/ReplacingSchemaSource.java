@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.disclosure.sources;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
@@ -51,7 +51,7 @@ public final class ReplacingSchemaSource implements OperationSchemaSource {
      *     replaced body could not carry the delegate's manifest
      */
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         OperationSchemas returned = delegate.schemasFor(op, profile);
         JsonObject body = returned.bodySchema().orElse(null);
         if (body == null) {

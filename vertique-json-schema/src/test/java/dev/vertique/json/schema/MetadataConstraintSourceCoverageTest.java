@@ -16,9 +16,9 @@ import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import jakarta.validation.Validator;
 import java.lang.reflect.Type;
 import java.util.Arrays;
@@ -45,8 +45,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class MetadataConstraintSourceCoverageTest {
 
-    private static JsonMapperProfile vertiqueProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec vertiqueProfile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     private static JsonNode metadataDocument(Type type, Validator validator) {
@@ -1152,7 +1152,7 @@ class MetadataConstraintSourceCoverageTest {
     @DisplayName("fallback identity: forInputProfile(profile) matches forInputProfile(profile, null) for every"
             + " coverage fixture, not just one type")
     void fallbackMatchesSingleArgumentFactoryForEveryCoverageFixture(Class<?> fixture) {
-        // The single-argument factory (AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile))
+        // The single-argument factory (AnnotationJsonSchemaGenerator#forInputProfile(JsonProfileCodec))
         // and the two-argument overload called with an explicit null Validator must be indistinguishable
         // generators for every shape this module's own coverage exercises, not merely the one DTO
         // fallbackWithoutValidatorMatchesWalk above happens to use — a divergence limited to one

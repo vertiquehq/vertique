@@ -25,7 +25,7 @@ import javax.tools.JavaFileObject;
  * own {@code ComposeValidationStep} requests from every real application's root component — so
  * neither fixture needs to stand up the mount's unrelated bindings ({@code SecurityRuntime},
  * {@code IdentityResolutionMiddleware}, ...): only {@link McpServerConfig} and
- * {@code JsonMapperProfileRegistry}, which {@code McpJsonProfileDefaultValidator} (the module's other
+ * {@code JsonProfileRegistry}, which {@code McpJsonProfileDefaultValidator} (the module's other
  * compose validator) also requires whenever the set is materialized.
  */
 final class McpInputProcessingCompositionCompileTestFixture {
@@ -88,8 +88,8 @@ final class McpInputProcessingCompositionCompileTestFixture {
      * Supplies the two bindings {@code McpJsonProfileDefaultValidator} needs whenever
      * {@code Set<ComposeValidator>} is materialized: {@link McpServerConfig} (a real, disabled,
      * default instance — {@code jsonProfile()} is {@code null}, so
-     * {@code JsonMapperProfileRegistry#validateConfigured} is a no-op) and a
-     * {@code JsonMapperProfileRegistry} double whose methods are never actually invoked by this
+     * {@code JsonProfileRegistry#validateConfigured} is a no-op) and a
+     * {@code JsonProfileRegistry} double whose methods are never actually invoked by this
      * fixture and therefore only need to exist, not behave.
      */
     private static final String TEST_EXTERNALS_MODULE = """
@@ -98,8 +98,8 @@ final class McpInputProcessingCompositionCompileTestFixture {
             import com.fasterxml.jackson.databind.ObjectMapper;
             import dagger.Module;
             import dagger.Provides;
-            import dev.vertique.core.json.JsonMapperProfile;
-            import dev.vertique.core.json.JsonMapperProfileRegistry;
+            import dev.vertique.core.json.JsonProfileCodec;
+            import dev.vertique.core.json.JsonProfileRegistry;
             import dev.vertique.core.json.JsonProfileId;
             import jakarta.inject.Singleton;
             import java.util.Set;
@@ -115,15 +115,10 @@ final class McpInputProcessingCompositionCompileTestFixture {
 
                 @Provides
                 @Singleton
-                static JsonMapperProfileRegistry registry() {
-                    return new JsonMapperProfileRegistry() {
+                static JsonProfileRegistry registry() {
+                    return new JsonProfileRegistry() {
                         @Override
-                        public ObjectMapper mapper(JsonProfileId id) {
-                            throw new UnsupportedOperationException("not needed by this compile fixture");
-                        }
-
-                        @Override
-                        public JsonMapperProfile profile(JsonProfileId id) {
+                        public JsonProfileCodec profile(JsonProfileId id) {
                             throw new UnsupportedOperationException("not needed by this compile fixture");
                         }
 

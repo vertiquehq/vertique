@@ -3,8 +3,8 @@
 
 package dev.vertique.rest.openapi.docs.schema;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,7 +23,7 @@ import java.util.Objects;
  */
 public final class OutputSchemaGeneratorCache {
 
-    private final JsonMapperProfileRegistry profiles;
+    private final JsonProfileRegistry profiles;
     private final Map<String, AnnotationJsonSchemaGenerator> generators = new HashMap<>();
 
     /**
@@ -31,7 +31,7 @@ public final class OutputSchemaGeneratorCache {
      *
      * @param profiles the registry the profiles are resolved through
      */
-    public OutputSchemaGeneratorCache(JsonMapperProfileRegistry profiles) {
+    public OutputSchemaGeneratorCache(JsonProfileRegistry profiles) {
         this.profiles = Objects.requireNonNull(profiles, "profiles");
     }
 

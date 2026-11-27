@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.TechnicalException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JacksonDefaults;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
@@ -32,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * and custom {@link ObjectMapper} configuration propagation.
  *
  * <p>Additionally proves the no-arg {@link JacksonKafkaSerializer}/
- * {@link JacksonKafkaDeserializer} constructors resolve {@link VertiqueJson#mapper()} lazily, per
+ * {@link JacksonKafkaDeserializer} constructors resolve {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} lazily, per
  * call — not eagerly at construction — by building the no-arg serde <em>before</em>
  * {@link VertiqueJson#install} and exercising it <em>after</em>. {@code @AfterEach} restores the raw
  * Vert.x delegate so the process-wide install does not leak across tests (the reset seam is opened by
@@ -59,12 +60,12 @@ class JacksonKafkaSerializerTest {
      * {@code new JacksonKafkaSerializer<>()} is built <strong>before</strong>
      * {@link VertiqueJson#install}. Serializing a record with a {@code null} property
      * <strong>after</strong> the install must omit that property — proof that the no-arg
-     * constructor resolved {@link VertiqueJson#mapper()} lazily, at serialize time, not eagerly at
+     * constructor resolved {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} lazily, at serialize time, not eagerly at
      * construction (which would have captured the raw pre-install mapper, which does not apply
      * {@code NON_NULL}).
      *
      * <p>Given: {@code new JacksonKafkaSerializer<>()} constructed before
-     * {@code VertiqueJson.install(JsonProfileId.of("kafka-test"), nonNullMapper)}, where
+     * {@code VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("kafka-test"), nonNullMapper))}, where
      * {@code nonNullMapper} is the sanctioned seed ({@code JacksonDefaults.applySystem(new
      * ObjectMapper())}, satisfying the install seam's {@code VertxModule} invariant) with
      * {@code NON_NULL} serialization inclusion.
@@ -76,7 +77,7 @@ class JacksonKafkaSerializerTest {
      * construction, before the install runs, would emit {@code note} as JSON {@code null}, because
      * the raw mapper has no {@code NON_NULL} inclusion, and the assertion would fail.
      *
-     * <p><strong>Sensitivity proof:</strong> capturing {@code VertiqueJson.mapper()} eagerly in the
+     * <p><strong>Sensitivity proof:</strong> capturing {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} eagerly in the
      * constructor (instead of resolving it per call) still fails this assertion — the timing, not
      * merely the mapper source, is what the proof pins.
      */
@@ -88,7 +89,7 @@ class JacksonKafkaSerializerTest {
 
         ObjectMapper nonNullMapper = JacksonDefaults.applySystem(new ObjectMapper());
         nonNullMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
-        VertiqueJson.install(JsonProfileId.of("kafka-test"), nonNullMapper);
+        VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("kafka-test"), nonNullMapper));
 
         byte[] bytes =
                 serializer.serialize(new NullableNoteEvent("order", null), "test-topic", KafkaRecordHeaders.empty());
@@ -105,7 +106,7 @@ class JacksonKafkaSerializerTest {
      * Mirror case: the no-arg {@link JacksonKafkaDeserializer} constructor.
      *
      * <p>Given: {@code new JacksonKafkaDeserializer<>(BoundEvent.class)} constructed before
-     * {@code VertiqueJson.install(JsonProfileId.of("kafka-test"), lenientMapper)}, where
+     * {@code VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("kafka-test"), lenientMapper))}, where
      * {@code lenientMapper} is the sanctioned seed with {@code FAIL_ON_UNKNOWN_PROPERTIES} disabled.
      * When: the deserializer binds a payload carrying an unknown property, after the install.
      * Then: the deserialization succeeds and the known properties bind correctly.
@@ -114,7 +115,7 @@ class JacksonKafkaSerializerTest {
      * the install, would reject the unknown property with {@link DeserializationException}, because
      * the raw Vert.x mapper has {@code FAIL_ON_UNKNOWN_PROPERTIES} enabled (Jackson default).
      *
-     * <p><strong>Sensitivity proof:</strong> eagerly capturing {@code VertiqueJson.mapper()} in the
+     * <p><strong>Sensitivity proof:</strong> eagerly capturing {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} in the
      * constructor still fails this assertion — only per-call resolution (after the install has run)
      * makes it pass.
      */
@@ -126,7 +127,7 @@ class JacksonKafkaSerializerTest {
 
         ObjectMapper lenientMapper = JacksonDefaults.applySystem(new ObjectMapper());
         lenientMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-        VertiqueJson.install(JsonProfileId.of("kafka-test"), lenientMapper);
+        VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("kafka-test"), lenientMapper));
 
         byte[] payload = "{\"name\":\"shipment\",\"count\":7,\"unexpected\":\"x\"}".getBytes(StandardCharsets.UTF_8);
 

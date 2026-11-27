@@ -18,12 +18,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.test.RestTestContributions;
@@ -76,7 +76,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       effective profile overrides is a misconfiguration that fails the mount, while the same
  *       redirect over a type the effective profile does not override still applies.</li>
  *   <li><strong>Custom profile.</strong> An application profile contributed through the fixture's
- *       {@code RestTestContributions.jsonMapperProfiles} builder carries its own override into the
+ *       {@code RestTestContributions.jsonProfileCodecs} builder carries its own override into the
  *       gate with no schema registry, extra binding, or configuration key.</li>
  * </ul>
  *
@@ -230,7 +230,7 @@ public class ProfiledSchemaCompositionIT {
 
     /**
      * A {@code money} profile contributed through the fixture's
-     * {@code RestTestContributions.jsonMapperProfiles} builder — a mapper that deserializes
+     * {@code RestTestContributions.jsonProfileCodecs} builder — a mapper that deserializes
      * {@link Money} from a JSON string plus one {@code INPUT} schema-type override declaring that same
      * string shape — reaches the gate with no schema registry, no extra Dagger binding, and no
      * configuration key beyond the route's {@code @JsonProfile("money")}.
@@ -242,7 +242,7 @@ public class ProfiledSchemaCompositionIT {
     void customProfileOverrideAppliesWithNoAdditionalBinding() throws Exception {
         MoneyResource resource = new MoneyResource();
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(moneyProfile())
+                .addJsonProfileCodec(moneyProfile())
                 .build();
         int port = start(gateMount(contributions), Set.of(resource));
 
@@ -268,7 +268,7 @@ public class ProfiledSchemaCompositionIT {
      *
      * @return the {@code money} profile
      */
-    private static JsonMapperProfile moneyProfile() {
+    private static JsonProfileCodec moneyProfile() {
         SimpleModule module = new SimpleModule("money-test");
         module.addDeserializer(Money.class, new MoneyDeserializer());
         ObjectMapper mapper = JsonMapper.builder()
@@ -276,7 +276,7 @@ public class ProfiledSchemaCompositionIT {
                 .addModule(VertxJsonSupport.module())
                 .addModule(module)
                 .build();
-        return JsonMapperProfiles.of(
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of(MONEY_PROFILE_ID),
                 mapper,
                 List.of(JsonSchemaTypeOverride.input(Money.class, JsonSchemaFragment.parse("{\"type\":\"string\"}"))));
@@ -290,7 +290,7 @@ public class ProfiledSchemaCompositionIT {
      * @return the strict {@code BigDecimal} fragment's canonical JSON
      */
     private static String strictBigDecimalFragmentJson(ValidationMountComponent component) {
-        JsonMapperProfile strict = component.jsonMapperProfileRegistry().profile(JsonProfileId.of("vertique-strict"));
+        JsonProfileCodec strict = component.jsonProfileRegistry().profile(JsonProfileId.of("vertique-strict"));
         return strict.jsonSchemaTypeOverrides().get(0).fragment().canonicalJson();
     }
 

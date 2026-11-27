@@ -102,12 +102,12 @@ class JsonConfigTest {
     @Test
     @DisplayName("effectiveProfile/effectiveSystemProfile floor correctly and vertx is rejected naming the rename")
     void effectiveProfilesFloorAndRejectVertx() {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // Row 1: JsonConfig.defaults() -> both null -> floors (vertique, system).
         JsonConfig defaults = JsonConfig.defaults();
         assertEquals(
-                VertiqueJsonMapperProfile.ID,
+                VertiqueJsonProfileCodec.ID,
                 defaults.effectiveProfile(),
                 "defaults() must floor effectiveProfile() at the reserved vertique id");
         assertEquals(
@@ -123,7 +123,7 @@ class JsonConfigTest {
         // of system would make this assertion (and row 1's) fail.
         JsonConfig blank = new JsonConfig(" ", " ");
         assertEquals(
-                VertiqueJsonMapperProfile.ID,
+                VertiqueJsonProfileCodec.ID,
                 blank.effectiveProfile(),
                 "a blank jsonProfile must floor effectiveProfile() at the reserved vertique id");
         assertEquals(
@@ -141,7 +141,7 @@ class JsonConfigTest {
                 explicit.effectiveProfile(),
                 "an explicit jsonProfile must be returned verbatim, not floored");
         assertEquals(
-                VertiqueJsonMapperProfile.ID,
+                VertiqueJsonProfileCodec.ID,
                 explicit.effectiveSystemProfile(),
                 "an explicit systemProfile must be returned verbatim, not floored");
         assertDoesNotThrow(

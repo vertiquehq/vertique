@@ -7,9 +7,9 @@ import static dev.vertique.json.schema.SchemaAssertions.assertCanonicalForm;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import jakarta.validation.constraints.Size;
 import java.util.HashMap;
 import java.util.Set;
@@ -29,9 +29,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Both of this package's own constraint-source modes are exercised and asserted identical, following
  * {@link MetadataConstraintSourceCoverageTest}'s walk-vs-metadata pattern: {@link
- * AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)} (walk only, no {@link
+ * AnnotationJsonSchemaGenerator#forInputProfile(JsonProfileCodec)} (walk only, no {@link
  * jakarta.validation.Validator} supplement) and {@link
- * AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile, jakarta.validation.Validator)}
+ * AnnotationJsonSchemaGenerator#forInputProfile(JsonProfileCodec, jakarta.validation.Validator)}
  * (walk plus a {@link MetadataConstraintSource} supplement). The two modes render identically here
  * because {@link MetadataConstraintSource} joins a constraint by its member's wire name, and a map
  * value's type-use constraint sits on a type argument, not a named member, so the supplement has
@@ -43,8 +43,8 @@ class MapSubclassTypeUseConstraintTest {
     /** The rendered, constrained published schema of {@code Tags}'s value type. */
     private static final String CONSTRAINED_STRING_VALUE = "{\"maxLength\":3,\"type\":\"string\"}";
 
-    private static JsonMapperProfile profile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec profile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     /**

@@ -31,7 +31,7 @@ Cache-specific storage behavior belongs here, while named Redis profiles and cli
 belong to the shared Redis module. `CacheRedisModule` contributes the `CLUSTERED` `CacheStore`
 binding and provider identity to the cache-core mode map, and includes the cache core, JSON
 runtime, and Redis connection modules. Its included `JsonRuntimeModule` supplies the
-`JsonMapperProfileRegistry` wiring used for cache value conversion.
+`JsonProfileRegistry` wiring used for cache value conversion.
 
 Redis operations are asynchronous and do not block the Vert.x event loop. The provider uses a
 generation marker for each logical region. A physical entry key has the form
@@ -163,6 +163,7 @@ Redis integration uses the pinned Testcontainers image
 | Artifact | Purpose |
 |---|---|
 | `vertique-cache-core` | Provider-neutral cache contracts |
-| `vertique-json` | JSON mapper profiles and `JsonMapperProfileRegistry` runtime wiring |
+| `vertique-json` | JSON mapper profiles and `JsonProfileRegistry` runtime wiring |
+| `jackson-databind` | `ObjectMapper`, the type of the profile mappers that serialize cached values |
 | `vertique-redis-core` | Shared Redis connection and lifecycle boundary |
 | `vertique-job-cron` | Optional cron registration for old-generation cleanup |

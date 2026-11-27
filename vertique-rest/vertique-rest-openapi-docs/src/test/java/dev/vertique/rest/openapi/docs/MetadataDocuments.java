@@ -14,7 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
@@ -133,8 +133,8 @@ public final class MetadataDocuments {
                 Set.of());
     }
 
-    private static DefaultJsonMapperProfileRegistry registry() {
-        return new DefaultJsonMapperProfileRegistry(Set.of());
+    private static DefaultJsonProfileRegistry registry() {
+        return new DefaultJsonProfileRegistry(Set.of());
     }
 
     // ---------------------------------------------------------------------------------------------

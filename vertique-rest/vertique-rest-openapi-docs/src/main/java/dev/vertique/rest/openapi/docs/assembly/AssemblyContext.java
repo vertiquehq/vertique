@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.assembly;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -15,7 +15,7 @@ import java.util.Set;
 /**
  * The inputs the {@link DocumentAssembler} reads besides the publication, shared by every document
  * of the component: the bound {@link OperationSchemaSource}, if the component binds one, and the
- * {@link JsonMapperProfileRegistry} used to build input-direction schema generators, and the
+ * {@link JsonProfileRegistry} used to build input-direction schema generators, and the
  * {@link DocumentWarnings} guard of the component, and the registered response producers.
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.
@@ -29,7 +29,7 @@ import java.util.Set;
  */
 public record AssemblyContext(
         Optional<OperationSchemaSource> schemaSource,
-        JsonMapperProfileRegistry profiles,
+        JsonProfileRegistry profiles,
         DocumentWarnings warnings,
         Set<ResponseProducerBinding<?>> producerBindings,
         Set<SecuritySchemeHandler> securitySchemeHandlers) {

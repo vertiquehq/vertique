@@ -23,9 +23,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
 import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
 import java.io.IOException;
@@ -70,15 +71,15 @@ class DelegatingDeserializerWrapperTest {
         public String name;
     }
 
-    private static JsonMapperProfile profile(ObjectMapper mapper) {
-        return new JsonMapperProfile() {
+    private static JsonProfileCodec profile(ObjectMapper mapper) {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("test");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return mapper;
             }
 
@@ -227,7 +228,7 @@ class DelegatingDeserializerWrapperTest {
         }
     }
 
-    private static JsonMapperProfile profileWithShapeChangingWrapper() {
+    private static JsonProfileCodec profileWithShapeChangingWrapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new SimpleModule() {
             @Override
@@ -258,7 +259,7 @@ class DelegatingDeserializerWrapperTest {
     @DisplayName("a DelegatingDeserializer subclass that changes the wire shape must be refused, not"
             + " unwrapped straight to the delegate's bean description")
     void delegatingDeserializerThatChangesTheWireShapeIsRefused() {
-        JsonMapperProfile profile = profileWithShapeChangingWrapper();
+        JsonProfileCodec profile = profileWithShapeChangingWrapper();
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
@@ -406,7 +407,7 @@ class DelegatingDeserializerWrapperTest {
     @Test
     @DisplayName("control: without the wrapper, a case-insensitively bound unwrapped child is refused")
     void caseInsensitiveUnwrappedChildIsRefusedWithoutTheWrapper() {
-        JsonMapperProfile profile = profile(new ObjectMapper());
+        JsonProfileCodec profile = profile(new ObjectMapper());
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
@@ -432,7 +433,7 @@ class DelegatingDeserializerWrapperTest {
             + " child must be refused, exactly as it is without the wrapper, not silently skipped")
     void caseInsensitiveUnwrappedChildIsRefusedUnderMapperWideDelegatingWrapper() {
         ObjectMapper mapper = mapperWithForwardingWrapperForEveryBean();
-        JsonMapperProfile profile = profile(mapper);
+        JsonProfileCodec profile = profile(mapper);
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,

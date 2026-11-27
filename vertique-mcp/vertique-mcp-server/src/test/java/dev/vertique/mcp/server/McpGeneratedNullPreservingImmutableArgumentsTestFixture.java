@@ -8,8 +8,8 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import dev.vertique.codegen.mcp.McpToolProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
@@ -121,7 +121,7 @@ final class McpGeneratedNullPreservingImmutableArgumentsTestFixture {
      * structural round-trip probe (which round-trips a {@code JsonObject}/{@code JsonArray}) passes —
      * mirrors {@code McpGeneratedInputCarrierITFixture.StrictProfile}.
      */
-    private static final class OptionalMaterializingProfile implements JsonMapperProfile {
+    private static final class OptionalMaterializingProfile extends Jackson2JsonProfileCodec {
 
         private final ObjectMapper mapper =
                 new ObjectMapper().registerModule(new Jdk8Module()).registerModule(VertxJsonSupport.module());
@@ -132,7 +132,7 @@ final class McpGeneratedNullPreservingImmutableArgumentsTestFixture {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }

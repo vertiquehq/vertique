@@ -3,7 +3,7 @@
 
 package dev.vertique.mcp.server;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -13,7 +13,7 @@ import jakarta.inject.Singleton;
 final class McpJsonProfileDefaultValidator implements ComposeValidator {
     /** Resolves the configured profile even when MCP is disabled or otherwise inert. */
     @Inject
-    McpJsonProfileDefaultValidator(McpServerConfig config, JsonMapperProfileRegistry registry) {
+    McpJsonProfileDefaultValidator(McpServerConfig config, JsonProfileRegistry registry) {
         registry.validateConfigured(config.jsonProfile());
     }
 }

@@ -3,7 +3,6 @@
 
 package dev.vertique.core.json;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Nullable;
 import java.util.Set;
 
@@ -38,27 +37,17 @@ import java.util.Set;
  *
  * <p>The framework's own registry implementation rejects the first two at construction.
  */
-public interface JsonMapperProfileRegistry {
+public interface JsonProfileRegistry {
 
     /**
-     * Resolves the {@link ObjectMapper} for the given profile id.
-     *
-     * @param id the profile id to resolve
-     * @return the {@link ObjectMapper} backing the named profile
-     * @throws JsonProfileConfigurationException if {@code id} is not a registered profile; the
-     *     exception message lists the discovered ids
-     */
-    ObjectMapper mapper(JsonProfileId id);
-
-    /**
-     * Resolves the {@link JsonMapperProfile} for the given profile id.
+     * Resolves the {@link JsonProfileCodec} for the given profile id.
      *
      * @param id the profile id to resolve
      * @return the named profile
      * @throws JsonProfileConfigurationException if {@code id} is not a registered profile; the
      *     exception message lists the discovered ids
      */
-    JsonMapperProfile profile(JsonProfileId id);
+    JsonProfileCodec profile(JsonProfileId id);
 
     /**
      * Returns the ids of every registered profile, including the reserved {@code system},

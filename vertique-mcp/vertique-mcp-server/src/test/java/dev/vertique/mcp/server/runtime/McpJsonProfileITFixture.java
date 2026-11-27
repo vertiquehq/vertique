@@ -4,12 +4,13 @@
 package dev.vertique.mcp.server.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import java.math.BigDecimal;
@@ -46,9 +47,9 @@ final class McpJsonProfileITFixture {
      * realism, though {@code vertique} — not {@code system} — is the resolver's actual fallback),
      * the {@code vertique} fallback itself, and the override.
      */
-    private static final class FixtureProfileRegistry implements JsonMapperProfileRegistry {
+    private static final class FixtureProfileRegistry implements JsonProfileRegistry {
 
-        private final Map<JsonProfileId, JsonMapperProfile> profilesById = new LinkedHashMap<>();
+        private final Map<JsonProfileId, JsonProfileCodec> profilesById = new LinkedHashMap<>();
 
         private FixtureProfileRegistry() {
             profilesById.put(JsonProfileId.SYSTEM, new NoOverrideProfile(JsonProfileId.SYSTEM));
@@ -59,13 +60,8 @@ final class McpJsonProfileITFixture {
         }
 
         @Override
-        public ObjectMapper mapper(JsonProfileId id) {
-            return profile(id).mapper();
-        }
-
-        @Override
-        public JsonMapperProfile profile(JsonProfileId id) {
-            JsonMapperProfile profile = profilesById.get(id);
+        public JsonProfileCodec profile(JsonProfileId id) {
+            JsonProfileCodec profile = profilesById.get(id);
             if (profile == null) {
                 throw new JsonProfileConfigurationException(
                         "Unknown JSON profile id '" + (id == null ? null : id.value()) + "'");
@@ -80,7 +76,7 @@ final class McpJsonProfileITFixture {
     }
 
     /** A profile declaring no schema-type overrides at all. */
-    private static final class NoOverrideProfile implements JsonMapperProfile {
+    private static final class NoOverrideProfile extends Jackson2JsonProfileCodec {
 
         private final JsonProfileId id;
         private final ObjectMapper mapper = new ObjectMapper();
@@ -95,13 +91,13 @@ final class McpJsonProfileITFixture {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }
 
     /** A profile declaring a {@link BigDecimal} input-direction string override. */
-    private static final class StringOverrideProfile implements JsonMapperProfile {
+    private static final class StringOverrideProfile extends Jackson2JsonProfileCodec {
 
         private final JsonProfileId id;
         private final ObjectMapper mapper = new ObjectMapper();
@@ -118,7 +114,7 @@ final class McpJsonProfileITFixture {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
 

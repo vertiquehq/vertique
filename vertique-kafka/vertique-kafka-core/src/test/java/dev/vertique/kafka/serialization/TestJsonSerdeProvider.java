@@ -33,7 +33,7 @@ import io.vertx.core.json.jackson.DatabindCodec;
  * <p>Not behaviourally identical: {@link #serializer} and {@link #deserializer} delegate to a
  * Jackson {@link ObjectMapper} via {@link DatabindCodec#mapper()} directly — the real
  * {@code JsonSerdeProvider} instead resolves the {@code vertique} floor (or a configured
- * {@code json.jsonProfile}) through a {@code JsonMapperProfileRegistry}. This fixture keeps the
+ * {@code json.jsonProfile}) through a {@code JsonProfileRegistry}. This fixture keeps the
  * simpler raw-mapper wiring; its bag-folding behaviour is otherwise unchanged.
  *
  * <p>This fixture requires {@code jackson-databind} on the test class-path (declared at

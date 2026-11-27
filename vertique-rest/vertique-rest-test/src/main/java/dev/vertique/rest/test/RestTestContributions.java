@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.test;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.request.FileContentVerifier;
@@ -58,7 +58,7 @@ import java.util.Set;
  * @param requestInterceptors  request interceptors to add to {@code Set<RequestInterceptor>}
  * @param responseBodyEncoders response body encoders to add to {@code Set<ResponseBodyEncoder>}
  * @param exceptionMappers     JAX-RS exception mappers to add to {@code Set<ExceptionMapper<?>>}
- * @param jsonMapperProfiles   JSON mapper profiles to add to {@code Set<JsonMapperProfile>}
+ * @param jsonProfileCodecs   JSON mapper profiles to add to {@code Set<JsonProfileCodec>}
  * @param fileContentVerifiers file-content verifiers to add to {@code Set<FileContentVerifier>}
  */
 public record RestTestContributions(
@@ -66,7 +66,7 @@ public record RestTestContributions(
         Set<RequestInterceptor> requestInterceptors,
         Set<ResponseBodyEncoder> responseBodyEncoders,
         Set<ExceptionMapper<?>> exceptionMappers,
-        Set<JsonMapperProfile> jsonMapperProfiles,
+        Set<JsonProfileCodec> jsonProfileCodecs,
         Set<FileContentVerifier> fileContentVerifiers) {
 
     /** The shared empty instance returned by {@link #none()}. */
@@ -83,7 +83,7 @@ public record RestTestContributions(
         requestInterceptors = copyOf(requestInterceptors, "requestInterceptors");
         responseBodyEncoders = copyOf(responseBodyEncoders, "responseBodyEncoders");
         exceptionMappers = copyOf(exceptionMappers, "exceptionMappers");
-        jsonMapperProfiles = copyOf(jsonMapperProfiles, "jsonMapperProfiles");
+        jsonProfileCodecs = copyOf(jsonProfileCodecs, "jsonProfileCodecs");
         fileContentVerifiers = copyOf(fileContentVerifiers, "fileContentVerifiers");
     }
 
@@ -133,7 +133,7 @@ public record RestTestContributions(
         private final Set<RequestInterceptor> requestInterceptors = new LinkedHashSet<>();
         private final Set<ResponseBodyEncoder> responseBodyEncoders = new LinkedHashSet<>();
         private final Set<ExceptionMapper<?>> exceptionMappers = new LinkedHashSet<>();
-        private final Set<JsonMapperProfile> jsonMapperProfiles = new LinkedHashSet<>();
+        private final Set<JsonProfileCodec> jsonProfileCodecs = new LinkedHashSet<>();
         private final Set<FileContentVerifier> fileContentVerifiers = new LinkedHashSet<>();
 
         /** Use {@link RestTestContributions#builder()}. */
@@ -192,8 +192,8 @@ public record RestTestContributions(
          * @param profile the profile; must not be {@code null}
          * @return this builder
          */
-        public Builder addJsonMapperProfile(JsonMapperProfile profile) {
-            jsonMapperProfiles.add(Objects.requireNonNull(profile, "profile must not be null"));
+        public Builder addJsonProfileCodec(JsonProfileCodec profile) {
+            jsonProfileCodecs.add(Objects.requireNonNull(profile, "profile must not be null"));
             return this;
         }
 
@@ -221,7 +221,7 @@ public record RestTestContributions(
                     requestInterceptors,
                     responseBodyEncoders,
                     exceptionMappers,
-                    jsonMapperProfiles,
+                    jsonProfileCodecs,
                     fileContentVerifiers);
         }
     }

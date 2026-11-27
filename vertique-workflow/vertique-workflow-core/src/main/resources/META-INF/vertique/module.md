@@ -1355,6 +1355,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **core** - common Vertique exception and module conventions.
 - **db-core** - `PageCursor` and `PagedResult` used by task and workflow query APIs.
 - **security-core** - `SecurityIdentity` and `SecurityContext`, which `WorkflowActorMapper` and `TaskPrincipalsMapper` map from.
+- **json** - `VertiqueJson.codec()`; the module reads the process JSON codec's mapper through `Jackson2JsonProfileCodec.objectMapper(...)`.
 
 `ReplyOutcomeObserver` is an internal observer of recorded, duplicate, stale and refused reply outcomes. It carries no payload or handle.
 

@@ -3,8 +3,8 @@
 
 package dev.vertique.kafka.json;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.kafka.config.KafkaConfig;
 import jakarta.inject.Inject;
@@ -13,7 +13,7 @@ import jakarta.inject.Singleton;
 /**
  * {@link ComposeValidator} that fails the application's {@code VALIDATE} phase when the configured
  * kafka-boundary default profile ({@code kafka.jsonProfile}) names a profile id that the
- * {@link JsonMapperProfileRegistry} does not know.
+ * {@link JsonProfileRegistry} does not know.
  *
  * <p>The validation is performed in the {@code @Inject} constructor (the
  * constructible-as-validation pattern), mirroring {@code JaxRsDefaultProfileValidator} in {@code vertique-rest-jaxrs}. When
@@ -44,7 +44,7 @@ public final class KafkaDefaultProfileValidator implements ComposeValidator {
      *     unregistered profile id
      */
     @Inject
-    public KafkaDefaultProfileValidator(KafkaConfig kafkaConfig, JsonMapperProfileRegistry registry) {
+    public KafkaDefaultProfileValidator(KafkaConfig kafkaConfig, JsonProfileRegistry registry) {
         registry.validateConfigured(kafkaConfig.jsonProfile());
     }
 }

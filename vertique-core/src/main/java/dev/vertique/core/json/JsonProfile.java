@@ -30,7 +30,7 @@ import java.lang.annotation.Target;
  * <p>When the annotation is absent the boundary falls back to its per-boundary configured default
  * ({@code mcp.jsonProfile} for MCP tools), then the global {@code json.jsonProfile} config key, and
  * ultimately to the reserved {@code vertx} profile. The referenced profile must be registered in
- * the {@link JsonMapperProfileRegistry}, otherwise resolution fails at startup.
+ * the {@link JsonProfileRegistry}, otherwise resolution fails at startup.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.TYPE, ElementType.METHOD})

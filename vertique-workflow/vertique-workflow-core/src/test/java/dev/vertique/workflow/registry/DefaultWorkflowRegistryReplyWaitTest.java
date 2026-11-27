@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.ops.ServiceFailure;
 import dev.vertique.workflow.plan.CompleteNode;
@@ -56,8 +57,8 @@ class DefaultWorkflowRegistryReplyWaitTest {
                 .hasMessageContaining("vertique.reply.failed.call");
         assertThat(DefaultWorkflowRegistry.signalPayloadTypesWithReplies(good, Map.of()))
                 .containsEntry("vertique.reply.failed.call", ServiceFailure.class);
-        var json = VertiqueJson.mapper()
-                .readTree(VertiqueJson.mapper()
+        var json = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                .readTree(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
                         .writeValueAsString(new ServiceFailure(ServiceFailure.Reason.PERMANENT, 3)));
         assertThat(json.size()).isEqualTo(2);
         assertThat(json.get("reason").asText()).isEqualTo("PERMANENT");

@@ -8,21 +8,21 @@
  * contracts are declared in {@code dev.vertique.core.json}. Key responsibilities:
  *
  * <ul>
- *   <li><strong>Registry implementation</strong> — {@code DefaultJsonMapperProfileRegistry}
- *       resolves named {@link dev.vertique.core.json.JsonMapperProfile} instances by
+ *   <li><strong>Registry implementation</strong> — {@code DefaultJsonProfileRegistry}
+ *       resolves named {@link dev.vertique.core.json.JsonProfileCodec} instances by
  *       {@link dev.vertique.core.json.JsonProfileId}, validates uniqueness at construction
  *       time, and runs a structural round-trip probe for every profile, built-in or application-contributed.
  *   <li><strong>Built-in {@code system}, {@code vertique} and {@code vertique-strict}
  *       profiles</strong> — all three are seeded <strong>separately</strong> from the application set
  *       and are probed like every other mapper; applications may contribute none of the three ids, nor
  *       the retired {@code vertx} id the {@code system} profile was renamed from.
- *       {@code SystemJsonMapperProfile} owns a copy of {@code DatabindCodec.mapper()} carrying the
+ *       {@code SystemJsonProfileCodec} owns a copy of {@code DatabindCodec.mapper()} carrying the
  *       baseline recipe, so it never exposes or mutates the shared
  *       {@link com.fasterxml.jackson.databind.ObjectMapper} Vert.x uses internally.
- *       {@code VertiqueJsonMapperProfile} owns an independent mapper carrying the framework's
+ *       {@code VertiqueJsonProfileCodec} owns an independent mapper carrying the framework's
  *       opinionated defaults on top of that recipe (its {@code NON_NULL}
  *       inclusion is accepted by the probe because the probe payload carries no null-valued field).
- *       {@code VertiqueStrictJsonMapperProfile} owns a further independent mapper layering the
+ *       {@code VertiqueStrictJsonProfileCodec} owns a further independent mapper layering the
  *       strict-decimal / strict-string serdes on those defaults, with
  *       {@code USE_BIG_DECIMAL_FOR_FLOATS} disabled so untyped decimals keep the JSON-number wire
  *       shape.
@@ -41,24 +41,24 @@
  *       Vert.x {@code VertxModule} so consumers can register it on a custom
  *       {@link com.fasterxml.jackson.databind.ObjectMapper} without a direct
  *       {@code vertx-core} dependency on the Jackson module class name.
- *   <li><strong>Profile factory</strong> — {@code JsonMapperProfiles} is the canonical factory
- *       for creating {@link dev.vertique.core.json.JsonMapperProfile} instances from an id and
+ *   <li><strong>Profile factory</strong> — {@code Jackson2JsonProfiles} is the canonical factory
+ *       for creating {@link dev.vertique.core.json.JsonProfileCodec} instances from an id and
  *       a pre-configured {@link com.fasterxml.jackson.databind.ObjectMapper}.
  *   <li><strong>Dagger wiring</strong> — {@code JsonRuntimeModule} declares the empty
- *       {@code @Multibinds Set<JsonMapperProfile>} and binds
- *       {@link dev.vertique.core.json.JsonMapperProfileRegistry} to
- *       {@code DefaultJsonMapperProfileRegistry}. Consumer modules install it via
+ *       {@code @Multibinds Set<JsonProfileCodec>} and binds
+ *       {@link dev.vertique.core.json.JsonProfileRegistry} to
+ *       {@code DefaultJsonProfileRegistry}. Consumer modules install it via
  *       {@code @Module(includes = JsonRuntimeModule.class)}.
  * </ul>
  *
- * <p>The contracts ({@code JsonProfileId}, {@code JsonMapperProfile},
- * {@code JsonMapperProfileRegistry}, {@code JsonProfileConfigurationException},
+ * <p>The contracts ({@code JsonProfileId}, {@code JsonProfileCodec},
+ * {@code JsonProfileRegistry}, {@code JsonProfileConfigurationException},
  * {@code @JsonProfile}) remain in {@code vertique-core} so that boundary modules
  * ({@code rest-jaxrs}, {@code rest-client}, {@code kafka-json}) can reference the contracts
  * without a runtime dependency on this module.
  *
  * @see dev.vertique.core.json.JsonProfileId
- * @see dev.vertique.core.json.JsonMapperProfile
- * @see dev.vertique.core.json.JsonMapperProfileRegistry
+ * @see dev.vertique.core.json.JsonProfileCodec
+ * @see dev.vertique.core.json.JsonProfileRegistry
  */
 package dev.vertique.json;

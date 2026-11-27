@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
@@ -102,7 +102,7 @@ class DocumentDeterminismIT {
 
     private static Optional<OperationSchemaSource> schemaSource;
 
-    private static JsonMapperProfileRegistry profiles;
+    private static JsonProfileRegistry profiles;
 
     @BeforeAll
     static void captureThePublication() throws Exception {

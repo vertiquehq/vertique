@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -112,9 +113,8 @@ class SchemaAcceptedBindsTest {
         decisions.put("decide", fixture.type());
         registry.register(Definitions.withStartAndDecisions(ID, 1L, Void.class, decisions));
         AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
-        ObjectMapper mapper = PayloadSchemaTestProfiles.builtIn()
-                .profile(JsonProfileId.of("vertique"))
-                .mapper();
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(
+                PayloadSchemaTestProfiles.builtIn().profile(JsonProfileId.of("vertique")));
 
         // When / Then: every accepted declared-key payload is valid and binds to an instance
         for (JsonObject payload : fixture.accepted()) {

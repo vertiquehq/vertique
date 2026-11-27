@@ -10,8 +10,8 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.di.WorkflowCoreModule;
@@ -93,8 +93,8 @@ class SchemaModuleWiringTest {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

@@ -6,10 +6,11 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.input.InputFieldNameResolver;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.ProblemDetail;
@@ -214,7 +215,7 @@ public class JaxRsRouteRegistrar {
      *                                profile ({@link JaxRsConfig#jsonProfile()}, config key
      *                                {@code jaxrs.jsonProfile}) used when a resource method selects no
      *                                profile of its own
-     * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
+     * @param jsonProfileRegistry registry of named JSON mapper profiles; used to resolve the
      *                                effective request-body {@code ObjectMapper} per resource method
      *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
      *                                Resolving an unknown profile id fails startup (fail-fast)
@@ -245,7 +246,7 @@ public class JaxRsRouteRegistrar {
             @Nullable ActionRegistry actionRegistry,
             boolean authorizerAvailable,
             JaxRsConfig jaxRsConfig,
-            JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            JsonProfileRegistry jsonProfileRegistry,
             JsonConfig jsonConfig) {
         registerAll(
                 resources,
@@ -270,7 +271,7 @@ public class JaxRsRouteRegistrar {
                 actionRegistry,
                 authorizerAvailable,
                 jaxRsConfig,
-                jsonMapperProfileRegistry,
+                jsonProfileRegistry,
                 jsonConfig,
                 null,
                 new ArrayList<>(),
@@ -290,7 +291,7 @@ public class JaxRsRouteRegistrar {
      * Optional, SecuritySchemeHandlerCollector, List, List, ErrorPipeline, ResponsePipeline,
      * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
      * String, BeanValidator, InputObjectProcessor, ActionRegistry, boolean, JaxRsConfig,
-     * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
+     * JsonProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
      * declaring type, a sink it discards, no publication list, and no detail request. This
      * registrar keeps no state of its own between calls: {@code declaringType},
      * {@code implicitOperations}, and {@code publications} are this call's own, never instance
@@ -355,7 +356,7 @@ public class JaxRsRouteRegistrar {
      *                                profile ({@link JaxRsConfig#jsonProfile()}, config key
      *                                {@code jaxrs.jsonProfile}) used when a resource method selects no
      *                                profile of its own
-     * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
+     * @param jsonProfileRegistry registry of named JSON mapper profiles; used to resolve the
      *                                effective request-body {@code ObjectMapper} per resource method
      *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
      *                                Resolving an unknown profile id fails startup (fail-fast)
@@ -400,7 +401,7 @@ public class JaxRsRouteRegistrar {
             @Nullable ActionRegistry actionRegistry,
             boolean authorizerAvailable,
             JaxRsConfig jaxRsConfig,
-            JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            JsonProfileRegistry jsonProfileRegistry,
             JsonConfig jsonConfig,
             @Nullable Class<?> declaringType,
             List<ImplicitOperation> implicitOperations,
@@ -676,7 +677,7 @@ public class JaxRsRouteRegistrar {
             // real injected global JsonConfig wired through the Factory, so the json.jsonProfile tier applies.
             RequestBodyProfileResolver.ResolvedRequestBodyProfile resolvedProfile =
                     RequestBodyProfileResolver.resolveRequestBodyProfile(
-                            meta, jaxRsConfig, jsonConfig, jsonMapperProfileRegistry);
+                            meta, jaxRsConfig, jsonConfig, jsonProfileRegistry);
             ObjectMapper resolvedBodyMapper = resolvedProfile.stashMapper();
             if (resolvedBodyMapper != null) {
                 route.handler(ctx -> {
@@ -761,11 +762,14 @@ public class JaxRsRouteRegistrar {
             //
             // The cache key is the mapper that actually materializes this route's bodies: the resolved
             // profile mapper, or — when (a-2) returned the "no override" null — the process codec's own
-            // mapper, which is what the Vert.x body path then binds with. Reading VertiqueJson.mapper()
+            // mapper, which is what the Vert.x body path then binds with. Reading
+            // Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
             // here is an EDGE-phase capture, after CONFIGURE installed the process mapper, and the
             // built-in registry hands out one stable instance per profile, so routes sharing a profile
             // share one entry.
-            ObjectMapper projectionMapper = resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper();
+            ObjectMapper projectionMapper = resolvedBodyMapper != null
+                    ? resolvedBodyMapper
+                    : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
             JacksonFieldNameResolver bodyNameResolver =
                     bodyNameResolvers.computeIfAbsent(projectionMapper, JacksonFieldNameResolver::forMapper);
             if (objectProcessor != null) {

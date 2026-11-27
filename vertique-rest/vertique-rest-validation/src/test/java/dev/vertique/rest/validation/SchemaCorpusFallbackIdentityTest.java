@@ -5,9 +5,9 @@ package dev.vertique.rest.validation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.rest.validation.corpus.CorpusFixture;
 import dev.vertique.rest.validation.corpus.SchemaCorpus;
@@ -24,7 +24,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * Fallback identity, corpus half (the other half is {@code vertique-json-schema}'s own {@code
  * MetadataConstraintSourceCoverageTest.fallbackMatchesSingleArgumentFactoryForEveryCoverageFixture}):
  * {@link AnnotationJsonSchemaGenerator}'s single-argument factory ({@code
- * forInputProfile(JsonMapperProfile)}) must produce byte-identical output to the two-argument overload
+ * forInputProfile(JsonProfileCodec)}) must produce byte-identical output to the two-argument overload
  * called with an explicit {@code null} {@code Validator}, for every one of the 20 pinned {@code
  * schema-corpus} fixtures under both profiles the factory supports ({@code system}, {@code vertique}) —
  * not just the one type a narrower proof might happen to exercise. {@code legacy} is not a case here:
@@ -33,8 +33,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class SchemaCorpusFallbackIdentityTest {
 
-    private static JsonMapperProfile profileOf(String id) {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of(id));
+    private static JsonProfileCodec profileOf(String id) {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of(id));
     }
 
     static Stream<Arguments> corpusFixturesByProfile() {
@@ -47,7 +47,7 @@ class SchemaCorpusFallbackIdentityTest {
     @DisplayName("forInputProfile(profile) matches forInputProfile(profile, null) for every corpus fixture")
     void fallbackMatchesSingleArgumentFactoryForEveryCorpusFixture(CorpusFixture fixture, String profileId) {
         Type type = fixture.genericType() != null ? fixture.genericType() : fixture.rawType();
-        JsonMapperProfile profile = profileOf(profileId);
+        JsonProfileCodec profile = profileOf(profileId);
 
         String throughOverload =
                 AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(type);

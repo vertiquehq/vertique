@@ -14,13 +14,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.core.RestConfigurationException;
@@ -165,7 +165,7 @@ public class ProfiledSchemaFailureIT {
         JsonSchemaFragment secondFragment =
                 fragment(node -> node.put("type", "string").put("maxLength", 8));
 
-        JsonMapperProfile duplicate = profile(
+        JsonProfileCodec duplicate = profile(
                 "dup-override",
                 JsonSchemaTypeOverride.input(BigDecimal.class, JsonSchemaFragment.parse(strictFragmentJson)),
                 JsonSchemaTypeOverride.input(BigDecimal.class, secondFragment));
@@ -202,7 +202,7 @@ public class ProfiledSchemaFailureIT {
     @DisplayName("An unparseable pattern in a profile fragment fails the mount at router construction")
     void unparseablePatternFailsTheMountAtRouterConstruction() throws Exception {
         PatternSyntaxException unclosedGroup = syntaxErrorOf(UNPARSEABLE_PATTERN);
-        JsonMapperProfile badPattern = profile("bad-pattern", bigDecimalOverride(node -> node.put("type", "string")
+        JsonProfileCodec badPattern = profile("bad-pattern", bigDecimalOverride(node -> node.put("type", "string")
                 .put("pattern", UNPARSEABLE_PATTERN)));
 
         Throwable failure = assertMountFails(
@@ -215,7 +215,7 @@ public class ProfiledSchemaFailureIT {
         assertNoPatternSyntaxExceptionInChain(failure);
 
         PatternSyntaxException unknownProperty = syntaxErrorOf(LONG_TOKEN_PATTERN);
-        JsonMapperProfile longToken = profile("long-token", bigDecimalOverride(node -> node.put("type", "string")
+        JsonProfileCodec longToken = profile("long-token", bigDecimalOverride(node -> node.put("type", "string")
                 .put("pattern", LONG_TOKEN_PATTERN)));
 
         Throwable longTokenFailure = assertMountFails(
@@ -254,7 +254,7 @@ public class ProfiledSchemaFailureIT {
     @DisplayName("An unparseable patternProperties key fails the mount at router construction")
     void unparseablePatternPropertiesKeyFailsTheMountAtRouterConstruction() throws Exception {
         PatternSyntaxException unclosedGroup = syntaxErrorOf(UNPARSEABLE_PATTERN);
-        JsonMapperProfile badKey = profile("bad-pattern-properties", bigDecimalOverride(node -> {
+        JsonProfileCodec badKey = profile("bad-pattern-properties", bigDecimalOverride(node -> {
             node.put("type", "object");
             node.putObject("patternProperties").putObject(UNPARSEABLE_PATTERN);
         }));
@@ -297,7 +297,7 @@ public class ProfiledSchemaFailureIT {
                 "the marker key must itself be a valid regular expression, or this proof exercises the "
                         + "branch the sibling case already covers");
         PatternSyntaxException unclosedGroup = syntaxErrorOf(UNPARSEABLE_PATTERN);
-        JsonMapperProfile nestedBadPattern = profile("nested-pattern-properties", bigDecimalOverride(node -> {
+        JsonProfileCodec nestedBadPattern = profile("nested-pattern-properties", bigDecimalOverride(node -> {
             node.put("type", "object");
             node.putObject("patternProperties")
                     .putObject(VALID_PATTERN_PROPERTIES_KEY)
@@ -358,7 +358,7 @@ public class ProfiledSchemaFailureIT {
     @Test
     @DisplayName("A none-strategy mount ignores an unparseable pattern in the schema it never gates")
     void noneStrategyAssemblyIgnoresAnUnparseablePattern() throws Exception {
-        JsonMapperProfile badPattern = profile("bad-pattern", bigDecimalOverride(node -> node.put("type", "string")
+        JsonProfileCodec badPattern = profile("bad-pattern", bigDecimalOverride(node -> node.put("type", "string")
                 .put("pattern", UNPARSEABLE_PATTERN)));
         JsonObject config =
                 new JsonObject().put("jaxrs", new JsonObject().put("validationStrategy", NoneValidationStrategy.ID));
@@ -582,11 +582,11 @@ public class ProfiledSchemaFailureIT {
      * @param overrides the schema-type overrides to declare
      * @return the profile
      */
-    private static JsonMapperProfile profile(String id, JsonSchemaTypeOverride... overrides) {
+    private static JsonProfileCodec profile(String id, JsonSchemaTypeOverride... overrides) {
         // Vert.x JSON support: the registry probes a contributed mapper with a JsonObject round trip.
         ObjectMapper mapper =
                 JsonMapper.builder().addModule(VertxJsonSupport.module()).build();
-        return JsonMapperProfiles.of(JsonProfileId.of(id), mapper, List.of(overrides));
+        return Jackson2JsonProfiles.of(JsonProfileId.of(id), mapper, List.of(overrides));
     }
 
     /**
@@ -618,8 +618,8 @@ public class ProfiledSchemaFailureIT {
      * @param profile the profile to register
      * @return the contributions
      */
-    private static RestTestContributions contributions(JsonMapperProfile profile) {
-        return RestTestContributions.builder().addJsonMapperProfile(profile).build();
+    private static RestTestContributions contributions(JsonProfileCodec profile) {
+        return RestTestContributions.builder().addJsonProfileCodec(profile).build();
     }
 
     /**
@@ -629,8 +629,8 @@ public class ProfiledSchemaFailureIT {
      * @return the strict {@code BigDecimal} fragment's canonical JSON
      */
     private String strictBigDecimalFragmentJson() {
-        JsonMapperProfile strict = MountFixtures.component(vertx, new JsonObject(), RestTestContributions.none())
-                .jsonMapperProfileRegistry()
+        JsonProfileCodec strict = MountFixtures.component(vertx, new JsonObject(), RestTestContributions.none())
+                .jsonProfileRegistry()
                 .profile(JsonProfileId.of("vertique-strict"));
         return strict.jsonSchemaTypeOverrides().get(0).fragment().canonicalJson();
     }

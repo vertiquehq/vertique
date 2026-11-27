@@ -3,9 +3,9 @@
 
 package dev.vertique.rest.openapi.docs.fixture.input;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.json.schema.RedactionManifest;
@@ -32,7 +32,7 @@ public final class GeneratedBodies {
     /** The id of the default built-in profile. */
     public static final String DEFAULT_PROFILE = "vertique";
 
-    private static final DefaultJsonMapperProfileRegistry REGISTRY = new DefaultJsonMapperProfileRegistry(Set.of());
+    private static final DefaultJsonProfileRegistry REGISTRY = new DefaultJsonProfileRegistry(Set.of());
 
     private GeneratedBodies() {}
 
@@ -64,7 +64,7 @@ public final class GeneratedBodies {
      * @param profile the profile whose input-direction generator describes the type
      * @return the generated body: a fresh schema object of the canonical document and its manifest
      */
-    public static GeneratedBody describe(Type type, JsonMapperProfile profile) {
+    public static GeneratedBody describe(Type type, JsonProfileCodec profile) {
         CanonicalSchema canonical =
                 AnnotationJsonSchemaGenerator.forInputProfile(profile).describe(type);
         return new GeneratedBody(new JsonObject(canonical.json()), canonical.redactionManifest());
@@ -76,7 +76,7 @@ public final class GeneratedBodies {
      * @param profileId the profile id
      * @return the profile
      */
-    public static JsonMapperProfile profile(String profileId) {
+    public static JsonProfileCodec profile(String profileId) {
         return REGISTRY.profile(JsonProfileId.of(profileId));
     }
 

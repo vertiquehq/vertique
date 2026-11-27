@@ -16,7 +16,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import io.vertx.core.json.JsonArray;
@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the built-in {@code vertique} opinionated default profile
- * ({@link VertiqueJsonMapperProfile}) as seeded by {@link DefaultJsonMapperProfileRegistry}.
+ * ({@link VertiqueJsonProfileCodec}) as seeded by {@link DefaultJsonProfileRegistry}.
  *
  * <p>Verifies that the registry always seeds a {@code vertique} profile resolvable from an empty
  * application set; that an application profile claiming the reserved {@code vertique}
@@ -55,14 +55,15 @@ class VertiqueProfileTest {
     @DisplayName("vertique profile is seeded and resolvable with an empty application set")
     void vertiquePresent_inEmptyAppSet() {
         // Given: a registry built with no application-contributed profiles.
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // When/Then: the reserved vertique id is registered and its mapper resolves non-null.
         assertTrue(
-                registry.profileIds().contains(VertiqueJsonMapperProfile.ID),
+                registry.profileIds().contains(VertiqueJsonProfileCodec.ID),
                 "profileIds must contain the reserved vertique id");
         assertNotNull(
-                registry.mapper(VertiqueJsonMapperProfile.ID), "vertique profile must resolve to a non-null mapper");
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(VertiqueJsonProfileCodec.ID)),
+                "vertique profile must resolve to a non-null mapper");
     }
 
     @Test
@@ -70,12 +71,12 @@ class VertiqueProfileTest {
     void appProfileWithVertiqueId_rejected() {
         // Given: an application profile claiming the reserved vertique id, backed by a vertx-aware
         // mapper so any failure is unambiguously the reservation guard, not a probe failure.
-        JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("vertique"), vertxAwareMapper());
+        JsonProfileCodec app = Jackson2JsonProfiles.of(JsonProfileId.of("vertique"), vertxAwareMapper());
 
         // When/Then: constructing the registry rejects the reserved-id override.
         assertThrows(
                 JsonProfileConfigurationException.class,
-                () -> new DefaultJsonMapperProfileRegistry(Set.of(app)),
+                () -> new DefaultJsonProfileRegistry(Set.of(app)),
                 "an application profile claiming the reserved vertique id must be rejected");
     }
 
@@ -83,12 +84,12 @@ class VertiqueProfileTest {
     @DisplayName("vertique mapper is an independent instance, not the shared Vert.x mapper")
     void vertiqueMapper_isNotSharedVertxMapper() {
         // Given: a registry built with no application-contributed profiles.
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // When/Then: the vertique mapper is a distinct instance from Vert.x's shared DatabindCodec mapper.
         assertNotSame(
                 DatabindCodec.mapper(),
-                registry.mapper(VertiqueJsonMapperProfile.ID),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(VertiqueJsonProfileCodec.ID)),
                 "vertique profile must own an independent mapper, not the shared Vert.x mapper");
     }
 
@@ -108,7 +109,8 @@ class VertiqueProfileTest {
          * @return the opinionated {@code vertique} {@link ObjectMapper}
          */
         private ObjectMapper vertiqueMapper() {
-            return new DefaultJsonMapperProfileRegistry(Set.of()).mapper(VertiqueJsonMapperProfile.ID);
+            return Jackson2JsonProfileCodec.objectMapper(
+                    new DefaultJsonProfileRegistry(Set.of()).profile(VertiqueJsonProfileCodec.ID));
         }
 
         @Test
@@ -205,7 +207,7 @@ class VertiqueProfileTest {
             int registeredModuleCount = shared.getRegisteredModuleIds().size();
 
             // When: the registry (which seeds the vertique profile) is constructed.
-            new DefaultJsonMapperProfileRegistry(Set.of());
+            new DefaultJsonProfileRegistry(Set.of());
 
             // Then: every snapshotted aspect of the shared mapper is unchanged.
             assertEquals(

@@ -10,12 +10,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
@@ -252,8 +252,8 @@ public class CrossScopeMigrationIT {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

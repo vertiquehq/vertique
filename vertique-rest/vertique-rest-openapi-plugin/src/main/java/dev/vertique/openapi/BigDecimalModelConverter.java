@@ -21,7 +21,7 @@ import java.util.Iterator;
  * number} schema — the default Jackson wire form. This converter instead emits a {@code string}
  * schema so the generated spec matches applications that opt into the {@code vertique-strict}
  * JSON profile, where {@code BigDecimal} is serialized/deserialized as a plain decimal string
- * (see {@code dev.vertique.json.VertiqueStrictJsonMapperProfile} in {@code vertique-json}).
+ * (see {@code dev.vertique.json.VertiqueStrictJsonProfileCodec} in {@code vertique-json}).
  *
  * <p>Register this converter in the {@code swagger-maven-plugin} configuration, typically
  * alongside {@link FutureModelConverter}:

@@ -465,6 +465,7 @@ only this type adaptation; configuration, registry, and optional bindings remain
 - `io.vertx:vertx-micrometer-metrics` — `MicrometerMetricsFactory`, `MicrometerMetricsOptions`,
   `Label`, `MetricsDomain`
 - `io.vertx:vertx-core` — `VertxBuilder`, `VertxOptions`
+- `com.fasterxml.jackson.core:jackson-databind` — `@JsonDeserialize`, which Lombok's `@Jacksonized` generates on the config builders
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
 

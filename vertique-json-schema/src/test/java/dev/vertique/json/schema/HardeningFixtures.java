@@ -6,11 +6,12 @@ package dev.vertique.json.schema;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.reflect.ParameterizedType;
@@ -62,8 +63,8 @@ final class HardeningFixtures {
      *
      * @return the {@code vertique-strict} profile
      */
-    static JsonMapperProfile strictProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique-strict"));
+    static JsonProfileCodec strictProfile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique-strict"));
     }
 
     /**
@@ -73,8 +74,8 @@ final class HardeningFixtures {
      * @param overrides the declared overrides
      * @return the profile
      */
-    static JsonMapperProfile profile(String id, List<JsonSchemaTypeOverride> overrides) {
-        return new JsonMapperProfile() {
+    static JsonProfileCodec profile(String id, List<JsonSchemaTypeOverride> overrides) {
+        return new Jackson2JsonProfileCodec() {
 
             @Override
             public JsonProfileId id() {
@@ -82,7 +83,7 @@ final class HardeningFixtures {
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return new ObjectMapper();
             }
 
@@ -101,9 +102,9 @@ final class HardeningFixtures {
      * @param overrides the override list, possibly {@code null} or containing {@code null}
      * @return the malformed profile
      */
-    static JsonMapperProfile malformedProfile(
+    static JsonProfileCodec malformedProfile(
             JsonProfileId id, ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides) {
-        return new JsonMapperProfile() {
+        return new JsonProfileCodec() {
 
             @Override
             public JsonProfileId id() {
@@ -111,8 +112,38 @@ final class HardeningFixtures {
             }
 
             @Override
-            public ObjectMapper mapper() {
-                return mapper;
+            public io.vertx.core.buffer.Buffer encode(Object value) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public String encodeToString(Object value) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void encodeTo(Object value, java.io.OutputStream out) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T decode(io.vertx.core.buffer.Buffer json, Type type) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T decode(String json, Type type) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T convert(Object value, Type type) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> java.util.Optional<T> unwrap(Class<T> type) {
+                return type.isInstance(mapper) ? java.util.Optional.of(type.cast(mapper)) : java.util.Optional.empty();
             }
 
             @Override

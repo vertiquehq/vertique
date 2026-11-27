@@ -574,6 +574,7 @@ never construct these types.
 - **core** — event bus dispatch (`DispatchEnvelope`, `EventBusClient`, `Result`), the exception
   roots, `ConfigParser` and the keyed-config support.
 - **resilience** — the `BackoffStrategy` contract used for retry delays.
+- **json** — `VertiqueJson.codec()`; the payload decoder reads the process JSON codec's mapper through `Jackson2JsonProfileCodec.objectMapper(...)`.
 - **context** — durable context propagation across the persistence hop.
 - **db-core** — the `DataAccessException` family the enqueue exception mapper translates.
 - **logging** — the MDC context facade used on the dispatch and reply paths.

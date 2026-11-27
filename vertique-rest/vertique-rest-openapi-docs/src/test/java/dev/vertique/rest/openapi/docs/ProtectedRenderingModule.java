@@ -7,7 +7,7 @@ import dagger.Binds;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -41,9 +41,7 @@ abstract class ProtectedRenderingModule {
     @Provides
     @Singleton
     static ProtectedRenderingPublicationHook protectedRenderingHook(
-            Optional<OperationSchemaSource> schemaSource,
-            JsonMapperProfileRegistry profiles,
-            RestApplications applications) {
+            Optional<OperationSchemaSource> schemaSource, JsonProfileRegistry profiles, RestApplications applications) {
         return new ProtectedRenderingPublicationHook(schemaSource, profiles, applications);
     }
 

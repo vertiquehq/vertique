@@ -219,7 +219,7 @@ The six seams below are the module's product, and the set of them is a **compati
 | `addRequestInterceptor` | `Set<RequestInterceptor>` |
 | `addResponseBodyEncoder` | `Set<ResponseBodyEncoder>` |
 | `addExceptionMapper` | `Set<ExceptionMapper<?>>` |
-| `addJsonMapperProfile` | `Set<JsonMapperProfile>` |
+| `addJsonProfileCodec` | `Set<JsonProfileCodec>` |
 | `addFileContentVerifier` | `Set<FileContentVerifier>` |
 
 The set is deliberately the seams a consumer has actually needed. There is **no** seam for request
@@ -258,7 +258,7 @@ Dagger module in the component instead, so the graph never carries two strategie
 | `Set<RequestInterceptor>` | `@ElementsIntoSet` from `contributions.requestInterceptors()` |
 | `Set<ResponseBodyEncoder>` | `@ElementsIntoSet` from `contributions.responseBodyEncoders()` |
 | `Set<ExceptionMapper<?>>` | `@ElementsIntoSet` from `contributions.exceptionMappers()` |
-| `Set<JsonMapperProfile>` | `@ElementsIntoSet` from `contributions.jsonMapperProfiles()` |
+| `Set<JsonProfileCodec>` | `@ElementsIntoSet` from `contributions.jsonProfileCodecs()` |
 | `Set<FileContentVerifier>` | `@ElementsIntoSet` from `contributions.fileContentVerifiers()` |
 
 `RestTestMount` is constructed by Dagger from `JaxRsRouterMount.Factory` and the graph's complete

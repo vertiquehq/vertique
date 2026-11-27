@@ -13,12 +13,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JsonConfig;
-import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link JsonSerdeProvider} profile resolution: the provider reads the
  * {@code jsonProfile} key from the merged serde-config bag and resolves the backing
- * {@code ObjectMapper} from an injected {@link DefaultJsonMapperProfileRegistry}.
+ * {@code ObjectMapper} from an injected {@link DefaultJsonProfileRegistry}.
  *
  * <p>The {@code "no-coercion"} application profile disables
  * {@link MapperFeature#ALLOW_COERCION_OF_SCALARS}, so {@code {"count":"5"}} (a string where an
@@ -68,25 +68,23 @@ class JsonSerdeProviderProfileTest {
     private static final JsonProfileId INDENT = JsonProfileId.of("indent");
 
     private static JsonSerdeProvider providerWithStrictProfile() {
-        JsonMapperProfile strictProfile = JsonMapperProfiles.of(
+        JsonProfileCodec strictProfile = Jackson2JsonProfiles.of(
                 NO_COERCION,
                 JsonMapper.builder()
                         .addModule(VertxJsonSupport.module())
                         .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
                         .build());
-        return new JsonSerdeProvider(
-                new DefaultJsonMapperProfileRegistry(Set.of(strictProfile)), JsonConfig.defaults());
+        return new JsonSerdeProvider(new DefaultJsonProfileRegistry(Set.of(strictProfile)), JsonConfig.defaults());
     }
 
     private static JsonSerdeProvider providerWithIndentProfile() {
-        JsonMapperProfile indentProfile = JsonMapperProfiles.of(
+        JsonProfileCodec indentProfile = Jackson2JsonProfiles.of(
                 INDENT,
                 JsonMapper.builder()
                         .addModule(VertxJsonSupport.module())
                         .enable(SerializationFeature.INDENT_OUTPUT)
                         .build());
-        return new JsonSerdeProvider(
-                new DefaultJsonMapperProfileRegistry(Set.of(indentProfile)), JsonConfig.defaults());
+        return new JsonSerdeProvider(new DefaultJsonProfileRegistry(Set.of(indentProfile)), JsonConfig.defaults());
     }
 
     private static JsonObject serdeConfigWith(String profileId) {

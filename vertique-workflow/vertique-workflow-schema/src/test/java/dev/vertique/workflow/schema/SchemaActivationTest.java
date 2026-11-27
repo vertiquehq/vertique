@@ -10,7 +10,7 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
 import dev.vertique.workflow.definition.callbacks.NamedStateReducer;
@@ -83,7 +83,7 @@ class SchemaActivationTest {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
+        static JsonProfileRegistry profileRegistry() {
             return PayloadSchemaTestProfiles.builtIn();
         }
 

@@ -9,8 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.rest.core.routing.SecurityRequirement;
@@ -274,17 +275,17 @@ public class PublicationFingerprintCalculatorTest {
     }
 
     /** A new input-direction profile instance with the given id and a new plain mapper. */
-    private static JsonMapperProfile inputProfile() {
+    private static JsonProfileCodec inputProfile() {
         ObjectMapper mapper = new ObjectMapper();
         JsonProfileId id = JsonProfileId.of(PROFILE_ID);
-        return new JsonMapperProfile() {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return id;
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return mapper;
             }
         };

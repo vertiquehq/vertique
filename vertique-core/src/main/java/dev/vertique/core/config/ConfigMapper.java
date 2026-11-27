@@ -9,7 +9,7 @@ import jakarta.inject.Qualifier;
 import java.lang.annotation.Retention;
 
 /**
- * Dagger {@link Qualifier} marking an {@link com.fasterxml.jackson.databind.ObjectMapper} an
+ * Dagger {@link Qualifier} marking an {@code com.fasterxml.jackson.databind.ObjectMapper} an
  * application supplies to customize config parsing.
  *
  * <p>When present, the framework re-layers its mandatory modules and lenient policy over the

@@ -12,6 +12,7 @@ import dev.vertique.core.input.InputLocation;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -129,7 +130,7 @@ class WebSocketEndpointRegistrar {
      * Wire &rarr; Java property-name projection for object message bodies.
      *
      * <p>{@link WebSocketMessageCodec} binds every message through
-     * {@link VertiqueJson#mapper()}, so that is the mapper whose naming decides which declared
+     * {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, so that is the mapper whose naming decides which declared
      * policies apply: a field renamed by {@code @JsonProperty}, by a naming strategy, or reached
      * through a {@code @JsonAlias} arrives in the intermediate under its wire name, while the
      * input-processing engine keys its per-field metadata on the Java property name. Without this
@@ -139,13 +140,13 @@ class WebSocketEndpointRegistrar {
      * <p>Created once per registrar, and every declared message type's projection is composed at
      * registration by {@link #warmMessageNameProjections}, so no introspection happens on the message
      * path. The bare-{@code String} call sites keep {@link InputFieldNameResolver#IDENTITY}: there is
-     * no object whose fields could be renamed. The field captures {@link VertiqueJson#mapper()} once
+     * no object whose fields could be renamed. The field captures {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} once
      * at construction rather than reading it per call; this is permitted because the registrar is
      * built during the {@code EDGE} startup phase, after {@code CONFIGURE} has installed the process
      * mapper — the capture rule's exception for router/registrar construction.
      */
     private final JacksonFieldNameResolver messageNameResolver =
-            JacksonFieldNameResolver.forMapper(VertiqueJson.mapper());
+            JacksonFieldNameResolver.forMapper(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()));
 
     /**
      * One lifecycle method's resolved invocation policies.

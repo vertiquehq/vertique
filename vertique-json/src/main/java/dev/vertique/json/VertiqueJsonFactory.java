@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.json;
+package dev.vertique.json;
 
+import dev.vertique.core.json.VertiqueJson;
 import io.vertx.core.spi.JsonFactory;
 import io.vertx.core.spi.json.JsonCodec;
 
 /**
- * Registers the framework's JSON codec as the Vert.x process codec.
+ * INTERNAL framework seam — public only because the {@link java.util.ServiceLoader} requires it;
+ * applications never reference it.
+ *
+ * <p>Registers the framework's JSON codec as the Vert.x process codec.
  *
  * <p>Vert.x discovers this factory through the service file
  * {@code META-INF/services/io.vertx.core.spi.JsonFactory} on the thread-context classloader, sorts
@@ -54,6 +58,6 @@ public final class VertiqueJsonFactory implements JsonFactory {
      */
     @Override
     public JsonCodec codec() {
-        return VertiqueJsonCodec.INSTANCE;
+        return ProfileDelegatingJsonCodec.INSTANCE;
     }
 }

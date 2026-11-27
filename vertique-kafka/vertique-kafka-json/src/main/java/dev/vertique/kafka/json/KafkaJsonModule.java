@@ -6,7 +6,7 @@ package dev.vertique.kafka.json;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonRuntimeModule;
@@ -29,7 +29,7 @@ import jakarta.inject.Singleton;
  * }</pre>
  *
  * <p>This module installs {@link JsonRuntimeModule} so the
- * {@link JsonMapperProfileRegistry} and {@link JsonConfig} are available to the JSON serde provider
+ * {@link JsonProfileRegistry} and {@link JsonConfig} are available to the JSON serde provider
  * and to {@link KafkaDefaultProfileValidator}. The serde provider applies a two-tier precedence:
  * per-endpoint bag id &gt; {@code json.jsonProfile} global default, which itself floors to the reserved
  * {@code vertique} profile when unconfigured.
@@ -39,7 +39,7 @@ public abstract class KafkaJsonModule {
 
     /**
      * Contributes the {@link JsonSerdeProvider} for the {@code "json"} format to the
-     * {@link KafkaSerdeProvider} multibinding, wired with the {@link JsonMapperProfileRegistry} and
+     * {@link KafkaSerdeProvider} multibinding, wired with the {@link JsonProfileRegistry} and
      * {@link JsonConfig} so it can resolve named JSON mapper profiles selected per endpoint and apply
      * the global {@code json.jsonProfile} tier when no per-endpoint id is set.
      *
@@ -51,7 +51,7 @@ public abstract class KafkaJsonModule {
     @Provides
     @Singleton
     @IntoSet
-    static KafkaSerdeProvider jsonSerdeProvider(JsonMapperProfileRegistry registry, JsonConfig jsonConfig) {
+    static KafkaSerdeProvider jsonSerdeProvider(JsonProfileRegistry registry, JsonConfig jsonConfig) {
         return new JsonSerdeProvider(registry, jsonConfig);
     }
 

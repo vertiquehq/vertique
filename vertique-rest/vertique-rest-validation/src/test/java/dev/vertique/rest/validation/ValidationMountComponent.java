@@ -6,7 +6,7 @@ package dev.vertique.rest.validation;
 import dagger.BindsInstance;
 import dagger.Component;
 import dev.vertique.core.VertxConfig;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.test.RestTestContributions;
@@ -54,18 +54,18 @@ interface ValidationMountComponent {
     RestTestMount testMount();
 
     /**
-     * Returns the graph's singleton {@link JsonMapperProfileRegistry} — the very instance the mount
+     * Returns the graph's singleton {@link JsonProfileRegistry} — the very instance the mount
      * resolves per-route body profiles through.
      *
      * <p>Exposed so a test can install one of the graph's <em>own</em> profile mappers as the process
      * JSON codec before the router is built. The REST body resolver's "no override" sentinel is an
-     * identity comparison against {@link dev.vertique.core.json.VertiqueJson#mapper()}, and every
+     * identity comparison against {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, and every
      * registry instance owns its own mapper instances, so a mapper taken from a separately built
      * registry could never match.
      *
      * @return the graph's profile registry
      */
-    JsonMapperProfileRegistry jsonMapperProfileRegistry();
+    JsonProfileRegistry jsonProfileRegistry();
 
     /** Factory binding the three instances a consumer supplies to the graph. */
     @Component.Factory

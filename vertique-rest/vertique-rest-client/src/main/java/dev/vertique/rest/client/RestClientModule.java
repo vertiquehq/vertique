@@ -10,7 +10,7 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.json.JsonConfig;
@@ -47,7 +47,7 @@ import java.util.Set;
  * }</pre>
  *
  * <p>This module includes {@link JsonRuntimeModule}, which makes the
- * {@link JsonMapperProfileRegistry} binding available so that every builder produced by
+ * {@link JsonProfileRegistry} binding available so that every builder produced by
  * {@link RestClientFactory#builder()} can resolve named JSON mapper profiles.
  *
  * <p>Extension points via multibinding and optional binding:
@@ -60,8 +60,8 @@ import java.util.Set;
  *   <li>{@code BeanValidator} — optional; present when the {@code validation} module (or any
  *       module providing {@link BeanValidator}) is included in the component. Response objects
  *       will be validated after deserialization if a validator is available.</li>
- *   <li>{@code Set<dev.vertique.core.json.JsonMapperProfile>} — contributed by the application via
- *       {@code @Provides @IntoSet JsonMapperProfile} to register named mapper profiles; the empty
+ *   <li>{@code Set<dev.vertique.core.json.JsonProfileCodec>} — contributed by the application via
+ *       {@code @Provides @IntoSet JsonProfileCodec} to register named mapper profiles; the empty
  *       set is the default (only the built-in {@code system}, {@code vertique}, and
  *       {@code vertique-strict} profiles).</li>
  * </ul>
@@ -162,7 +162,7 @@ public abstract class RestClientModule {
      * @param configIndex the typed {@code name -> RestClientConfig} index seeded into every builder
      * @param beanValidator optional bean validator; present when the validation module is included
      * @param registry the bean-param accessor registry for generated-accessor resolution
-     * @param jsonMapperProfileRegistry the JSON mapper profile registry (provided by the included
+     * @param jsonProfileRegistry the JSON mapper profile registry (provided by the included
      *     {@link JsonRuntimeModule}); seeded into every builder to enable named profile resolution
      * @param restClientDefaults the parsed {@code restClient.defaults} record; seeded into every
      *     builder for tier-5 precedence; {@link RestClientDefaults#jsonProfile()} is {@code null}
@@ -185,7 +185,7 @@ public abstract class RestClientModule {
             Map<String, RestClientConfig> configIndex,
             Optional<BeanValidator> beanValidator,
             BeanParamAccessorRegistry registry,
-            JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            JsonProfileRegistry jsonProfileRegistry,
             RestClientDefaults restClientDefaults,
             JsonConfig jsonConfig,
             ParamConversionResolver paramConversionResolver,
@@ -198,7 +198,7 @@ public abstract class RestClientModule {
                 configIndex,
                 beanValidator.orElse(null),
                 registry,
-                jsonMapperProfileRegistry,
+                jsonProfileRegistry,
                 restClientDefaults.jsonProfile(),
                 jsonConfig,
                 paramConversionResolver,

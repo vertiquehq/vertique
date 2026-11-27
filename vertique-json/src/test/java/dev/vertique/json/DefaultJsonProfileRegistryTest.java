@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -23,7 +24,7 @@ import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import io.vertx.core.json.JsonArray;
@@ -36,16 +37,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link DefaultJsonMapperProfileRegistry}.
+ * Unit tests for {@link DefaultJsonProfileRegistry}.
  *
- * <p>Constructs the registry directly with a {@code Set<JsonMapperProfile>} (no Dagger) to verify
+ * <p>Constructs the registry directly with a {@code Set<JsonProfileCodec>} (no Dagger) to verify
  * the constructor-time validation contract: the built-in {@code system} profile is always seeded;
  * application profiles must not override {@code system}; duplicate application ids are rejected; each
  * application-contributed mapper passes a structural round-trip probe; and resolution of an unknown id
  * fails with a message listing the discovered ids. Also includes a characterization test pinning the
  * probe's current behavior for an application profile built on {@link JacksonDefaults#apply(ObjectMapper)}.
  */
-class DefaultJsonMapperProfileRegistryTest {
+class DefaultJsonProfileRegistryTest {
 
     /**
      * Builds an {@link ObjectMapper} that supports the Vert.x JSON types, suitable for an
@@ -60,19 +61,21 @@ class DefaultJsonMapperProfileRegistryTest {
     @Test
     @DisplayName("system profile resolves by default with an empty application set")
     void systemProfile_resolvableByDefault() {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
-        assertNotSame(DatabindCodec.mapper(), registry.mapper(JsonProfileId.SYSTEM));
+        assertNotSame(
+                DatabindCodec.mapper(), Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
     }
 
     @Test
     @DisplayName("unknown id throws JsonProfileConfigurationException whose message lists discovered ids")
     void unknownId_throws_andMessageListsDiscoveredIds() {
-        JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(app));
+        JsonProfileCodec app = Jackson2JsonProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(app));
 
-        JsonProfileConfigurationException ex =
-                assertThrows(JsonProfileConfigurationException.class, () -> registry.mapper(JsonProfileId.of("nope")));
+        JsonProfileConfigurationException ex = assertThrows(
+                JsonProfileConfigurationException.class,
+                () -> Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("nope"))));
 
         assertTrue(ex.getMessage().contains("system"), "message must list the system id");
         assertTrue(ex.getMessage().contains("payments-v1"), "message must list the app id");
@@ -82,10 +85,11 @@ class DefaultJsonMapperProfileRegistryTest {
     @Test
     @DisplayName("application profile resolves and round-trips a JsonObject through its mapper")
     void appProfile_resolvable_andRoundTrips() throws Exception {
-        JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(app));
+        JsonProfileCodec app = Jackson2JsonProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(app));
 
-        ObjectMapper resolved = registry.mapper(JsonProfileId.of("payments-v1"));
+        ObjectMapper resolved =
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("payments-v1")));
         JsonObject value = new JsonObject().put("k", "v").put("n", 7);
         JsonObject roundTripped = resolved.readValue(resolved.writeValueAsString(value), JsonObject.class);
 
@@ -95,35 +99,34 @@ class DefaultJsonMapperProfileRegistryTest {
     @Test
     @DisplayName("duplicate application profile ids fail construction")
     void duplicateAppIds_failConstruction() {
-        JsonMapperProfile a = JsonMapperProfiles.of(JsonProfileId.of("dup"), vertxAwareMapper());
-        JsonMapperProfile b = JsonMapperProfiles.of(JsonProfileId.of("dup"), vertxAwareMapper());
+        JsonProfileCodec a = Jackson2JsonProfiles.of(JsonProfileId.of("dup"), vertxAwareMapper());
+        JsonProfileCodec b = Jackson2JsonProfiles.of(JsonProfileId.of("dup"), vertxAwareMapper());
 
-        assertThrows(
-                JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(orderedSet(a, b)));
+        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(orderedSet(a, b)));
     }
 
     @Test
     @DisplayName("application profile with reserved system id fails construction")
     void appOverridingSystem_failsConstruction() {
-        JsonMapperProfile bad = JsonMapperProfiles.of(JsonProfileId.SYSTEM, vertxAwareMapper());
+        JsonProfileCodec bad = Jackson2JsonProfiles.of(JsonProfileId.SYSTEM, vertxAwareMapper());
 
-        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(bad)));
+        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(Set.of(bad)));
     }
 
     @Test
     @DisplayName("application mapper lacking JsonObject support fails the round-trip probe")
     void applicationMapperLackingJsonObjectSupport_failsProbe() {
         // A plain ObjectMapper has no VertxModule, so a JsonObject does not round-trip structurally.
-        JsonMapperProfile bad = JsonMapperProfiles.of(JsonProfileId.of("plain"), new ObjectMapper());
+        JsonProfileCodec bad = Jackson2JsonProfiles.of(JsonProfileId.of("plain"), new ObjectMapper());
 
-        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(bad)));
+        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(Set.of(bad)));
     }
 
     @Test
     @DisplayName("profileIds includes all three built-ins plus the application id")
     void profileIds_includesSystemPlusApp() {
-        JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("legacy-crm"), vertxAwareMapper());
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(app));
+        JsonProfileCodec app = Jackson2JsonProfiles.of(JsonProfileId.of("legacy-crm"), vertxAwareMapper());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(app));
 
         Set<JsonProfileId> ids = registry.profileIds();
 
@@ -139,10 +142,10 @@ class DefaultJsonMapperProfileRegistryTest {
         // Given: an application profile claiming the reserved vertique-strict id, backed by a
         // vertx-aware mapper so any failure is unambiguously the reservation guard, not a probe
         // failure.
-        JsonMapperProfile bad = JsonMapperProfiles.of(JsonProfileId.of("vertique-strict"), vertxAwareMapper());
+        JsonProfileCodec bad = Jackson2JsonProfiles.of(JsonProfileId.of("vertique-strict"), vertxAwareMapper());
 
         // When/Then: constructing the registry rejects the reserved-id override.
-        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(bad)));
+        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(Set.of(bad)));
     }
 
     @Test
@@ -150,11 +153,11 @@ class DefaultJsonMapperProfileRegistryTest {
     void probeFailing_jacksonException_causeIsChained() {
         // Given: a profile whose mapper throws a JsonProcessingException during writeValueAsString,
         // simulating a misconfigured serializer that cannot serialize JsonObject.
-        JsonMapperProfile bad = JsonMapperProfiles.of(JsonProfileId.of("broken"), new ThrowingObjectMapper());
+        JsonProfileCodec bad = Jackson2JsonProfiles.of(JsonProfileId.of("broken"), new ThrowingObjectMapper());
 
         // When: the registry is constructed (probe runs eagerly).
         JsonProfileConfigurationException ex = assertThrows(
-                JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(bad)));
+                JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(Set.of(bad)));
 
         // Then: the thrown exception must chain the original Jackson cause so the operator can
         // diagnose the misconfiguration from the stack trace.
@@ -179,16 +182,16 @@ class DefaultJsonMapperProfileRegistryTest {
     void appProfileOnJacksonDefaults_acceptedByRoundTripProbe() {
         // Given: an application profile whose mapper is exactly JacksonDefaults.apply(new ObjectMapper()),
         // the seed the module document sanctions.
-        JsonMapperProfile app =
-                JsonMapperProfiles.of(JsonProfileId.of("app-on-defaults"), JacksonDefaults.apply(new ObjectMapper()));
+        JsonProfileCodec app =
+                Jackson2JsonProfiles.of(JsonProfileId.of("app-on-defaults"), JacksonDefaults.apply(new ObjectMapper()));
 
         // When: the registry is constructed (the probe runs eagerly).
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(app));
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(app));
 
         // Then: construction succeeds and the profile resolves.
         assertSame(
-                app.mapper(),
-                registry.mapper(JsonProfileId.of("app-on-defaults")),
+                Jackson2JsonProfileCodec.objectMapper(app),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("app-on-defaults"))),
                 "a profile seeded from JacksonDefaults.apply must survive the structural round-trip probe");
     }
 
@@ -210,11 +213,11 @@ class DefaultJsonMapperProfileRegistryTest {
             }
         });
         broken.registerModule(sabotage);
-        JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("lossy"), broken);
+        JsonProfileCodec app = Jackson2JsonProfiles.of(JsonProfileId.of("lossy"), broken);
 
         // When / then: the probe observes the structural mismatch and rejects construction.
         JsonProfileConfigurationException ex = assertThrows(
-                JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(app)));
+                JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(Set.of(app)));
         assertTrue(
                 ex.getMessage().contains("failed the round-trip probe"),
                 "a structure-losing profile must still be rejected: " + ex.getMessage());
@@ -233,7 +236,7 @@ class DefaultJsonMapperProfileRegistryTest {
             + "StreamReadConstraints, and differs from vertique only by the opinions; vertx and default "
             + "typing are rejected naming the rename / \"default typing\"")
     void reservedIdsAreSystemVertiqueAndStrict() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // --- Then: the three reserved profiles resolve. ---
         assertDoesNotThrow(() -> registry.profile(JsonProfileId.SYSTEM), "the reserved 'system' id must resolve");
@@ -253,10 +256,10 @@ class DefaultJsonMapperProfileRegistryTest {
                 "the vertx rejection must name the rename (mention both 'vertx' and 'system'): "
                         + vertxEx.getMessage());
 
-        // --- Then: registry.profile(SYSTEM).mapper() is the same instance across calls, and is NOT
+        // --- Then: objectMapper(registry.profile(SYSTEM)) is the same instance across calls, and is NOT
         // DatabindCodec.mapper() itself (the recipe is a copy, never the shared instance). ---
-        ObjectMapper systemMapperFirst = registry.profile(JsonProfileId.SYSTEM).mapper();
-        ObjectMapper systemMapperSecond = registry.profile(JsonProfileId.SYSTEM).mapper();
+        ObjectMapper systemMapperFirst = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM));
+        ObjectMapper systemMapperSecond = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM));
         assertSame(
                 systemMapperFirst,
                 systemMapperSecond,
@@ -268,7 +271,8 @@ class DefaultJsonMapperProfileRegistryTest {
 
         // --- Then: both factories' StreamReadConstraints match the raw Vert.x factory's, field by
         // field (StreamReadConstraints has no equals()). ---
-        ObjectMapper vertiqueMapper = registry.mapper(JsonProfileId.of("vertique"));
+        ObjectMapper vertiqueMapper =
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique")));
         StreamReadConstraints rawConstraints =
                 DatabindCodec.mapper().getFactory().streamReadConstraints();
         assertStreamReadConstraintsMatch(
@@ -339,10 +343,10 @@ class DefaultJsonMapperProfileRegistryTest {
 
         // --- Then: registering an application profile under the retired id 'vertx' fails,
         // naming the rename. ---
-        JsonMapperProfile vertxApp = JsonMapperProfiles.of(JsonProfileId.of("vertx"), vertxAwareMapper());
+        JsonProfileCodec vertxApp = Jackson2JsonProfiles.of(JsonProfileId.of("vertx"), vertxAwareMapper());
         JsonProfileConfigurationException vertxAppEx = assertThrows(
                 JsonProfileConfigurationException.class,
-                () -> new DefaultJsonMapperProfileRegistry(Set.of(vertxApp)),
+                () -> new DefaultJsonProfileRegistry(Set.of(vertxApp)),
                 "an application profile must not be able to re-register the retired 'vertx' id");
         assertTrue(
                 vertxAppEx.getMessage().contains("vertx")
@@ -355,10 +359,10 @@ class DefaultJsonMapperProfileRegistryTest {
                 .activateDefaultTyping(BasicPolymorphicTypeValidator.builder()
                         .allowIfBaseType(Object.class)
                         .build());
-        JsonMapperProfile defaultTypedApp = JsonMapperProfiles.of(JsonProfileId.of("typed-app"), defaultTypedMapper);
+        JsonProfileCodec defaultTypedApp = Jackson2JsonProfiles.of(JsonProfileId.of("typed-app"), defaultTypedMapper);
         JsonProfileConfigurationException typingEx = assertThrows(
                 JsonProfileConfigurationException.class,
-                () -> new DefaultJsonMapperProfileRegistry(Set.of(defaultTypedApp)),
+                () -> new DefaultJsonProfileRegistry(Set.of(defaultTypedApp)),
                 "an application profile activating Jackson default typing must be rejected at construction");
         assertTrue(
                 typingEx.getMessage().contains("default typing"),
@@ -401,17 +405,109 @@ class DefaultJsonMapperProfileRegistryTest {
                 label + ": maxTokenCount must match the raw Vert.x factory's");
     }
 
+    @Test
+    @DisplayName("profile(id) returns the same instance on every call, reserved and application ids")
+    void profile_returnsSameInstancePerId() {
+        JsonProfileCodec app = Jackson2JsonProfiles.of(JsonProfileId.of("stable-app"), vertxAwareMapper());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(app));
+
+        for (String id : new String[] {"system", "vertique", "vertique-strict", "stable-app"}) {
+            JsonProfileId profileId = JsonProfileId.of(id);
+            assertSame(registry.profile(profileId), registry.profile(profileId), "same instance for " + id);
+        }
+        assertSame(app, registry.profile(JsonProfileId.of("stable-app")));
+    }
+
+    @Test
+    @DisplayName("JsonProfileRegistry declares no mapper method")
+    void registryInterface_declaresNoMapperMethod() {
+        for (java.lang.reflect.Method m : dev.vertique.core.json.JsonProfileRegistry.class.getDeclaredMethods()) {
+            assertNotEquals("mapper", m.getName(), "the neutral registry must not expose mapper(..)");
+        }
+    }
+
+    @Test
+    @DisplayName("a direct JsonProfileCodec exposing an ObjectMapper is refused, naming the id")
+    void directCodecImplementation_isRefusedNamingTheId() {
+        ObjectMapper valid = vertxAwareMapper();
+        JsonProfileCodec direct = new DirectCodec(JsonProfileId.of("direct-app"), valid);
+
+        JsonProfileConfigurationException ex = assertThrows(
+                JsonProfileConfigurationException.class, () -> new DefaultJsonProfileRegistry(Set.of(direct)));
+
+        assertTrue(ex.getMessage().contains("direct-app"), ex.getMessage());
+        // Nothing is registered: a registry built without it does not know the id.
+        DefaultJsonProfileRegistry clean = new DefaultJsonProfileRegistry(Set.of());
+        assertFalse(clean.profileIds().contains(JsonProfileId.of("direct-app")));
+    }
+
+    /** A direct implementation, deliberately not a {@link Jackson2JsonProfileCodec}. */
+    private static final class DirectCodec implements JsonProfileCodec {
+        private final JsonProfileId id;
+        private final ObjectMapper mapper;
+
+        DirectCodec(JsonProfileId id, ObjectMapper mapper) {
+            this.id = id;
+            this.mapper = mapper;
+        }
+
+        @Override
+        public JsonProfileId id() {
+            return id;
+        }
+
+        @Override
+        public io.vertx.core.buffer.Buffer encode(Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String encodeToString(Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void encodeTo(Object value, java.io.OutputStream out) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T decode(io.vertx.core.buffer.Buffer json, java.lang.reflect.Type type) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T decode(String json, java.lang.reflect.Type type) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T convert(Object value, java.lang.reflect.Type type) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> java.util.Optional<T> unwrap(Class<T> type) {
+            return type.isInstance(mapper) ? java.util.Optional.of(type.cast(mapper)) : java.util.Optional.empty();
+        }
+
+        // Present only while the baseline interface still declares it; no @Override on purpose.
+        public ObjectMapper mapper() {
+            return mapper;
+        }
+    }
+
     // --- Test helpers ---
 
     /**
      * Builds an insertion-ordered set of profiles. {@code Set.of(...)} rejects duplicate
-     * {@code .equals} elements, but distinct {@link JsonMapperProfile} instances sharing an id are
+     * {@code .equals} elements, but distinct {@link JsonProfileCodec} instances sharing an id are
      * not equal, so a plain {@link java.util.LinkedHashSet} preserves both for the duplicate-id test.
      *
      * @param profiles the profiles to include, in order
      * @return a mutable, insertion-ordered set containing every supplied profile
      */
-    private static Set<JsonMapperProfile> orderedSet(JsonMapperProfile... profiles) {
+    private static Set<JsonProfileCodec> orderedSet(JsonProfileCodec... profiles) {
         return new java.util.LinkedHashSet<>(java.util.Arrays.asList(profiles));
     }
 

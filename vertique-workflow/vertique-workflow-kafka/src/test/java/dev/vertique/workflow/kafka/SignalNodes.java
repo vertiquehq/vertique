@@ -6,7 +6,7 @@ package dev.vertique.workflow.kafka;
 import static dev.vertique.workflow.kafka.SourceScenario.await;
 
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -42,12 +42,12 @@ final class SignalNodes implements AutoCloseable {
     private static final Duration IDLE = Duration.ofSeconds(20);
 
     private final Vertx vertx;
-    private final JsonMapperProfile profile;
+    private final JsonProfileCodec profile;
     private final PostgresContainer database;
     private final List<Node> nodes = new ArrayList<>();
     private Pool reader;
 
-    private SignalNodes(Vertx vertx, JsonMapperProfile profile, PostgresContainer database) {
+    private SignalNodes(Vertx vertx, JsonProfileCodec profile, PostgresContainer database) {
         this.vertx = vertx;
         this.profile = profile;
         this.database = database;
@@ -62,7 +62,7 @@ final class SignalNodes implements AutoCloseable {
      * @param profile the application JSON profile that both nodes select as {@code json.systemProfile}
      * @return the nodes, with none started
      */
-    static SignalNodes open(Vertx vertx, JsonMapperProfile profile) {
+    static SignalNodes open(Vertx vertx, JsonProfileCodec profile) {
         PostgresContainer database = new PostgresContainer()
                 .withDatabaseName("workflow_kafka_recording_only")
                 .withMigration("classpath:db/migration/workflow");

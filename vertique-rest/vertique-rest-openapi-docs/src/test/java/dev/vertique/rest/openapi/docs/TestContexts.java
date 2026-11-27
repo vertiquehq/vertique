@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
@@ -19,7 +19,7 @@ public final class TestContexts {
     public static AssemblyContext noSource() {
         return new AssemblyContext(
                 Optional.empty(),
-                new DefaultJsonMapperProfileRegistry(Set.of()),
+                new DefaultJsonProfileRegistry(Set.of()),
                 DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 Set.of());
@@ -29,7 +29,7 @@ public final class TestContexts {
     public static AssemblyContext withSource(OperationSchemaSource source) {
         return new AssemblyContext(
                 Optional.of(source),
-                new DefaultJsonMapperProfileRegistry(Set.of()),
+                new DefaultJsonProfileRegistry(Set.of()),
                 DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 Set.of());

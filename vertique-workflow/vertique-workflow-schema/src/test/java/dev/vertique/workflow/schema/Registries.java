@@ -3,8 +3,8 @@
 
 package dev.vertique.workflow.schema;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -43,7 +43,7 @@ final class Registries {
      * @return the registry
      */
     static DefaultWorkflowRegistry withSchemaValidator(
-            PayloadSchemaCache cache, JsonMapperProfileRegistry profiles, JsonConfig config) {
+            PayloadSchemaCache cache, JsonProfileRegistry profiles, JsonConfig config) {
         DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
         return new DefaultWorkflowRegistry(
                 null,

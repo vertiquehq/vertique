@@ -18,6 +18,7 @@ import dev.vertique.core.correlation.CorrelationSessionRef;
 import dev.vertique.core.correlation.ProtocolCorrelationRef;
 import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -91,7 +92,7 @@ public final class CorrelationContextDurableDecoder implements DurableContextMet
 
         JsonNode root;
         try {
-            root = VertiqueJson.mapper().readTree(json);
+            root = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).readTree(json);
         } catch (Exception e) {
             return failure("malformed CorrelationEnvelope JSON: " + e.getMessage(), json);
         }

@@ -7,9 +7,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -34,7 +34,7 @@ import java.util.Set;
  *   <li><strong>legacy</strong> — {@link #writeCorpus(Path)}, which generates through
  *       {@code AnnotationJsonSchemaGenerator.withVictoolsDefaults()}. Run this <em>before</em> any
  *       generation change; it is the pre-change baseline every delta is measured against.
- *   <li><strong>profiled</strong> — {@link #writeCorpus(Path, JsonMapperProfile)} once per built-in
+ *   <li><strong>profiled</strong> — {@link #writeCorpus(Path, JsonProfileCodec)} once per built-in
  *       profile, which generates through {@code AnnotationJsonSchemaGenerator.forInputProfile}.
  * </ul>
  *
@@ -84,7 +84,7 @@ public final class SchemaCorpusGenerator {
      * @param profile the profile whose mapper and input-applicable overrides drive generation
      * @return the canonical document, without a trailing line feed
      */
-    public static String document(CorpusFixture fixture, JsonMapperProfile profile) {
+    public static String document(CorpusFixture fixture, JsonProfileCodec profile) {
         Objects.requireNonNull(fixture, "fixture");
         Objects.requireNonNull(profile, "profile");
         return AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(fixture.generatedType());
@@ -110,7 +110,7 @@ public final class SchemaCorpusGenerator {
      * @return the written files, in fixture order
      * @throws IOException if a file cannot be written
      */
-    public static List<Path> writeCorpus(Path directory, JsonMapperProfile profile) throws IOException {
+    public static List<Path> writeCorpus(Path directory, JsonProfileCodec profile) throws IOException {
         Objects.requireNonNull(profile, "profile");
         return write(directory, AnnotationJsonSchemaGenerator.forInputProfile(profile));
     }
@@ -190,7 +190,7 @@ public final class SchemaCorpusGenerator {
      * @param id the profile id
      * @return the resolved profile
      */
-    private static JsonMapperProfile profile(JsonProfileId id) {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(id);
+    private static JsonProfileCodec profile(JsonProfileId id) {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(id);
     }
 }

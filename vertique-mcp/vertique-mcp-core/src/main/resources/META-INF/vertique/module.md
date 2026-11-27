@@ -79,7 +79,7 @@ never reaches a `McpToolResult`; the call settles as a bounded protocol-level er
 
 ## Selecting a JSON profile
 
-Tool arguments and structured results are mapped by an effective `JsonMapperProfile`. Select one
+Tool arguments and structured results are mapped by an effective `JsonProfileCodec`. Select one
 with `vertique-core`'s `@JsonProfile` on the tool method or on its declaring type; the method-level
 annotation wins. `vertique-codegen-mcp` resolves that choice at compile time and rejects a blank
 value there, so an unusable selection never reaches startup.

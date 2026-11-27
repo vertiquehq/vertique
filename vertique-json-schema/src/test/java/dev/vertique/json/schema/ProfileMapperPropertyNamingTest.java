@@ -12,10 +12,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -80,7 +81,7 @@ class ProfileMapperPropertyNamingTest {
     @Test
     void shouldUseTheProfileMappersPropertyNamesInBothSchemaDirections() throws Exception {
         ObjectMapper mapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        JsonMapperProfile profile = JsonMapperProfiles.of(JsonProfileId.of("snake-case-test"), mapper);
+        JsonProfileCodec profile = Jackson2JsonProfiles.of(JsonProfileId.of("snake-case-test"), mapper);
 
         JsonNode input = mapper.readTree(
                 AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(WeatherRequest.class));
@@ -99,14 +100,14 @@ class ProfileMapperPropertyNamingTest {
     void shouldPreserveMixinDirectionNamingAndTypeOverridesTogether() throws Exception {
         ObjectMapper mapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         mapper.addMixIn(DirectionalAmount.class, DirectionalAmountMixin.class);
-        JsonMapperProfile profile = new JsonMapperProfile() {
+        JsonProfileCodec profile = new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("directional-mixin-test");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return mapper;
             }
 

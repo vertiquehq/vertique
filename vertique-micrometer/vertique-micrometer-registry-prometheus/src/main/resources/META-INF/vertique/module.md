@@ -293,5 +293,6 @@ only this type adaptation; configuration, registry, and optional bindings remain
 - `io.micrometer:micrometer-registry-prometheus` — `PrometheusMeterRegistry`, `PrometheusConfig`
 - `io.prometheus:prometheus-metrics-tracer-common` — `SpanContext` (exemplar bridge interface)
 - `io.vertx:vertx-web` — `Router` (management endpoint mounting)
+- `com.fasterxml.jackson.core:jackson-databind` — `@JsonDeserialize`, which Lombok's `@Jacksonized` generates on the config builders
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)

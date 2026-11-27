@@ -5,6 +5,7 @@ package dev.vertique.kafka.json;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.SerializationException;
 import dev.vertique.kafka.serialization.KafkaSerializer;
@@ -13,7 +14,7 @@ import jakarta.annotation.Nullable;
 /**
  * Default Jackson JSON serializer for Kafka producer messages.
  *
- * <p>The no-arg constructor does not capture a mapper: it resolves {@link VertiqueJson#mapper()} —
+ * <p>The no-arg constructor does not capture a mapper: it resolves {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} —
  * the process JSON codec's mapper — lazily, on every {@link #serialize} call. A no-arg serde may be
  * built before the process mapper is installed (e.g. at Dagger graph construction time), so
  * capturing it eagerly at construction would freeze in the pre-install raw mapper; resolving per
@@ -28,7 +29,7 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
     private final ObjectMapper mapper;
 
     /**
-     * Creates a serializer that resolves the process JSON codec's mapper — {@link VertiqueJson#mapper()}
+     * Creates a serializer that resolves the process JSON codec's mapper — {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}
      * — lazily, on every {@link #serialize} call, rather than capturing it at construction time.
      */
     public JacksonKafkaSerializer() {
@@ -55,7 +56,7 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
      */
     @Override
     public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
-        ObjectMapper resolved = mapper != null ? mapper : VertiqueJson.mapper();
+        ObjectMapper resolved = mapper != null ? mapper : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         try {
             return resolved.writeValueAsBytes(value);
         } catch (Exception e) {

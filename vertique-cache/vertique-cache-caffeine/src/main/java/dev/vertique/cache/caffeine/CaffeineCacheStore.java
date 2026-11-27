@@ -11,9 +11,10 @@ import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.CacheValueDescriptor;
 import dev.vertique.cache.spi.ResolvedCacheKey;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -28,21 +29,21 @@ import java.util.function.LongSupplier;
 @Singleton
 public final class CaffeineCacheStore implements CacheStore {
     private final CacheConfig config;
-    private final JsonMapperProfileRegistry profiles;
+    private final JsonProfileRegistry profiles;
     private final LongSupplier clock;
     private final Map<CacheRegion, Cache<ResolvedCacheKey, Entry>> caches = new ConcurrentHashMap<>();
 
     /** Direct-provider constructor for use without a Dagger graph. */
     public CaffeineCacheStore(CacheConfig config) {
-        this(config, new DefaultJsonMapperProfileRegistry(Set.of()));
+        this(config, new DefaultJsonProfileRegistry(Set.of()));
     }
 
     @Inject
-    public CaffeineCacheStore(CacheConfig config, JsonMapperProfileRegistry profiles) {
+    public CaffeineCacheStore(CacheConfig config, JsonProfileRegistry profiles) {
         this(config, profiles, System::nanoTime);
     }
 
-    CaffeineCacheStore(CacheConfig config, JsonMapperProfileRegistry profiles, LongSupplier clock) {
+    CaffeineCacheStore(CacheConfig config, JsonProfileRegistry profiles, LongSupplier clock) {
         this.config = config;
         this.profiles = profiles;
         this.clock = clock;
@@ -133,7 +134,7 @@ public final class CaffeineCacheStore implements CacheStore {
     }
 
     private ObjectMapper mapper(String profile) {
-        return profiles.mapper(JsonProfileId.of(profile));
+        return Jackson2JsonProfileCodec.objectMapper(profiles.profile(JsonProfileId.of(profile)));
     }
 
     private long deadline(Duration ttl) {

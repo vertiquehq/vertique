@@ -246,16 +246,16 @@ final class HiddenMemberRecorder {
     }
 
     /**
-     * @param profile   the validated, direction-filtered profile: its mapper's introspection links a
+     * @param validated the validated, direction-filtered profile: its mapper's introspection links a
      *                  member the generation describes to its property's other carriers and merges the
      *                  annotations each carries, and its overrides name the types whose definition an
      *                  override replaces
      * @param direction the direction the owning generator describes, {@link Direction#INPUT} or {@link
      *                  Direction#OUTPUT}, which selects the mapper's deserialization or serialization view
      */
-    HiddenMemberRecorder(ValidatedProfile profile, Direction direction) {
-        this.mapper = profile.mapper();
-        this.profile = profile;
+    HiddenMemberRecorder(ValidatedProfile validated, Direction direction) {
+        this.mapper = validated.mapper();
+        this.profile = validated;
         this.input = direction == Direction.INPUT;
         this.config = input ? mapper.getDeserializationConfig() : mapper.getSerializationConfig();
     }

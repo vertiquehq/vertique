@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
@@ -81,9 +81,7 @@ final class ProtectedRenderingPublicationHook implements MountPublicationHook {
      * @param applications the component's declared applications, for each document's contract origin
      */
     ProtectedRenderingPublicationHook(
-            Optional<OperationSchemaSource> schemaSource,
-            JsonMapperProfileRegistry profiles,
-            RestApplications applications) {
+            Optional<OperationSchemaSource> schemaSource, JsonProfileRegistry profiles, RestApplications applications) {
         this.context =
                 new AssemblyContext(schemaSource, profiles, DiagnosticsAccess.documentWarnings(), Set.of(), Set.of());
         this.applications = Objects.requireNonNull(applications, "applications");

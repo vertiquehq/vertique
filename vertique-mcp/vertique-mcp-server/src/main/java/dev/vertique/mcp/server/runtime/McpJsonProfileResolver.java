@@ -3,9 +3,9 @@
 
 package dev.vertique.mcp.server.runtime;
 
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.util.Strings;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
@@ -34,7 +34,7 @@ import jakarta.annotation.Nullable;
  */
 final class McpJsonProfileResolver {
 
-    private final JsonMapperProfileRegistry profiles;
+    private final JsonProfileRegistry profiles;
     private final JsonConfig jsonConfig;
     private final McpServerConfig mcpConfig;
 
@@ -45,7 +45,7 @@ final class McpJsonProfileResolver {
      * @param jsonConfig the global JSON configuration carrying {@code json.jsonProfile}
      * @param mcpConfig the MCP server configuration carrying {@code mcp.jsonProfile}
      */
-    McpJsonProfileResolver(JsonMapperProfileRegistry profiles, JsonConfig jsonConfig, McpServerConfig mcpConfig) {
+    McpJsonProfileResolver(JsonProfileRegistry profiles, JsonConfig jsonConfig, McpServerConfig mcpConfig) {
         this.profiles = profiles;
         this.jsonConfig = jsonConfig;
         this.mcpConfig = mcpConfig;
@@ -60,7 +60,7 @@ final class McpJsonProfileResolver {
      * @throws dev.vertique.core.json.JsonProfileConfigurationException if the selected id names no
      *     registered profile; composition fails before Router mount
      */
-    JsonMapperProfile resolve(@Nullable JsonProfileId declaredJsonProfile) {
+    JsonProfileCodec resolve(@Nullable JsonProfileId declaredJsonProfile) {
         JsonProfileId selected = declaredJsonProfile != null ? declaredJsonProfile : configuredDefault();
         return profiles.profile(selected);
     }

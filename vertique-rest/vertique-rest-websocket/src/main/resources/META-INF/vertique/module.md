@@ -316,7 +316,7 @@ no message parameter is still invoked once per **text** message, without a paylo
 do not reach it.
 
 JSON encoding and decoding — inbound typed messages and `session.send(Object)` — use the process
-JSON codec's mapper (`VertiqueJson.mapper()`), the same mapper every other unmanaged framework path
+JSON codec's mapper (`Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`), the same mapper every other unmanaged framework path
 runs on: whatever profile `json.systemProfile` selects applies to WebSocket payloads too.
 
 WebSocket message binding has no request-validation gate in front of it, so it is
@@ -584,7 +584,7 @@ void onMessage(WebSocketSession session, String text) { }
 
 **Renamed message fields are covered.** A field-level policy is declared on a Java property, while an
 incoming message is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
-strategy, or a `@JsonAlias`. Messages are bound through the process JSON codec's `VertiqueJson.mapper()`, and
+strategy, or a `@JsonAlias`. Messages are bound through the process JSON codec's `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`, and
 that mapper's own property introspection is what maps each wire key back onto the Java property whose
 policies apply (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`, implementing the
 `dev.vertique.core.input.InputFieldNameResolver` contract). A `@Sanitize` on a

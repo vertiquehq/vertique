@@ -4,7 +4,6 @@
 package dev.vertique.json;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 
 /**
@@ -22,7 +21,7 @@ import dev.vertique.core.json.JsonProfileId;
  * <p>This type is package-private and registered separately from application-contributed profiles;
  * applications must not contribute a profile with the reserved {@code vertique} id.
  */
-final class VertiqueJsonMapperProfile implements JsonMapperProfile {
+final class VertiqueJsonProfileCodec extends Jackson2JsonProfileCodec {
 
     /** The reserved id this built-in profile registers under. */
     static final JsonProfileId ID = JsonProfileId.of("vertique");
@@ -55,7 +54,7 @@ final class VertiqueJsonMapperProfile implements JsonMapperProfile {
      * @return the {@link ObjectMapper} backing the {@code vertique} profile
      */
     @Override
-    public ObjectMapper mapper() {
+    protected ObjectMapper mapper() {
         return mapper;
     }
 }

@@ -8,8 +8,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.di.WorkflowCoreModule;
@@ -55,8 +55,8 @@ class StateCompatibilityTest {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides
@@ -364,7 +364,7 @@ class StateCompatibilityTest {
                 """;
         PayloadSchemaGenerator generator =
                 new PayloadSchemaGenerator(
-                        new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults(), Optional.empty()) {
+                        new DefaultJsonProfileRegistry(Set.of()), JsonConfig.defaults(), Optional.empty()) {
                     @Override
                     JsonObject describe(Type type) {
                         String label = type == ForestRetypedLabel.class ? "integer" : "string";
@@ -397,7 +397,7 @@ class StateCompatibilityTest {
                 OrderPlus.class, property.formatted("{}"));
         PayloadSchemaGenerator generator =
                 new PayloadSchemaGenerator(
-                        new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults(), Optional.empty()) {
+                        new DefaultJsonProfileRegistry(Set.of()), JsonConfig.defaults(), Optional.empty()) {
                     @Override
                     JsonObject describe(Type type) {
                         return new JsonObject(schemas.get(type));

@@ -12,10 +12,10 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.inject.Singleton;
 import org.junit.jupiter.api.DisplayName;
@@ -50,15 +50,15 @@ class EagerValidationTest {
     interface BadProfilesComponent {
         /**
          * Accessor that forces construction of the {@code @Singleton}
-         * {@link DefaultJsonMapperProfileRegistry}. Calling this triggers validation.
+         * {@link DefaultJsonProfileRegistry}. Calling this triggers validation.
          *
          * @return the registry (never reached when duplicate ids are present)
          */
-        JsonMapperProfileRegistry registry();
+        JsonProfileRegistry registry();
     }
 
     /**
-     * Test Dagger module that contributes TWO {@link JsonMapperProfile}s sharing the same id
+     * Test Dagger module that contributes TWO {@link JsonProfileCodec}s sharing the same id
      * ({@code payments-v1}) to prove that the duplicate-id rejection surfaces at the first accessor
      * call on a component that installs it.
      */
@@ -72,8 +72,8 @@ class EagerValidationTest {
          */
         @Provides
         @IntoSet
-        static JsonMapperProfile firstPaymentsProfile() {
-            return JsonMapperProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
+        static JsonProfileCodec firstPaymentsProfile() {
+            return Jackson2JsonProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
         }
 
         /**
@@ -83,8 +83,8 @@ class EagerValidationTest {
          */
         @Provides
         @IntoSet
-        static JsonMapperProfile secondPaymentsProfile() {
-            return JsonMapperProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
+        static JsonProfileCodec secondPaymentsProfile() {
+            return Jackson2JsonProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
         }
     }
 
@@ -97,11 +97,11 @@ class EagerValidationTest {
     interface GoodProfileComponent {
         /**
          * Accessor that forces construction of the {@code @Singleton}
-         * {@link DefaultJsonMapperProfileRegistry}.
+         * {@link DefaultJsonProfileRegistry}.
          *
          * @return the fully-validated registry
          */
-        JsonMapperProfileRegistry registry();
+        JsonProfileRegistry registry();
     }
 
     /**
@@ -119,8 +119,8 @@ class EagerValidationTest {
          */
         @Provides
         @IntoSet
-        static JsonMapperProfile paymentsProfile() {
-            return JsonMapperProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
+        static JsonProfileCodec paymentsProfile() {
+            return Jackson2JsonProfiles.of(JsonProfileId.of("payments-v1"), vertxAwareMapper());
         }
     }
 
@@ -132,7 +132,7 @@ class EagerValidationTest {
         BadProfilesComponent component = DaggerEagerValidationTest_BadProfilesComponent.create();
 
         // Calling the accessor forces @Singleton construction, which runs the duplicate-id check
-        // in DefaultJsonMapperProfileRegistry's @Inject constructor — the failure surfaces here,
+        // in DefaultJsonProfileRegistry's @Inject constructor — the failure surfaces here,
         // at bootstrap time, before any request is served.
         assertThrows(
                 JsonProfileConfigurationException.class,
@@ -146,12 +146,12 @@ class EagerValidationTest {
         GoodProfileComponent component = DaggerEagerValidationTest_GoodProfileComponent.create();
 
         // Happy path: accessor forces construction with valid profiles; system profile resolves.
-        JsonMapperProfileRegistry registry =
+        JsonProfileRegistry registry =
                 assertDoesNotThrow(component::registry, "accessor must not throw with valid profiles");
 
         assertNotSame(
                 DatabindCodec.mapper(),
-                registry.mapper(JsonProfileId.SYSTEM),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                 "system profile must resolve to a copy of DatabindCodec.mapper(), not the shared instance");
     }
 

@@ -536,3 +536,4 @@ public interface AppComponent { ... }
   `JsonConfigPaths` (the `job.coordinator` parse boundary).
 - **resilience** — the `BackoffStrategy` contract used for retry delays.
 - **deploy** — `VerticleDeployment`, through which `JobCoordinatorModule` deploys the coordinator.
+- **jackson-databind** — `@JsonDeserialize`, which Lombok's `@Jacksonized` generates on the config builders.

@@ -3,14 +3,13 @@
 
 package dev.vertique.core.json;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.vertx.core.json.DecodeException;
+import io.vertx.core.json.EncodeException;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
+import io.vertx.core.json.jackson.JacksonCodec;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -18,7 +17,7 @@ import java.util.Set;
 /**
  * One self-contained JSON Schema (Draft 2020-12) fragment, held as an immutable canonical value.
  *
- * <p>A fragment describes the wire contract a {@link JsonMapperProfile} imposes on one Java class
+ * <p>A fragment describes the wire contract a {@link JsonProfileCodec} imposes on one Java class
  * (see {@link JsonSchemaTypeOverride}). It is a <em>fragment</em>, not a document: the schema
  * generator owns the document dialect and definition graph, so the dialect and reference keywords
  * {@code $schema}, {@code $id}, {@code $anchor}, {@code $dynamicAnchor}, {@code $ref},
@@ -48,12 +47,12 @@ public final class JsonSchemaFragment {
             Set.of("$schema", "$id", "$anchor", "$dynamicAnchor", "$ref", "$dynamicRef", "$defs");
 
     /**
-     * The fragment-local mapper. It is used only to read and to re-serialize fragment text, never to
-     * serialize application payloads, so its configuration is independent of every profile mapper.
+     * The fragment-local codec: Vert.x's streaming codec, used only to read and to re-serialize fragment
+     * text, never application payloads. It reads floating-point numbers as doubles, keeps the last of
+     * repeated keys, accepts JSON comments and applies the operator's {@code vertx.jackson.defaultRead*}
+     * limits; it needs no data-binding library.
      */
-    private static final ObjectMapper MAPPER = JsonMapper.builder()
-            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-            .build();
+    private static final JacksonCodec CODEC = new JacksonCodec();
 
     private final String canonicalJson;
 
@@ -84,20 +83,20 @@ public final class JsonSchemaFragment {
         if (schemaJson.isBlank()) {
             throw new IllegalArgumentException("JSON schema fragment must not be blank");
         }
-        JsonNode root;
+        Object root;
         try {
-            root = MAPPER.readTree(schemaJson);
-        } catch (JsonProcessingException e) {
+            root = CODEC.fromString(schemaJson);
+        } catch (DecodeException e) {
             // The parser's message quotes the source, so neither it nor the cause may be propagated.
             throw new IllegalArgumentException("JSON schema fragment must be well-formed JSON");
         }
-        if (root == null || !root.isObject()) {
+        if (!(root instanceof JsonObject)) {
             throw new IllegalArgumentException("JSON schema fragment must be a JSON object");
         }
-        JsonNode canonical = canonicalize(root);
+        Object canonical = canonicalize(root);
         try {
-            return new JsonSchemaFragment(MAPPER.writeValueAsString(canonical));
-        } catch (JsonProcessingException e) {
+            return new JsonSchemaFragment(CODEC.toString(canonical, false));
+        } catch (EncodeException e) {
             throw new IllegalArgumentException("JSON schema fragment could not be canonicalized");
         }
     }
@@ -136,18 +135,24 @@ public final class JsonSchemaFragment {
     /**
      * Recursively rejects the dialect keywords and copies the node into canonical key order.
      *
-     * <p>Scalar nodes are immutable in Jackson and are therefore shared rather than copied; the tree
-     * this builds is discarded by {@link #parse(String)} once it has been serialized.
+     * <p>Scalars are immutable and are therefore shared rather than copied; the structure this builds is
+     * discarded by {@link #parse(String)} once it has been serialized.
      *
      * @param node the node to canonicalize
      * @return a canonically ordered copy of {@code node}
      * @throws IllegalArgumentException if any object key is a rejected dialect keyword
      */
-    private static JsonNode canonicalize(JsonNode node) {
-        if (node.isObject()) {
+    private static Object canonicalize(Object node) {
+        if (node instanceof JsonObject object) {
+            return canonicalize(object.getMap());
+        }
+        if (node instanceof JsonArray array) {
+            return canonicalize(array.getList());
+        }
+        if (node instanceof Map<?, ?> object) {
             List<String> keys = new ArrayList<>();
-            for (Map.Entry<String, JsonNode> property : node.properties()) {
-                String key = property.getKey();
+            for (Object rawKey : object.keySet()) {
+                String key = (String) rawKey;
                 if (REJECTED_KEYWORDS.contains(key)) {
                     throw new IllegalArgumentException(
                             "JSON schema fragment must not contain the reserved keyword " + key);
@@ -155,15 +160,15 @@ public final class JsonSchemaFragment {
                 keys.add(key);
             }
             keys.sort(String::compareTo);
-            ObjectNode canonical = MAPPER.createObjectNode();
+            Map<String, Object> canonical = new LinkedHashMap<>();
             for (String key : keys) {
-                canonical.set(key, canonicalize(node.get(key)));
+                canonical.put(key, canonicalize(object.get(key)));
             }
             return canonical;
         }
-        if (node.isArray()) {
-            ArrayNode canonical = MAPPER.createArrayNode();
-            for (JsonNode element : node) {
+        if (node instanceof List<?> array) {
+            List<Object> canonical = new ArrayList<>(array.size());
+            for (Object element : array) {
                 canonical.add(canonicalize(element));
             }
             return canonical;

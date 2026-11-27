@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
@@ -168,7 +168,7 @@ final class RegistrarTestSupport {
                 actionRegistry,
                 authorizerAvailable,
                 JaxRsConfig.builder().build(),
-                new DefaultJsonMapperProfileRegistry(Set.of()),
+                new DefaultJsonProfileRegistry(Set.of()),
                 JsonConfig.defaults());
     }
 
@@ -223,7 +223,7 @@ final class RegistrarTestSupport {
                 null,
                 false,
                 jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
+                new DefaultJsonProfileRegistry(Set.of()),
                 jsonConfig);
     }
 }

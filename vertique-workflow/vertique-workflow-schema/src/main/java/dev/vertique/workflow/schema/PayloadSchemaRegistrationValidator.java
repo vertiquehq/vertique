@@ -3,8 +3,8 @@
 
 package dev.vertique.workflow.schema;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.schema.validation.JsonSchemaValidationOptions;
 import dev.vertique.json.schema.validation.PatternCompileFailure;
@@ -51,7 +51,7 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
 
     @Inject
     PayloadSchemaRegistrationValidator(
-            JsonMapperProfileRegistry profileRegistry,
+            JsonProfileRegistry profileRegistry,
             JsonConfig jsonConfig,
             Optional<Validator> validator,
             PayloadSchemaCache cache,

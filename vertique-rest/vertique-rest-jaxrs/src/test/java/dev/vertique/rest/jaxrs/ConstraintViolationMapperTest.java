@@ -22,6 +22,7 @@ import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
@@ -1041,7 +1042,7 @@ class ConstraintViolationMapperTest {
     @DisplayName("Should read the live process mapper when the route stashed no mapper")
     void routeWithoutAStashedMapperUsesTheLiveProcessMapper() {
         // Given a default-profile route: nothing under the route-mapper key
-        ObjectMapper processMapper = VertiqueJson.mapper();
+        ObjectMapper processMapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         Request bound = new Request().body(zipCodeDocument()).marked(BodyBindingMark.Kind.JSON, processMapper);
         Request boundByOther =
                 new Request().body(zipCodeDocument()).marked(BodyBindingMark.Kind.JSON, new ObjectMapper());

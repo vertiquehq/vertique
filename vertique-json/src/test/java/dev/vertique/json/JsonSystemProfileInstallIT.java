@@ -26,9 +26,9 @@ import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
@@ -118,8 +118,9 @@ public class JsonSystemProfileInstallIT {
                     VertiqueJson.profile().orElse(null),
                     "the defaults install the reserved system profile as the process codec");
             assertSame(
-                    first.component.registry().mapper(JsonProfileId.SYSTEM),
-                    VertiqueJson.mapper(),
+                    Jackson2JsonProfileCodec.objectMapper(
+                            first.component.registry().profile(JsonProfileId.SYSTEM)),
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
                     "the process delegate is the booted application's registry instance");
             assertEquals("\"2026-09-06\"", Json.encode(DUE), "java.time encodes after the install (it throws before)");
             assertEquals(
@@ -136,7 +137,7 @@ public class JsonSystemProfileInstallIT {
                     "system keeps Vert.x's Double float binding");
 
             // --- Case 2: a second defaults boot in the same JVM, WITHOUT a reset ---
-            ObjectMapper firstMapper = VertiqueJson.mapper();
+            ObjectMapper firstMapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
             appender.list.clear();
             second = bootWith(new JsonObject());
 
@@ -144,9 +145,13 @@ public class JsonSystemProfileInstallIT {
                     JsonProfileId.SYSTEM,
                     VertiqueJson.profile().orElse(null),
                     "a same-id second boot succeeds and keeps the installed id");
-            ObjectMapper secondMapper = second.component.registry().mapper(JsonProfileId.SYSTEM);
+            ObjectMapper secondMapper = Jackson2JsonProfileCodec.objectMapper(
+                    second.component.registry().profile(JsonProfileId.SYSTEM));
             assertNotSame(firstMapper, secondMapper, "each application builds its own system mapper instance");
-            assertSame(secondMapper, VertiqueJson.mapper(), "the same-id swap adopts the second application's mapper");
+            assertSame(
+                    secondMapper,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "the same-id swap adopts the second application's mapper");
             String swapLog = logContaining(appender, Level.INFO, JsonProfileId.SYSTEM.value());
             assertNotNull(swapLog, "the same-id swap must be logged at INFO; captured: " + appender.list);
             assertTrue(
@@ -423,6 +428,6 @@ public class JsonSystemProfileInstallIT {
          *
          * @return the registry
          */
-        JsonMapperProfileRegistry registry();
+        JsonProfileRegistry registry();
     }
 }

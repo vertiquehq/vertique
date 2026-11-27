@@ -4,6 +4,7 @@ package dev.vertique.workflow.ops;
 
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import jakarta.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
@@ -22,7 +23,7 @@ public final class ReplyPayloadBounds {
     public static @Nullable String encode(@Nullable Object payload, int maxPayloadBytes) {
         BoundedSink sink = new BoundedSink(maxPayloadBytes);
         try {
-            VertiqueJson.mapper().writeValue(sink, payload);
+            Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).writeValue(sink, payload);
             return payload == null ? null : sink.encoded();
         } catch (IOException | RuntimeException failure) {
             if (sink.tooLarge) throw invalid("payload exceeds maxPayloadBytes " + maxPayloadBytes);

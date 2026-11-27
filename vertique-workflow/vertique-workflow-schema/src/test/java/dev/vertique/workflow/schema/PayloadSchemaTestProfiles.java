@@ -5,12 +5,13 @@ package dev.vertique.workflow.schema;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import java.util.Arrays;
 import java.util.List;
@@ -30,8 +31,8 @@ final class PayloadSchemaTestProfiles {
      *
      * @return the registry
      */
-    static JsonMapperProfileRegistry builtIn() {
-        return new DefaultJsonMapperProfileRegistry(Set.of());
+    static JsonProfileRegistry builtIn() {
+        return new DefaultJsonProfileRegistry(Set.of());
     }
 
     /**
@@ -40,8 +41,8 @@ final class PayloadSchemaTestProfiles {
      * @param profiles the application profiles
      * @return the registry
      */
-    static JsonMapperProfileRegistry with(JsonMapperProfile... profiles) {
-        return new DefaultJsonMapperProfileRegistry(Set.of(profiles));
+    static JsonProfileRegistry with(JsonProfileCodec... profiles) {
+        return new DefaultJsonProfileRegistry(Set.of(profiles));
     }
 
     /**
@@ -61,9 +62,8 @@ final class PayloadSchemaTestProfiles {
      * @param id the profile id
      * @return the profile
      */
-    static JsonMapperProfile snakeCase(String id) {
-        ObjectMapper mapper = builtIn()
-                .mapper(JsonProfileId.SYSTEM)
+    static JsonProfileCodec snakeCase(String id) {
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(builtIn().profile(JsonProfileId.SYSTEM))
                 .copy()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         return new FixedProfile(id, mapper, List.of());
@@ -76,8 +76,12 @@ final class PayloadSchemaTestProfiles {
      * @param overrides the declared overrides
      * @return the profile
      */
-    static JsonMapperProfile withOverrides(String id, List<JsonSchemaTypeOverride> overrides) {
-        return new FixedProfile(id, builtIn().mapper(JsonProfileId.SYSTEM).copy(), overrides);
+    static JsonProfileCodec withOverrides(String id, List<JsonSchemaTypeOverride> overrides) {
+        return new FixedProfile(
+                id,
+                Jackson2JsonProfileCodec.objectMapper(builtIn().profile(JsonProfileId.SYSTEM))
+                        .copy(),
+                overrides);
     }
 
     /**
@@ -86,7 +90,7 @@ final class PayloadSchemaTestProfiles {
      * @param id the profile id
      * @return the profile
      */
-    static JsonMapperProfile withNullOverride(String id) {
+    static JsonProfileCodec withNullOverride(String id) {
         return withOverrides(id, Arrays.asList((JsonSchemaTypeOverride) null));
     }
 
@@ -97,15 +101,24 @@ final class PayloadSchemaTestProfiles {
      * @param id the profile id
      * @return the profile
      */
-    static JsonMapperProfile withUncompilableUuidSchema(String id) {
+    static JsonProfileCodec withUncompilableUuidSchema(String id) {
         return withOverrides(
                 id,
                 List.of(JsonSchemaTypeOverride.input(
                         UUID.class, JsonSchemaFragment.parse("{\"type\": \"object\", \"properties\": 5}"))));
     }
 
-    private record FixedProfile(String name, ObjectMapper objectMapper, List<JsonSchemaTypeOverride> overrides)
-            implements JsonMapperProfile {
+    private static final class FixedProfile extends Jackson2JsonProfileCodec {
+
+        private final String name;
+        private final ObjectMapper objectMapper;
+        private final List<JsonSchemaTypeOverride> overrides;
+
+        FixedProfile(String name, ObjectMapper objectMapper, List<JsonSchemaTypeOverride> overrides) {
+            this.name = name;
+            this.objectMapper = objectMapper;
+            this.overrides = overrides;
+        }
 
         @Override
         public JsonProfileId id() {
@@ -113,7 +126,7 @@ final class PayloadSchemaTestProfiles {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return objectMapper;
         }
 

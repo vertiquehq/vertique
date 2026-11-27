@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
@@ -498,7 +498,7 @@ public class PatternInputBoundIT {
                                 .httpMethod("POST")
                                 .body(new BodyDescriptor(dto, null, List.of()))
                                 .build(),
-                        new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")))
+                        new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")))
                 .bodySchema()
                 .orElseThrow();
         Map<String, String> found = new TreeMap<>();

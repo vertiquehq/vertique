@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.input;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.jaxrs.publication.InputKey;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -58,7 +58,7 @@ public final class RecordingSchemaSource implements OperationSchemaSource {
     }
 
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         OperationSchemas returned = delegate.schemasFor(op, profile);
         OperationSchemas.Builder replaced = null;
         for (ParamDescriptor parameter : op.parameters()) {

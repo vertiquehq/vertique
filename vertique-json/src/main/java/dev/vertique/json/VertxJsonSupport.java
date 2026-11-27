@@ -15,7 +15,7 @@ import io.vertx.core.json.jackson.VertxModule;
  * {@link io.vertx.core.json.JsonArray}, so those types round-trip with their values intact rather
  * than binding to an empty object.
  *
- * <p>Application-supplied profile mappers (see {@code dev.vertique.core.json.JsonMapperProfile})
+ * <p>Application-supplied profile mappers (see {@code dev.vertique.core.json.JsonProfileCodec})
  * are expected to register this module so that framework JSON boundaries handling
  * {@code JsonObject}/{@code JsonArray} continue to work regardless of the selected profile. This
  * helper exists so consumers reference a stable framework symbol instead of depending directly on

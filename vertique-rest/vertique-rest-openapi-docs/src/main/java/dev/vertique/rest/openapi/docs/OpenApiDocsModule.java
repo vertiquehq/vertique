@@ -9,7 +9,7 @@ import dagger.multibindings.ElementsIntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.lifecycle.RouterLifecycleHook;
@@ -93,7 +93,7 @@ public abstract class OpenApiDocsModule {
             Set<RequestValidationStrategy> strategies,
             RestApplications applications,
             Optional<OperationSchemaSource> schemaSource,
-            JsonMapperProfileRegistry profiles,
+            JsonProfileRegistry profiles,
             DocumentWarnings warnings,
             Set<ResponseProducerBinding<?>> producerBindings,
             Set<SecuritySchemeHandler> securitySchemeHandlers) {

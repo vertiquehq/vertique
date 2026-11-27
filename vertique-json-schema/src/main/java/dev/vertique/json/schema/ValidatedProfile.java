@@ -6,7 +6,7 @@ package dev.vertique.json.schema;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * A {@link JsonMapperProfile} read once, validated once, and reduced to exactly what generator
+ * A {@link JsonProfileCodec} read once, validated once, and reduced to exactly what generator
  * construction needs: the profile's mapper, and the canonical override fragments — parsed exactly
  * once, at construction — that apply in one direction, keyed by the exact raw Java class they
  * describe.
@@ -65,7 +65,7 @@ final class ValidatedProfile {
      *     selected fragment carries a generator-private keyword on a schema object, or if the whole
      *     declaration carries a duplicate effective {@code (class, direction)} mapping
      */
-    static ValidatedProfile forDirection(JsonMapperProfile profile, Direction direction) {
+    static ValidatedProfile forDirection(JsonProfileCodec profile, Direction direction) {
         JsonProfileId id = profile.id();
         if (id == null || id.value() == null) {
             throw Diagnostics.failure("cannot construct a JSON Schema generator: the profile declares a null id", null);
@@ -73,7 +73,7 @@ final class ValidatedProfile {
         String profileLabel =
                 "profile '" + Diagnostics.truncate(id.value(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH) + "'";
 
-        ObjectMapper mapper = profile.mapper();
+        ObjectMapper mapper = profile.unwrap(ObjectMapper.class).orElse(null);
         if (mapper == null) {
             throw Diagnostics.failure(
                     "cannot construct a JSON Schema generator: " + profileLabel + " declares a null mapper", null);

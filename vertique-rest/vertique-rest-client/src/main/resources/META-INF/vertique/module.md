@@ -179,7 +179,7 @@ and the optional `BeanValidator`.
 | `baseUrl(String)` | Base URL for all requests; overrides `@RestClient#value()`, overridden by external config |
 | `readTimeout(long, TimeUnit)` | Default request timeout (default 30 s); overridden per method by `@Timeout` |
 | `objectMapper(ObjectMapper)` | Explicit Jackson mapper; wins over every JSON-profile source |
-| `jsonProfile(JsonProfileId)` | Selects a named mapper profile, resolved at `build()` from the seeded `JsonMapperProfileRegistry` |
+| `jsonProfile(JsonProfileId)` | Selects a named mapper profile, resolved at `build()` from the seeded `JsonProfileRegistry` |
 | `beanValidator(BeanValidator)` | Validates deserialized response objects; skipped when absent |
 | `webClientOptions(WebClientOptions)` | TLS, connect timeout, keep-alive, and other transport settings |
 | `poolOptions(PoolOptions)` | HTTP/1 and HTTP/2 connection-pool sizing |
@@ -1031,7 +1031,7 @@ The `ObjectMapper` used for request serialization and response deserialization i
    neither this tier nor any higher tier selects a profile — the zero-config floor.
 
 Every id resolved above — `vertique` included — is then resolved to an `ObjectMapper` through a
-`JsonMapperProfileRegistry`: the Dagger-injected registry when one is present, or, only for a
+`JsonProfileRegistry`: the Dagger-injected registry when one is present, or, only for a
 hand-built (standalone) builder with no injected registry, a builder-private registry the builder
 creates lazily, at most once per builder instance, seeded with no application profiles (so it
 resolves exactly the reserved `system`, `vertique`, and `vertique-strict` ids). Framework code never
@@ -1197,7 +1197,7 @@ configured or every client overrides it.
 ## Module Dagger Bindings
 
 `RestClientModule` is declared `@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class, ResilienceModule.class})`.
-`JsonRuntimeModule` supplies the `JsonMapperProfileRegistry`; `RestCoreModule` supplies the
+`JsonRuntimeModule` supplies the `JsonProfileRegistry`; `RestCoreModule` supplies the
 `ParamConversionResolver` and its converter multibindings, shared with `dev.vertique:vertique-rest-jaxrs`;
 `ResilienceModule` supplies the application-scoped resilience runtime, with its shutdown step, that the
 per-method pipelines run on.
@@ -1231,10 +1231,11 @@ interface AppComponent {
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, `core.codegen` metadata SPI, the `JsonMapperProfileRegistry` and `@JsonProfile` types, optional `BeanValidator` |
+| `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, `core.codegen` metadata SPI, the `JsonProfileRegistry` and `@JsonProfile` types, optional `BeanValidator` |
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
-| `dev.vertique:vertique-json` | `DefaultJsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `dev.vertique:vertique-json` | `DefaultJsonProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper`, the type of the profile mappers that encode and decode bodies |
 | `dev.vertique:vertique-http-client` | The governed transport: `HttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |

@@ -9,10 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
@@ -67,7 +67,7 @@ import java.util.Set;
  * arguments are never cast or resolved here, so a return type holding a type variable or wildcard
  * is captured unchanged.
  *
- * <p><b>Synthetic publications.</b> {@link #assemble(String, List, JsonMapperProfileRegistry, Set,
+ * <p><b>Synthetic publications.</b> {@link #assemble(String, List, JsonProfileRegistry, Set,
  * DocumentWarnings)} builds a mount {@code /api/<document>/*} of application {@code <document>},
  * declared by {@link UnitDocumentedApi} (a public document), with one operation per {@link
  * ResponseOperation}, in list order. Every operation carries a stub descriptor holding the real
@@ -208,8 +208,8 @@ public final class ResponseDocuments {
      * @param applicationProfiles the application profiles, for example a snake-case test profile
      * @return the registry
      */
-    public static JsonMapperProfileRegistry registry(JsonMapperProfile... applicationProfiles) {
-        return new DefaultJsonMapperProfileRegistry(Set.of(applicationProfiles));
+    public static JsonProfileRegistry registry(JsonProfileCodec... applicationProfiles) {
+        return new DefaultJsonProfileRegistry(Set.of(applicationProfiles));
     }
 
     /**
@@ -221,8 +221,8 @@ public final class ResponseDocuments {
      * @param type the resolved output type
      * @return the parsed canonical schema
      */
-    public static JsonNode generatedOutputSchema(JsonMapperProfileRegistry profiles, String profileId, Type type) {
-        JsonMapperProfile profile = profiles.profile(JsonProfileId.of(profileId));
+    public static JsonNode generatedOutputSchema(JsonProfileRegistry profiles, String profileId, Type type) {
+        JsonProfileCodec profile = profiles.profile(JsonProfileId.of(profileId));
         return parse(AnnotationJsonSchemaGenerator.forOutputProfile(profile).generateCanonical(type));
     }
 
@@ -316,7 +316,7 @@ public final class ResponseDocuments {
     public static Outcome assemble(
             String documentName,
             List<ResponseOperation> operations,
-            JsonMapperProfileRegistry profiles,
+            JsonProfileRegistry profiles,
             Set<ResponseProducerBinding<?>> producerBindings,
             DocumentWarnings warnings) {
         MountPublication attached = publication(documentName, operations);
@@ -338,8 +338,7 @@ public final class ResponseDocuments {
      * @param operations the operations, in publication order
      * @return the rendering, or the publication failure
      */
-    public static Outcome assemble(
-            String documentName, JsonMapperProfileRegistry profiles, ResponseOperation... operations) {
+    public static Outcome assemble(String documentName, JsonProfileRegistry profiles, ResponseOperation... operations) {
         return assemble(documentName, List.of(operations), profiles, Set.of(), DiagnosticsAccess.documentWarnings());
     }
 

@@ -6,8 +6,8 @@ package dev.vertique.workflow.postgresql.engine;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.schema.WorkflowSchemaModule;
@@ -41,8 +41,8 @@ final class PlanSchemas {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

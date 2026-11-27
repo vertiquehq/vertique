@@ -20,9 +20,9 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.validation.PatternInputGuard;
 import dev.vertique.rest.core.RestValidationException;
@@ -476,16 +476,16 @@ class CaseInsensitiveRecheckTest {
             .setOutputFormat(OutputFormat.Basic);
 
     /** The mapper-wide case-insensitive profile. */
-    private static JsonMapperProfile mapperWideProfile() {
+    private static JsonProfileCodec mapperWideProfile() {
         ObjectMapper mapper = JsonMapper.builder()
                 .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
                 .build();
-        return JsonMapperProfiles.of(JsonProfileId.of("case-insensitive-recheck-test-mapper-wide"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("case-insensitive-recheck-test-mapper-wide"), mapper);
     }
 
     /** A plain profile: case-insensitivity comes only from a class-level annotation. */
-    private static JsonMapperProfile plainProfile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("case-insensitive-recheck-test-plain"), new ObjectMapper());
+    private static JsonProfileCodec plainProfile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("case-insensitive-recheck-test-plain"), new ObjectMapper());
     }
 
     /**
@@ -499,7 +499,7 @@ class CaseInsensitiveRecheckTest {
 
     private static JsonObject schemaOf(Class<?> shape) {
         return SCHEMAS.computeIfAbsent(shape, type -> {
-            JsonMapperProfile profile = HOLDER_ONLY_SHAPES.contains(type) ? plainProfile() : mapperWideProfile();
+            JsonProfileCodec profile = HOLDER_ONLY_SHAPES.contains(type) ? plainProfile() : mapperWideProfile();
             return new JsonObject(
                     AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(type));
         });

@@ -8,7 +8,7 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
@@ -72,7 +72,7 @@ public final class McpExampleModule {
 
     @Provides
     @IntoSet
-    static JsonMapperProfile exampleJsonProfile() {
+    static JsonProfileCodec exampleJsonProfile() {
         return ExampleJsonProfile.create();
     }
 

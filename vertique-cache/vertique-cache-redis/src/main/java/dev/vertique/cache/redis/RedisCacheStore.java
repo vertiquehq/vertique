@@ -9,9 +9,10 @@ import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.CacheValueDescriptor;
 import dev.vertique.cache.spi.ResolvedCacheKey;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.redis.RedisClientRegistry;
 import io.vertx.core.Future;
 import io.vertx.redis.client.Response;
@@ -30,14 +31,14 @@ public final class RedisCacheStore implements CacheStore {
     private final RedisCommandClient redis;
     private final CacheRedisConfig config;
     private final CacheConfig cacheConfig;
-    private final JsonMapperProfileRegistry profiles;
+    private final JsonProfileRegistry profiles;
     /** Direct-provider constructor for use without a Dagger graph. */
     public RedisCacheStore(RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
         this(
                 VertxRedisCommandClient.from(clients, config.connection()),
                 config,
                 cacheConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()));
+                new DefaultJsonProfileRegistry(Set.of()));
     }
 
     @Inject
@@ -45,15 +46,12 @@ public final class RedisCacheStore implements CacheStore {
             RedisClientRegistry clients,
             CacheRedisConfig config,
             CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles) {
+            JsonProfileRegistry profiles) {
         this(VertxRedisCommandClient.from(clients, config.connection()), config, cacheConfig, profiles);
     }
 
     RedisCacheStore(
-            RedisCommandClient redis,
-            CacheRedisConfig config,
-            CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles) {
+            RedisCommandClient redis, CacheRedisConfig config, CacheConfig cacheConfig, JsonProfileRegistry profiles) {
         this.redis = redis;
         this.config = config;
         this.cacheConfig = cacheConfig;
@@ -193,6 +191,6 @@ public final class RedisCacheStore implements CacheStore {
     }
 
     private ObjectMapper mapper(String profile) {
-        return profiles.mapper(JsonProfileId.of(profile));
+        return Jackson2JsonProfileCodec.objectMapper(profiles.profile(JsonProfileId.of(profile)));
     }
 }

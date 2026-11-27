@@ -20,11 +20,11 @@ import dev.vertique.cache.CacheCoreModule;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.deploy.DeployerModule;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
@@ -112,8 +112,8 @@ final class PlanCacheFixture implements AutoCloseable {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

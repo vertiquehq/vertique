@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -38,7 +38,7 @@ class GeneratorCompositionTest {
     @DisplayName("@Schema(implementation) on an override-bearing declared type fails generation")
     void schemaImplementationOnOverriddenDeclaredTypeFailsGeneration() {
         // Given: the real vertique-strict profile, whose BigDecimal override applies in both directions.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
         AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.forInputProfile(strict);
 
         // When/Then: a directly overridden declared type fails, naming the property.
@@ -316,7 +316,7 @@ class GeneratorCompositionTest {
         // Given: a profile whose BigDecimal override declares numeric bounds and no type, and a DTO
         // whose two BigDecimal properties therefore share one generated definition — only the first of
         // which conjoins an object-shaped schema through @Schema(allOf = ...).
-        JsonMapperProfile bounded = HardeningFixtures.profile(
+        JsonProfileCodec bounded = HardeningFixtures.profile(
                 "shared-definition-bounds",
                 List.of(JsonSchemaTypeOverride.both(BigDecimal.class, HardeningFixtures.boundedNumberFragment())));
 

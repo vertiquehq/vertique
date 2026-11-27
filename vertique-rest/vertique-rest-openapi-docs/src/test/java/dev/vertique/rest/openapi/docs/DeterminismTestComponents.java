@@ -7,7 +7,7 @@ import dagger.BindsInstance;
 import dagger.Component;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxConfig;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
@@ -74,7 +74,7 @@ final class DeterminismTestComponents {
          *
          * @return the registry
          */
-        JsonMapperProfileRegistry profiles();
+        JsonProfileRegistry profiles();
 
         /**
          * Resolves the registered response producer bindings.

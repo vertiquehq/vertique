@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Pins the compatibility matrix across raw Vert.x ({@link DatabindCodec#mapper()}), the reserved
  * {@code system} profile, and the reserved {@code vertique} profile, both obtained from a {@link
- * DefaultJsonMapperProfileRegistry} seeded with no application profiles.
+ * DefaultJsonProfileRegistry} seeded with no application profiles.
  *
  * <p>{@code system} is byte-identical to raw for every previously-supported type ({@link
  * JsonObject}, {@link JsonArray}, {@link Buffer}, {@code byte[]}, {@link Instant}, a POJO carrying
@@ -53,10 +53,10 @@ class ProfileCompatibilityMatrixTest {
 
     @BeforeEach
     void setUp() {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
         raw = DatabindCodec.mapper();
-        system = registry.mapper(JsonProfileId.SYSTEM);
-        vertique = registry.mapper(JsonProfileId.of("vertique"));
+        system = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM));
+        vertique = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique")));
     }
 
     // --- Fixtures ---

@@ -36,7 +36,7 @@ import org.yaml.snakeyaml.LoaderOptions;
  *
  * <p>Do NOT use or customize these mappers for application-level JSON serialization. They are
  * dedicated to definition document parsing only. Application JSON uses the process JSON codec's
- * mapper ({@link dev.vertique.core.json.VertiqueJson#mapper() VertiqueJson.mapper()}).
+ * mapper ({@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}).
  */
 @Singleton
 public class WorkflowDefinitionMapperFactory {

@@ -5,9 +5,9 @@ package dev.vertique.mcp.server.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonArray;
@@ -68,8 +68,8 @@ class McpBuiltinProfileScalarAndContainerCoverageTest {
         public String[] array;
     }
 
-    private static JsonMapperProfile profile(String id) {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of(id));
+    private static JsonProfileCodec profile(String id) {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of(id));
     }
 
     @Test

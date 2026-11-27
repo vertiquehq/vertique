@@ -14,11 +14,12 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
 import java.lang.reflect.Type;
@@ -62,15 +63,15 @@ class MemberLevelAdditionalPropertiesClosureTest {
 
     // --- Generation helpers (fixture-construction isolation, so Given/When/Then stays visible below) ---
 
-    private static JsonMapperProfile profile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec profile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     private static JsonNode inputDocument(Type type) {
         return inputDocument(type, profile());
     }
 
-    private static JsonNode inputDocument(Type type, JsonMapperProfile customProfile) {
+    private static JsonNode inputDocument(Type type, JsonProfileCodec customProfile) {
         return assertCanonicalForm(
                 AnnotationJsonSchemaGenerator.forInputProfile(customProfile).generateCanonical(type));
     }
@@ -91,16 +92,16 @@ class MemberLevelAdditionalPropertiesClosureTest {
         return document.at(reference.asText().substring(1));
     }
 
-    private static JsonMapperProfile overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
+    private static JsonProfileCodec overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
         List<JsonSchemaTypeOverride> overrides = List.of(JsonSchemaTypeOverride.input(overriddenClass, fragment));
-        return new JsonMapperProfile() {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("member-false-override");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return new ObjectMapper();
             }
 
@@ -271,7 +272,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
     @DisplayName("a member FALSE whose value type carries a profile override refuses with a"
             + " bounded diagnostic naming the member and the override remedy")
     void overridePlusFalseRefusesWithTheRemedy() {
-        JsonMapperProfile withOverride = overrideProfile(
+        JsonProfileCodec withOverride = overrideProfile(
                 OverriddenChild.class,
                 JsonSchemaFragment.parse("{\"type\":\"object\",\"format\":\"member-false-override\",\"properties\":{},"
                         + "\"additionalProperties\":false}"));

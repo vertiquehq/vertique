@@ -11,7 +11,7 @@ import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheValueDescriptor;
 import dev.vertique.cache.spi.ResolvedCacheKey;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import io.vertx.core.Future;
 import java.time.Duration;
 import java.util.List;
@@ -29,8 +29,8 @@ class CaffeineCacheStoreTest {
     @Test
     void finiteTtlExpiresAndZeroTtlIsPersistent() {
         AtomicLong now = new AtomicLong(100);
-        CaffeineCacheStore store = new CaffeineCacheStore(
-                CacheConfig.defaults(), new DefaultJsonMapperProfileRegistry(Set.of()), now::get);
+        CaffeineCacheStore store =
+                new CaffeineCacheStore(CacheConfig.defaults(), new DefaultJsonProfileRegistry(Set.of()), now::get);
 
         await(put(store, KEY, "temporary", String.class, Duration.ofNanos(10)));
         now.set(109);

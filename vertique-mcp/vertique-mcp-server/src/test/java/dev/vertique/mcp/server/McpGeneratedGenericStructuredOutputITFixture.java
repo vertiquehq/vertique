@@ -9,10 +9,10 @@ import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.correlation.CorrelationContextFactory;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -309,10 +309,10 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                 invokerConstructor.newInstance(toolsInstance, runtimeFactory, inputProcessor, Optional.empty());
     }
 
-    private static JsonMapperProfile snakeProfile() {
+    private static JsonProfileCodec snakeProfile() {
         var mapper = DatabindCodec.mapper().copy();
         mapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        return JsonMapperProfiles.of(JsonProfileId.of(PROFILE_ID), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of(PROFILE_ID), mapper);
     }
 
     private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {

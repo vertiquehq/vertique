@@ -3,8 +3,8 @@
 
 package dev.vertique.rest.client;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.rest.client.config.RestClientDefaults;
 import jakarta.inject.Inject;
@@ -13,7 +13,7 @@ import jakarta.inject.Singleton;
 /**
  * {@link ComposeValidator} that fails the application's {@code VALIDATE} phase when the configured
  * rest-client per-boundary default profile ({@code restClient.defaults.jsonProfile}) names a profile
- * id that the {@link JsonMapperProfileRegistry} does not know.
+ * id that the {@link JsonProfileRegistry} does not know.
  *
  * <p>The validation is performed in the {@code @Inject} constructor (the
  * constructible-as-validation pattern), mirroring {@code JaxRsDefaultProfileValidator} in
@@ -43,8 +43,7 @@ public final class RestClientDefaultProfileValidator implements ComposeValidator
      *     an unregistered profile id
      */
     @Inject
-    public RestClientDefaultProfileValidator(
-            RestClientDefaults restClientDefaults, JsonMapperProfileRegistry registry) {
+    public RestClientDefaultProfileValidator(RestClientDefaults restClientDefaults, JsonProfileRegistry registry) {
         registry.validateConfigured(restClientDefaults.jsonProfile());
     }
 }

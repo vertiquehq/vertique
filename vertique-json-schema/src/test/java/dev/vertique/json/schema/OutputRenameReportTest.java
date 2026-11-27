@@ -22,9 +22,9 @@ import com.fasterxml.jackson.databind.introspect.Annotated;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
@@ -162,10 +162,10 @@ class OutputRenameReportTest {
         public Box<Integer> boxOfInteger;
     }
 
-    private static final JsonMapperProfile PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("output-rename-report-test"), new ObjectMapper());
+    private static final JsonProfileCodec PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("output-rename-report-test"), new ObjectMapper());
 
-    private static final JsonMapperProfile SNAKE_CASE_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec SNAKE_CASE_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("output-rename-report-test-snake-case"),
             new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE));
 
@@ -207,7 +207,7 @@ class OutputRenameReportTest {
     @DisplayName("Nothing is reported where the schema name equals the serialized name, once the fixture is shown to"
             + " actually publish the property")
     void reportsNothingWhereSchemaAndSerializedNamesAgree(
-            String label, JsonMapperProfile profile, Class<?> type, String publishedProperty) {
+            String label, JsonProfileCodec profile, Class<?> type, String publishedProperty) {
         AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
         String json = generator.generateCanonical(type);
 
@@ -391,9 +391,10 @@ class OutputRenameReportTest {
                 AnnotationJsonSchemaGenerator.forOutputProfile(PROFILE).outputRenames(HeldRename.class));
 
         GatingIntrospector gate = new GatingIntrospector();
-        AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.forOutputProfile(JsonMapperProfiles.of(
-                JsonProfileId.of("output-rename-report-test-gated"),
-                JsonMapper.builder().annotationIntrospector(gate).build()));
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forOutputProfile(Jackson2JsonProfiles.of(
+                        JsonProfileId.of("output-rename-report-test-gated"),
+                        JsonMapper.builder().annotationIntrospector(gate).build()));
         FutureTask<String> heldGeneration = new FutureTask<>(() -> generator.generateCanonical(HeldRename.class));
         FutureTask<List<OutputRename>> report = new FutureTask<>(() -> generator.outputRenames(reportedType));
         Thread heldCaller = new Thread(heldGeneration, "output-rename-report-test-held-generation");

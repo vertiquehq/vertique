@@ -24,7 +24,7 @@ explicit selection.
 > message naming the rename. Change `jsonProfile: vertx` to `jsonProfile: system`. This is not a pure
 > rename in effect: see [the `system` recipe](#the-system-profile) for the one wire-shape delta.
 
-The profile *contracts* (`JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`,
+The profile *contracts* (`JsonProfileId`, `JsonProfileCodec`, `JsonProfileRegistry`,
 `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`) live in `dev.vertique.core.json`, in
 `dev.vertique:vertique-core`, so a boundary module can reference them without depending on this
 artifact. This module supplies the registry, the three built-in profiles, the opinionated-defaults
@@ -67,7 +67,7 @@ Three profiles are always registered:
 All three ids are **reserved**: an application profile that claims one fails startup. So does the
 retired `vertx` id.
 
-Each profile's `mapper()` returns **one stable instance** — the same reference on every call.
+Each profile's mapper (read with `Jackson2JsonProfileCodec.objectMapper(profile)`) is **one stable instance** — the same reference on every call.
 
 ### Selecting a profile
 
@@ -121,13 +121,14 @@ bindings at all. Each boundary validates its own default key (`jaxrs.jsonProfile
 ## The Process JSON Codec
 
 Vert.x routes every `Json.encode`, `Json.decodeValue`, `new JsonObject(String|Buffer)`,
-`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. `vertique-core`
-owns that codec and exposes it as `VertiqueJson`; this module owns the startup step that decides
-which profile it runs.
+`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. This module provides
+that codec and registers it through `META-INF/services/io.vertx.core.spi.JsonFactory`; `vertique-core`
+exposes it as `VertiqueJson`. This module also owns the startup step that decides which profile it runs.
+An application without this module keeps Vert.x's own codec.
 
 `JsonRuntimeModule` contributes a `CONFIGURE`-phase `ApplicationStartupStep` that resolves
-`json.systemProfile` (floor: `system`) through the registry and installs that profile's mapper with
-`VertiqueJson.install(id, mapper)`. `CONFIGURE` is the first startup phase, so every later step,
+`json.systemProfile` (floor: `system`) through the registry and installs that profile with
+`VertiqueJson.install(profile)`. `CONFIGURE` is the first startup phase, so every later step,
 validator and verticle already sees the installed codec. An application graph that does not include
 `JsonRuntimeModule` never installs anything and keeps Vert.x's raw JSON behavior — where
 `Json.encode(LocalDate.now())` still fails.
@@ -189,7 +190,7 @@ below stops accepting a value followed by junk (`{"a":1} junk`, or two values in
 | REST client response bodies | the client's resolved profile |
 | Kafka JSON serde (`JacksonKafkaDeserializer`) | the Kafka profile |
 | Cache values (Caffeine and Redis stores) | the cache store's profile |
-| WebSocket messages, the correlation context decoded from durable message metadata, delayed-job payloads, workflow state read for history | `VertiqueJson.mapper()`, the process codec's installed profile |
+| WebSocket messages, the correlation context decoded from durable message metadata, delayed-job payloads, workflow state read for history | `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`, the process codec's installed profile |
 
 MCP is unaffected: its envelope codec already enabled the feature, and tool arguments bind from a parsed
 tree. A payload that was accepted only because its tail was ignored is now rejected with the surface's
@@ -220,7 +221,7 @@ seed `system` when the copied mapper carries Jackson default typing, so a classp
 activated it on the shared mapper fails the boot instead of feeding a polymorphic mapper into every
 profile role.
 
-**Where `system` binds.** Through the registry (`registry.mapper(JsonProfileId.SYSTEM)`, the cache
+**Where `system` binds.** Through the registry (`Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM))`, the cache
 stores, `@JsonProfile("system")` resolved by the registry) it is the recipe above. It is also the
 zero-config **process JSON codec**: the install step above puts this profile's mapper behind every
 `Json.*` and `JsonObject` operation, so `Optional` and `java.time` work there and `java.util.Date`
@@ -324,7 +325,7 @@ flag or configuration key selects that; a mapper is strict or it is not. The bin
 several spellings under every profile, because two different key names are not a repeated key.
 
 **Declared JSON Schema override.** `vertique-strict` declares exactly one entry from
-`JsonMapperProfile#jsonSchemaTypeOverrides()`: a `BigDecimal` override applying to both the input and
+`JsonProfileCodec#jsonSchemaTypeOverrides()`: a `BigDecimal` override applying to both the input and
 output construction directions, whose fragment is
 
 ```json
@@ -411,13 +412,30 @@ mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
 ObjectMapper opinionated = JacksonDefaults.apply(new ObjectMapper());
 ```
 
-### JsonMapperProfiles
+### Jackson2JsonProfileCodec
 
-Factory pairing an id with a mapper: `JsonMapperProfiles.of(JsonProfileId, ObjectMapper)`. Both
+The Jackson 2 implementation of `JsonProfileCodec` and the only one the registry and the process codec
+accept. Subclass it and implement `protected ObjectMapper mapper()`, or use `Jackson2JsonProfiles.of`.
+
+- The base calls `mapper()` once, on first use, and runs every operation and `unwrap` on that instance, so
+  a subclass whose `mapper()` builds a new mapper per call still behaves as one profile.
+- `encode`, `encodeToString`, `encodeTo`, `decode`, `convert` and `unwrap` are `final`. `decode` rejects
+  content after the value whatever the mapper's own setting, and for an `Object` target returns a
+  top-level `JsonObject` or `JsonArray`. `encodeTo` never closes or flushes the caller's stream.
+- Failures throw `JsonCodecException` with a fixed message (`JSON encoding failed`, `JSON decoding
+  failed`, `JSON conversion failed`) and the Jackson exception as the cause; the cause may quote the
+  input, so never return it to a client.
+- `Jackson2JsonProfileCodec.objectMapper(profile)` returns any profile's Jackson 2 mapper (the same
+  instance on every call), or throws `JsonProfileConfigurationException` naming the id when it has none.
+  Code that needs the process codec's mapper calls `objectMapper(VertiqueJson.codec())`.
+
+### Jackson2JsonProfiles
+
+Factory pairing an id with a mapper: `Jackson2JsonProfiles.of(JsonProfileId, ObjectMapper)`. Both
 arguments must be non-null. The mapper is exposed as-is — the factory never copies or mutates it.
 
 An overload additionally declares JSON Schema type overrides:
-`JsonMapperProfiles.of(JsonProfileId, ObjectMapper, Collection<JsonSchemaTypeOverride>)`. All three
+`Jackson2JsonProfiles.of(JsonProfileId, ObjectMapper, Collection<JsonSchemaTypeOverride>)`. All three
 arguments must be non-null and the collection must not contain a `null` element; the collection is
 defensively copied into an immutable list, so the caller's collection may be freely mutated after the
 call returns, and the returned profile's `jsonSchemaTypeOverrides()` is unmodifiable and stable —
@@ -503,7 +521,7 @@ this module never sees the processing engine.
 // The mapper that materializes the body decides the projection.
 JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
 
-// forRoute(null) means "no profile selected": the process codec's mapper, VertiqueJson.mapper().
+// forRoute(null) means "no profile selected": the process codec's mapper, Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).
 JacksonFieldNameResolver unprofiledRoute = JacksonFieldNameResolver.forRoute(null);
 
 // Compose one owner type's projection at registration, never on the request path.
@@ -553,9 +571,9 @@ Boundaries that process a bare `String` (a query, header, path, or form paramete
 
 ## Extension Points
 
-### JsonMapperProfile
+### JsonProfileCodec
 
-Contribute a profile by declaring an `@IntoSet JsonMapperProfile` binding in a Dagger `@Module`.
+Contribute a profile by declaring an `@IntoSet JsonProfileCodec` binding in a Dagger `@Module`.
 
 ```java
 @Module
@@ -564,18 +582,19 @@ abstract class PaymentsModule {
     @Provides
     @Singleton
     @IntoSet
-    static JsonMapperProfile strictPaymentsProfile() {
+    static JsonProfileCodec strictPaymentsProfile() {
         // Sanctioned seed: the baseline recipe on a fresh mapper (this also registers Vert.x's
         // JSON type support, so JsonObject and Buffer serialize correctly).
         ObjectMapper mapper = JacksonDefaults.applySystem(new ObjectMapper());
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
-        return JsonMapperProfiles.of(JsonProfileId.of("strict-payments"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("strict-payments"), mapper);
     }
 }
 ```
 
-The profile id must not be `system`, `vertique`, `vertique-strict`, or the retired `vertx`, and the
-mapper must not have Jackson default typing active — the registry rejects both at construction.
+The profile must be a `Jackson2JsonProfileCodec` (built by `Jackson2JsonProfiles.of` or a subclass), its
+id must not be `system`, `vertique`, `vertique-strict`, or the retired `vertx`, and its mapper must not
+have Jackson default typing active — the registry rejects each of these at construction, naming the id.
 
 Select it anywhere a profile id is accepted — `@JsonProfile("strict-payments")`, a per-binding config
 value, or `json.jsonProfile`.
@@ -619,7 +638,7 @@ the lifecycle runner, must force the access itself:
 @Override
 public Future<Void> start() {
     AppComponent c = DaggerAppComponent.create();
-    c.jsonMapperProfileRegistry();          // force eager validation of profiles
+    c.jsonProfileRegistry();          // force eager validation of profiles
     // ... deploy HttpVerticle, etc.
 }
 ```
@@ -634,18 +653,20 @@ A validation failure then propagates out of `start()` and the verticle never bec
 
 | Binding | Notes |
 |---|---|
-| `Set<JsonMapperProfile>` | `@Multibinds` seed — the application-contributed profile set, possibly empty. The built-ins are not members. |
-| `JsonMapperProfileRegistry` | Bound to the validating default implementation. |
+| `Set<JsonProfileCodec>` | `@Multibinds` seed — the application-contributed profile set, possibly empty. The built-ins are not members. |
+| `JsonProfileRegistry` | Bound to the validating default implementation. |
 | `JsonConfig` | Parsed from the `json` config section through the injected `ConfigParser` — both `jsonProfile` and `systemProfile`. |
 | `ApplicationStartupStep` (`@IntoSet`) | The `CONFIGURE`-phase step that installs the `json.systemProfile` profile's mapper as the process JSON codec's mapper. |
-| `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It delegates to `JsonMapperProfileRegistry.validateConfigured(...)`, which owns every profile-id message, for `json.jsonProfile` and `json.systemProfile` alike, and then re-checks that the installed process codec's mapper has no Jackson default typing. |
+| `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It delegates to `JsonProfileRegistry.validateConfigured(...)`, which owns every profile-id message, for `json.jsonProfile` and `json.systemProfile` alike, and then re-checks that the installed process codec's mapper has no Jackson default typing. |
 
 ---
 
 ### Framework seams
 
-Two public types are named nowhere above because no application uses one:
-`DefaultJsonMapperProfileRegistry` and `JsonDefaultProfileValidator`. They are public because
+Three public types are named nowhere above because no application uses one:
+`DefaultJsonProfileRegistry`, `JsonDefaultProfileValidator` and `VertiqueJsonFactory`. The factory is
+public only because the `ServiceLoader` requires it; it hands Vert.x the module's package-private
+process codec. They are public because
 sibling framework modules reference them across package boundaries — the REST client and the two
 cache stores resolve mappers through the registry, and the JAX-RS module composes its own
 default-profile validator on top of the validator here. Their Javadoc marks them INTERNAL and they
@@ -659,10 +680,10 @@ because sibling framework modules (`vertique-rest-jaxrs`, `vertique-workflow-eng
 |---|---|
 | `JakartaPathPointers` | INTERNAL, in `dev.vertique.json`, may change without a deprecation cycle; not an application extension point. `static Resolver resolver(ObjectMapper mapper, @Nullable InputFieldNameResolver names)` opens a resolution session for one batch of violations (not thread-safe; its per-class lookups live only as long as the session); `Resolver.toPointer(PropertyPath path, @Nullable Type rootType, @Nullable Object document)` returns the RFC 6901 pointer of the deepest verified position, `""` for the root. A segment is emitted only when it is verified, otherwise the pointer stops at the deepest verified ancestor (shorter, never different): a property is named by its primary wire name from the mapper's deserialization introspection, and an unknown member or a member below a scalar, `Object` or unknown type ends the pointer; list and array positions are emitted per level (`/lists/0/1`, `/2/name` for a root list); a map entry, set member, or a position on anything but a list or array ends the pointer at that property, so no key text is ever emitted; `Optional` and other reference types are transparent; a recorded owner class is used only under flat type information on the declared type or on the holding property (`@JsonTypeInfo` with `PROPERTY`, `EXISTING_PROPERTY` or `EXTERNAL_PROPERTY` inclusion, or `Id.DEDUCTION`), when it is assignable to the declared base and the projection lists it among the base's subtypes or cannot enumerate them — an assignable runtime class the projection does not list (or a failed subtype lookup) stops the pointer at the property holding the value, because such a subtype may rename even inherited members; flat type information with no recorded runtime class (always the case for a path string, and so for the path-string entry point below) stops the pointer at the holding property too, since the mapper may have bound any subtype; a recorded class outside the declared hierarchy, or a type without type information, keeps the declared type's names; a value under `WRAPPER_OBJECT` or `WRAPPER_ARRAY` type information, `@JsonIdentityInfo`, a mapper-wide default typer, or (when the mapper enables `UNWRAP_SINGLE_VALUE_ARRAYS`) any bean below the root — and the root bean itself unless a document is checked to hold an object there — stops the pointer at the property holding it (`""` at the root), and a list of such values at the list (`/pets`); names are escaped `~` → `~0` then `/` → `~1` with no percent-encoding, so an empty wire name gives `/`. A property is emitted only when the mapper writes it through a setter or a creator parameter (record components included), or through a field when the document holds a declared spelling of it; a read-only, getter-only or ignored property, a name the class (`@JsonIgnoreProperties`, detected through the annotation introspector and config overrides) or the holding property ignores, a member whose type the mapper ignores (`@JsonIgnoreType` or an ignored-type config override), a `@JsonBackReference` member, the `@JsonAnySetter` member and a `@JsonUnwrapped` member stop the pointer at their bean. A bean bound outside its reported properties — a class-level custom deserializer or converter, a builder (Lombok `@Jacksonized` included), a delegating creator, `@JsonFormat(shape = ARRAY)` on the class or in a config override — stops the pointer at the property holding it (`""` at the root), as does a bean with a single-argument constructor or factory that is not its properties creator unless the document holds an object there (so single-component records resolve). A property bound through `@JsonDeserialize(using / contentUsing / converter / contentConverter / as / contentAs)` or `@JsonFormat(shape = ARRAY)` is emitted and ends the pointer; `JsonNode`, `Map` and `Object` properties are never descended. A list or array that skips null elements (`contentNulls = SKIP` from the default setter info, a config override or `@JsonSetter`) or accepts a single value as an array (`ACCEPT_SINGLE_VALUE_AS_ARRAY` on the mapper, in a config override of the sequence type or of `Collection`, or in the property's `@JsonFormat`) gets no index, and neither does a list or array whose own type carries a class-level custom deserializer or converter, which may rebuild the elements in another order: `{"items":[null,{"name":""}]}` gives `/items`. The checks use public Jackson introspection only and are memoized per session; a deserializer installed by a registered Jackson module is not detected. The class-level check is the one `JacksonFieldNameResolver` uses for `boundJavaNames` (one package-private rule shared by both). Without `names` (mapper-only) the document is ignored, so field-only properties and beans with a scalar creator stop the pointer; with the route's projection a property must also be among its bound Java names and must not be one the projection promotes members out of; a failing projection stops the pointer and is remembered for the session. With the projection and a `document` (the bound body as `JsonObject`, `JsonArray`, `Map`, `List` or scalar) every step is checked against it: a member is looked up only inside an object the document holds there (a position holding `null`, a scalar or an array stops the pointer at that position: `{"owner":null}` → `/owner`); exactly one document key that is a declared spelling of the property (primary name or alias, case-folded when the mapper folds case) and maps back to it is emitted as sent (`/zip`, `/ZipCode`), two or more stop at the parent, and no other key — a Java name on a renaming route, a map key, an undeclared member — is ever emitted; when the bean matches member names with a case rule other than the mapper's (`@JsonFormat(with/without = ACCEPT_CASE_INSENSITIVE_PROPERTIES)` on its class, in its config override or on the holding property), or the mapper matches case-insensitively and its locale lower-cases a key or declared spelling differently from `Locale.ROOT`, membership cannot be verified and the pointer stops at the parent whether the member is present or omitted; a list position past the end of the document's array stops at the list. "Verified" means the mapper reads the member: through a setter or a creator parameter, or through a field when its declared spelling is present. An omitted member is named, by its primary wire name, only as the last segment of the path, inside an object the document holds, and only when its own binding member is a setter, creator parameter or record component (`{"items":[{},{}]}` → `/items/1/name`; on a SNAKE_CASE route `{"zipCode":""}` → `/zip_code` for a setter-bound `zipCode`), so hidden bound required members are named on omission; an omitted member that only a field writes (a public field, a field behind a renamed setter or creator parameter) and an omitted intermediate member or position stop at the parent. At most `MAX_SEGMENTS` (256) segments; per session, each owner class is introspected and asked of the projection once and each visited document object's keys are indexed once, and a property's matching keys in one object are computed once, stopping at the second match; list positions are read directly, never by walking the array; iterative; never throws (a failure yields the pointer verified so far). `static String toPointer(String jakartaPath, @Nullable Type rootType, ObjectMapper mapper)` parses the property-path string (a numeric bracket is a position, any other bracket an opaque marker, a negative or overflowing position or an unclosable bracket ends the parse, a container-element node contributes only its position) and resolves it in mapper-only mode without a document. `static String loggablePath(@Nullable String)` renders a path string for logs through the same parser, stopping at the first bracket of any kind, which renders `[]` (`byKey[ZZKEY].name` and `byKey[0].ZZKEY].name` → `byKey[]`; `items[0].name` → `items[]`: without the validated type a position cannot be told from a key shaped like one, so this fallback never renders positions); `loggablePath(@Nullable PropertyPath)` renders positions and continues past opaque segments (`byKey[].name`, `lists[0][1]`); both remove ISO control characters, U+2028/U+2029 and Unicode format characters (bidirectional overrides, zero-width characters) and cut to 512 characters |
 
-An application reaches the registry through `dev.vertique.core.json.JsonMapperProfileRegistry`,
+An application reaches the registry through `dev.vertique.core.json.JsonProfileRegistry`,
 which `vertique-core` owns and documents. What this module promises an application is the three
 profile ids and their recipes, the two configuration keys, `JacksonDefaults` and the factories
-beside it, the opt-in serdes, the projection contract above, and the `JsonMapperProfile` extension
+beside it, the opt-in serdes, the projection contract above, and the `JsonProfileCodec` extension
 point.
 
 ---
@@ -671,7 +692,7 @@ point.
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `ApplicationStartupStep`, `LifecyclePhase`, `VertiqueJson`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
+| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonProfileCodec`, `JsonProfileRegistry`, `JsonCodecException`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `ApplicationStartupStep`, `LifecyclePhase`, `VertiqueJson`, `ProcessJsonCodec`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()`, the Vert.x Jackson module, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — ISO-8601 `java.time` support in the `vertique` defaults |

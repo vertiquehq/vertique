@@ -459,7 +459,7 @@ properties and the handcrafted strict JSON reader that used to enforce them were
 of Jackson's own bounded read constraints. MCP owns JSON-RPC
 envelope semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no
 public parser API. Tool argument and result values continue to use the existing
-`JsonMapperProfile`/`JsonMapperProfileRegistry` contract, unaffected by this codec.
+`JsonProfileCodec`/`JsonProfileRegistry` contract, unaffected by this codec.
 
 Numeric values keep their exact lexical precision: a 64-bit-overflowing integer such as
 `9007199254740993` and a decimal such as `0.10000000000000001` survive decode and canonical
@@ -938,7 +938,7 @@ The effective tool-payload profile is resolved once per tool at composition time
 5. the `vertique` profile.
 
 The first two tiers are resolved at compile time by `vertique-codegen-mcp`, which rejects a blank
-annotation value; the server resolves the remaining tail against the `JsonMapperProfileRegistry`. An
+annotation value; the server resolves the remaining tail against the `JsonProfileRegistry`. An
 explicitly selected profile that is not registered fails composition, before the router is mounted.
 The configured `mcp.jsonProfile` default is validated independently, even when MCP is disabled or
 its mount is shadowed — so an invalid deployment configuration cannot lie dormant.
@@ -1701,6 +1701,7 @@ An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeou
 | `vertique-core` | Correlation, JSON profiles, compose validation, extension ordering |
 | `vertique-sanitization` | Required `InputObjectProcessor` for tool argument pipelines |
 | `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
+| `jackson-databind` | `ObjectMapper`, `JsonNode` and the `node` tree types, `ObjectWriter`, and `DeserializationFeature` for tool arguments and results |
 | `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
 | `vertique-rest-security` | Identity resolution middleware for optional schemes |
 | `vertique-rate-limit-core` | Shared limiter runtime and subject resolution for configured admission |

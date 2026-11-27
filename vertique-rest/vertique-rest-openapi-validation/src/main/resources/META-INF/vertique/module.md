@@ -267,5 +267,6 @@ not an application SPI.
 - `dev.vertique:vertique-rest-jaxrs` (for `RequestValidationStrategy`, descriptors, config, and REST error types)
 - `dev.vertique:vertique-json-schema-validation` (for `ViolationDetails.rfc6901`, which turns the validator's instance location into the reported `pointer`)
 - `io.vertx:vertx-openapi`
+- `com.fasterxml.jackson.core:jackson-databind` (for `ObjectMapper`)
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`

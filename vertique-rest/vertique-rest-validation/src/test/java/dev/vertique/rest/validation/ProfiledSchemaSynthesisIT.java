@@ -29,11 +29,12 @@ import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
 import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.test.RestTestContributions;
@@ -3875,7 +3876,7 @@ public class ProfiledSchemaSynthesisIT {
      *
      * @return the wrapper profile, registered through {@link RestTestContributions}
      */
-    private static JsonMapperProfile delegatingWrapperProfile() {
+    private static JsonProfileCodec delegatingWrapperProfile() {
         // Vert.x JSON support: the registry probes a contributed mapper with a JsonObject round trip.
         ObjectMapper mapper =
                 JsonMapper.builder().addModule(VertxJsonSupport.module()).build();
@@ -3892,7 +3893,7 @@ public class ProfiledSchemaSynthesisIT {
                 });
             }
         });
-        return JsonMapperProfiles.of(JsonProfileId.of("delegating-wrapper"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("delegating-wrapper"), mapper);
     }
 
     /**
@@ -3949,7 +3950,7 @@ public class ProfiledSchemaSynthesisIT {
     void plainUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
         PlainUnwrappedResource resource = new PlainUnwrappedResource();
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(delegatingWrapperProfile())
+                .addJsonProfileCodec(delegatingWrapperProfile())
                 .build();
         int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
 
@@ -4119,7 +4120,7 @@ public class ProfiledSchemaSynthesisIT {
     void hiddenUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
         HiddenUnwrappedResource resource = new HiddenUnwrappedResource();
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(delegatingWrapperProfile())
+                .addJsonProfileCodec(delegatingWrapperProfile())
                 .build();
         int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
 
@@ -4457,7 +4458,7 @@ public class ProfiledSchemaSynthesisIT {
      * a {@code vertique-strict} route's profile <em>is</em> the installed codec.
      *
      * <p>The install happens before the router is built: the REST body resolver captures its "no
-     * override" sentinel by identity against {@code VertiqueJson.mapper()} at router-build time, so an
+     * override" sentinel by identity against {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} at router-build time, so an
      * install afterwards would no longer match the routes already decided. The codec is restored in
      * {@link #tearDown()}.
      *
@@ -4468,7 +4469,10 @@ public class ProfiledSchemaSynthesisIT {
         ValidationMountComponent component =
                 MountFixtures.component(vertx, new JsonObject(), RestTestContributions.none());
         JsonProfileId strictId = JsonProfileId.of("vertique-strict");
-        VertiqueJson.install(strictId, component.jsonMapperProfileRegistry().mapper(strictId));
+        VertiqueJson.install(Jackson2JsonProfiles.of(
+                strictId,
+                Jackson2JsonProfileCodec.objectMapper(
+                        component.jsonProfileRegistry().profile(strictId))));
         processCodecInstalled = true;
         return start(component.testMount(), resources);
     }

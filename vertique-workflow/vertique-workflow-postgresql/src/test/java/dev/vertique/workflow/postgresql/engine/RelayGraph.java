@@ -14,7 +14,7 @@ import dev.vertique.application.VertiqueRuntime;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
 import dev.vertique.core.context.ContextHolder;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
@@ -25,7 +25,7 @@ import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModul
 import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
 import dev.vertique.job.postgresql.JobPostgresqlModule;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.security.ServiceIdentityResolver;
 import dev.vertique.security.runtime.IdentitySnapshotCapture;
@@ -223,8 +223,8 @@ final class RelayGraph {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

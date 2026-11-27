@@ -18,12 +18,13 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.core.input.InputLocation;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
@@ -93,7 +94,7 @@ public class BodyViolationPointerIT {
     private static Vertx vertx;
     private static WebClient client;
     private static BeanValidator validator;
-    private static DefaultJsonMapperProfileRegistry profiles;
+    private static DefaultJsonProfileRegistry profiles;
 
     // --- Per-test resources ---
 
@@ -110,7 +111,7 @@ public class BodyViolationPointerIT {
         vertx = v;
         client = WebClient.create(v, new WebClientOptions().setFollowRedirects(false));
         validator = DaggerPointerValidationComponent.create().beanValidator();
-        profiles = new DefaultJsonMapperProfileRegistry(
+        profiles = new DefaultJsonProfileRegistry(
                 Set.of(snakeCaseProfile(), emptyNameProfile(), caseInsensitiveProfile()));
         ctx.completeNow();
     }
@@ -148,8 +149,8 @@ public class BodyViolationPointerIT {
      *
      * @return the profile
      */
-    private static JsonMapperProfile snakeCaseProfile() {
-        return JsonMapperProfiles.of(
+    private static JsonProfileCodec snakeCaseProfile() {
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of(PointerResources.SNAKE_PROFILE),
                 JsonMapper.builder()
                         .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -163,8 +164,8 @@ public class BodyViolationPointerIT {
      *
      * @return the profile
      */
-    private static JsonMapperProfile caseInsensitiveProfile() {
-        return JsonMapperProfiles.of(
+    private static JsonProfileCodec caseInsensitiveProfile() {
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of(PointerResources.CASE_INSENSITIVE_PROFILE),
                 JsonMapper.builder()
                         .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
@@ -178,8 +179,8 @@ public class BodyViolationPointerIT {
      *
      * @return the profile
      */
-    private static JsonMapperProfile emptyNameProfile() {
-        return JsonMapperProfiles.of(
+    private static JsonProfileCodec emptyNameProfile() {
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of(PointerResources.EMPTY_NAME_PROFILE),
                 JsonMapper.builder()
                         .propertyNamingStrategy(new EmptyNameStrategy())
@@ -561,7 +562,9 @@ public class BodyViolationPointerIT {
         RecordingProcessor processor = new RecordingProcessor();
         VertiqueJson.resetForTests();
         try {
-            VertiqueJson.install(JsonProfileId.of("vertique"), profiles.mapper(JsonProfileId.of("vertique")));
+            VertiqueJson.install(Jackson2JsonProfiles.of(
+                    JsonProfileId.of("vertique"),
+                    Jackson2JsonProfileCodec.objectMapper(profiles.profile(JsonProfileId.of("vertique")))));
             int port = deploy(b -> b.objectProcessor(Optional.of(processor)), new PointerResources.ShapeResource());
 
             // When a JSON array body with an invalid element is posted to the @Valid List<Item> route
@@ -832,7 +835,7 @@ public class BodyViolationPointerIT {
      */
     private int deploy(Consumer<TestFactories.Builder> customizer, Object... resources) {
         TestFactories.Builder builder =
-                TestFactories.builder().beanValidator(Optional.of(validator)).jsonMapperProfileRegistry(profiles);
+                TestFactories.builder().beanValidator(Optional.of(validator)).jsonProfileRegistry(profiles);
         customizer.accept(builder);
         JaxRsRouterMount mount = builder.build().create("/*", "openapi.json", Set.of(resources));
         HttpServer server = await(mount.createRouter(vertx).compose(apiRouter -> {

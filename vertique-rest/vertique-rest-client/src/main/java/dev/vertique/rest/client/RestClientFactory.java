@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.client;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
@@ -68,7 +68,7 @@ public class RestClientFactory {
     private final BeanParamAccessorRegistry beanParamAccessorRegistry;
 
     @Nullable
-    private final JsonMapperProfileRegistry jsonMapperProfileRegistry;
+    private final JsonProfileRegistry jsonProfileRegistry;
 
     /**
      * The resolved {@code restClient.defaults.jsonProfile} id, or {@code null} when unconfigured.
@@ -100,7 +100,7 @@ public class RestClientFactory {
     /**
      * Creates a new factory using the shared {@link BeanParamAccessorRegistry} and an empty
      * capturer set. Intended for direct construction in tests or when the DI graph does not
-     * provide the registry. The {@link JsonMapperProfileRegistry} is left {@code null}.
+     * provide the registry. The {@link JsonProfileRegistry} is left {@code null}.
      *
      * @param vertx the Vert.x instance used to create the governed WebClient clients
      * @param globalInterceptors global interceptors applied to all proxies; may be empty
@@ -139,7 +139,7 @@ public class RestClientFactory {
      * @param beanValidator optional response validator; {@code null} if the validation module is
      *     not present
      * @param beanParamAccessorRegistry the registry for resolving bean-param field accessors
-     * @param jsonMapperProfileRegistry the JSON mapper profile registry seeded into every builder;
+     * @param jsonProfileRegistry the JSON mapper profile registry seeded into every builder;
      *     {@code null} when the {@code vertique-json} module is not included in the DI graph
      * @param defaultsJsonProfileId the resolved {@code restClient.defaults.jsonProfile} id; seeded
      *     into every builder for tier-5 precedence; {@code null} when unconfigured
@@ -157,7 +157,7 @@ public class RestClientFactory {
             Map<String, RestClientConfig> configIndex,
             @Nullable dev.vertique.core.validation.BeanValidator beanValidator,
             BeanParamAccessorRegistry beanParamAccessorRegistry,
-            @Nullable JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            @Nullable JsonProfileRegistry jsonProfileRegistry,
             @Nullable String defaultsJsonProfileId,
             @Nullable JsonConfig jsonConfig,
             @Nullable ParamConversionResolver paramConversionResolver) {
@@ -168,7 +168,7 @@ public class RestClientFactory {
                 configIndex,
                 beanValidator,
                 beanParamAccessorRegistry,
-                jsonMapperProfileRegistry,
+                jsonProfileRegistry,
                 defaultsJsonProfileId,
                 jsonConfig,
                 paramConversionResolver,
@@ -183,7 +183,7 @@ public class RestClientFactory {
             Map<String, RestClientConfig> configIndex,
             @Nullable dev.vertique.core.validation.BeanValidator beanValidator,
             BeanParamAccessorRegistry beanParamAccessorRegistry,
-            @Nullable JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            @Nullable JsonProfileRegistry jsonProfileRegistry,
             @Nullable String defaultsJsonProfileId,
             @Nullable JsonConfig jsonConfig,
             @Nullable ParamConversionResolver paramConversionResolver,
@@ -195,7 +195,7 @@ public class RestClientFactory {
                 configIndex,
                 beanValidator,
                 beanParamAccessorRegistry,
-                jsonMapperProfileRegistry,
+                jsonProfileRegistry,
                 defaultsJsonProfileId,
                 jsonConfig,
                 paramConversionResolver,
@@ -210,7 +210,7 @@ public class RestClientFactory {
             Map<String, RestClientConfig> configIndex,
             @Nullable dev.vertique.core.validation.BeanValidator beanValidator,
             BeanParamAccessorRegistry beanParamAccessorRegistry,
-            @Nullable JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            @Nullable JsonProfileRegistry jsonProfileRegistry,
             @Nullable String defaultsJsonProfileId,
             @Nullable JsonConfig jsonConfig,
             @Nullable ParamConversionResolver paramConversionResolver,
@@ -223,7 +223,7 @@ public class RestClientFactory {
         this.configIndex = configIndex != null ? Map.copyOf(configIndex) : Map.of();
         this.beanValidator = beanValidator;
         this.beanParamAccessorRegistry = beanParamAccessorRegistry;
-        this.jsonMapperProfileRegistry = jsonMapperProfileRegistry;
+        this.jsonProfileRegistry = jsonProfileRegistry;
         this.defaultsJsonProfileId = defaultsJsonProfileId;
         this.jsonConfig = jsonConfig;
         this.paramConversionResolver = paramConversionResolver;
@@ -253,7 +253,7 @@ public class RestClientFactory {
             b.beanValidator(beanValidator);
         }
         b.beanParamAccessorRegistry(beanParamAccessorRegistry);
-        b.jsonMapperProfileRegistry(jsonMapperProfileRegistry);
+        b.jsonProfileRegistry(jsonProfileRegistry);
         b.defaultsJsonProfileId(defaultsJsonProfileId);
         b.jsonConfig(jsonConfig);
         if (paramConversionResolver != null) {

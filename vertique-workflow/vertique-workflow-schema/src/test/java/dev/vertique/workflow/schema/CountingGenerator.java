@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.schema;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Type;
@@ -21,7 +21,7 @@ final class CountingGenerator extends PayloadSchemaGenerator {
 
     private final Deque<RuntimeException> failures = new ArrayDeque<>();
 
-    CountingGenerator(JsonMapperProfileRegistry registry, JsonConfig config) {
+    CountingGenerator(JsonProfileRegistry registry, JsonConfig config) {
         super(registry, config, Optional.empty());
     }
 

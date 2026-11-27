@@ -53,7 +53,7 @@ import org.junit.jupiter.api.Test;
  *       from {@code @JsonAlias};</li>
  *   <li>a primary name always claims its key and an alias fills only keys no primary claims —
  *       matching Jackson's own binding, which accepts such a collision rather than rejecting it;</li>
- *   <li>an unprofiled route projects against {@link VertiqueJson#mapper()}, the process codec's
+ *   <li>an unprofiled route projects against {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, the process codec's
  *       mapper that actually materializes its body, while a profiled route uses its own;</li>
  *   <li>the identity short circuit is keyed on the <em>computed</em> projection, never on an
  *       inference about how the mapper is configured;</li>
@@ -241,7 +241,7 @@ class JacksonFieldNameResolverTest {
         JacksonFieldNameResolver processCodecRoute = JacksonFieldNameResolver.forRoute(null);
 
         assertSame(
-                VertiqueJson.mapper(),
+                Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
                 processCodecRoute.mapper(),
                 "an unprofiled route must introspect the mapper that materializes its body — the process codec's");
         assertEquals(

@@ -11,10 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
@@ -199,10 +199,9 @@ class MountPublicationHookTest {
     @Test
     @DisplayName("One source resolution feeds both the gate and the snapshot")
     void oneSourceResolutionFeedsGateAndSnapshot(Vertx vertx, VertxTestContext ctx) {
-        JsonMapperProfile defaultProfile = appProfile("profile-default");
-        JsonMapperProfile methodProfile = appProfile(ProfiledOperationsResource.METHOD_PROFILE_ID);
-        DefaultJsonMapperProfileRegistry registry =
-                new DefaultJsonMapperProfileRegistry(Set.of(defaultProfile, methodProfile));
+        JsonProfileCodec defaultProfile = appProfile("profile-default");
+        JsonProfileCodec methodProfile = appProfile(ProfiledOperationsResource.METHOD_PROFILE_ID);
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(defaultProfile, methodProfile));
 
         CountingSchemaSource source = new CountingSchemaSource((op, call) -> OperationSchemas.builder()
                 .bodySchema(new JsonObject().put("type", "object").put("x-call", call))
@@ -218,7 +217,7 @@ class MountPublicationHookTest {
         JaxRsRouterMount.Factory factory = TestFactories.builder()
                 .validationStrategies(Set.of(strategy))
                 .operationSchemaSource(Optional.of(source))
-                .jsonMapperProfileRegistry(registry)
+                .jsonProfileRegistry(registry)
                 .jaxRsConfig(JaxRsConfig.builder()
                         .validationStrategy(RecordingValidationStrategy.ID)
                         .jsonProfile("profile-default")
@@ -661,8 +660,8 @@ class MountPublicationHookTest {
         };
     }
 
-    private static JsonMapperProfile appProfile(String id) {
-        return JsonMapperProfiles.of(
+    private static JsonProfileCodec appProfile(String id) {
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of(id), new ObjectMapper().registerModule(VertxJsonSupport.module()));
     }
 

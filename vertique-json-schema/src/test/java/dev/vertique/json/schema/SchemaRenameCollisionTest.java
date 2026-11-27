@@ -15,9 +15,9 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -138,14 +138,14 @@ class SchemaRenameCollisionTest {
         }
     }
 
-    private static final JsonMapperProfile PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("rename-collision-test"), new ObjectMapper());
+    private static final JsonProfileCodec PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("rename-collision-test"), new ObjectMapper());
 
-    private static final JsonMapperProfile SNAKE_CASE_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec SNAKE_CASE_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("rename-collision-snake-case-test"),
             new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE));
 
-    private static final JsonMapperProfile NO_FINAL_FIELD_MUTATORS_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec NO_FINAL_FIELD_MUTATORS_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("rename-collision-no-final-field-mutators-test"),
             JsonMapper.builder()
                     .disable(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS)

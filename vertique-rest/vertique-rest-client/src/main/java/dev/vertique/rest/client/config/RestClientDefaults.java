@@ -22,7 +22,7 @@ import jakarta.annotation.Nullable;
  *     or {@code null} when unset — a {@code null}/blank value means no boundary default is
  *     configured and resolution falls through to the global {@code json.jsonProfile} tier or
  *     the reserved {@code vertique} floor, resolved through a
- *     {@link dev.vertique.core.json.JsonMapperProfileRegistry}.
+ *     {@link dev.vertique.core.json.JsonProfileRegistry}.
  */
 public record RestClientDefaults(@Nullable String jsonProfile) {
 

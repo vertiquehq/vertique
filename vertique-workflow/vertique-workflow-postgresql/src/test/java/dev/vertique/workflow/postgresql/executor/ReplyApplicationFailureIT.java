@@ -11,6 +11,7 @@ import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.ops.ServiceFailure;
@@ -74,7 +75,7 @@ class ReplyApplicationFailureIT {
                         .as("variant %s, instance %s, error %s", variant, f.fixture.instanceOf(id), error(f, id))
                         .containsExactly("COMPLETE", "COMPLETE");
                 assertThat(f.waitRecords(id)).isEmpty();
-                var state = VertiqueJson.mapper()
+                var state = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
                         .readValue(String.valueOf(f.fixture.instanceOf(id).stateJson()), ReplyStepFixture.State.class);
                 assertThat(state.reserved()).isEqualTo(variant.equals("failure") ? "REPORTED:0" : "applied");
                 assertThat(f.fixture.instanceOf(id).currentStepId())
@@ -170,7 +171,8 @@ class ReplyApplicationFailureIT {
                     .filter(e -> e.workflowId().equals(id))
                     .toList();
             assertThat(events).anyMatch(e -> e.eventType() == WorkflowEventType.WORKFLOW_FAILED);
-            var emitted = VertiqueJson.mapper().valueToTree(events);
+            var emitted =
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).valueToTree(events);
             assertThat(emitted.toString()).doesNotContain("SECRET-77");
             assertThat(emitted.findValues("reason")).isEmpty();
             var history = await(f.fixture
@@ -198,7 +200,7 @@ class ReplyApplicationFailureIT {
             node.awaitIdle(id);
             assertThat(error(f, id)).contains("java.lang.IllegalStateException").doesNotContain("SECRET-77");
             assertThat(f.fixture.historyTextsOf(id)).noneMatch(text -> text.contains("SECRET-77"));
-            assertThat(VertiqueJson.mapper()
+            assertThat(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
                             .valueToTree(f.fixture.workflowEvents)
                             .toString())
                     .doesNotContain("SECRET-77");
@@ -263,7 +265,7 @@ class ReplyApplicationFailureIT {
             assertThat(f.waitRecords(id)).isEmpty();
             assertThat(f.openSignals(id)).isZero();
             assertThat(f.fixture.instanceOf(id).currentStepId()).isEqualTo("after");
-            var state = VertiqueJson.mapper()
+            var state = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
                     .convertValue(
                             io.vertx.core.json.Json.decodeValue(
                                     String.valueOf(f.fixture.instanceOf(id).stateJson())),

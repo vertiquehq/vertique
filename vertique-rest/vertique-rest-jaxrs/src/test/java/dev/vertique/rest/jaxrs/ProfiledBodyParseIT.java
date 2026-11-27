@@ -10,10 +10,10 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
@@ -57,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The harness mirrors {@link ConsumesEnforcementIT}: a {@link JaxRsRouterMount} built via
  * {@link TestFactories} under the default {@code none} validation strategy, wired with a
- * {@link DefaultJsonMapperProfileRegistry} that carries the {@code strict-test} profile so the
+ * {@link DefaultJsonProfileRegistry} that carries the {@code strict-test} profile so the
  * per-method resolver can resolve it at router-build time.
  *
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
@@ -141,13 +141,13 @@ public class ProfiledBodyParseIT {
      *
      * @return the {@code strict-test} profile
      */
-    private static JsonMapperProfile strictTestProfile() {
+    private static JsonProfileCodec strictTestProfile() {
         ObjectMapper strictMapper = JsonMapper.builder()
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                 .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 .addModule(VertxJsonSupport.module())
                 .build();
-        return JsonMapperProfiles.of(JsonProfileId.of("strict-test"), strictMapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("strict-test"), strictMapper);
     }
 
     /**
@@ -165,13 +165,13 @@ public class ProfiledBodyParseIT {
      *
      * @return the {@code no-coercion} profile
      */
-    private static JsonMapperProfile noCoercionProfile() {
+    private static JsonProfileCodec noCoercionProfile() {
         ObjectMapper strictMapper = JsonMapper.builder()
                 .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
                 .addModule(VertxJsonSupport.module())
                 .build();
-        return JsonMapperProfiles.of(JsonProfileId.of("no-coercion"), strictMapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("no-coercion"), strictMapper);
     }
 
     // --- Resource fixtures ---
@@ -459,10 +459,10 @@ public class ProfiledBodyParseIT {
             VertxTestContext ctx,
             Set<Object> resources,
             java.util.function.BiConsumer<Integer, WebClient> afterListen) {
-        DefaultJsonMapperProfileRegistry registry =
-                new DefaultJsonMapperProfileRegistry(Set.of(strictTestProfile(), noCoercionProfile()));
+        DefaultJsonProfileRegistry registry =
+                new DefaultJsonProfileRegistry(Set.of(strictTestProfile(), noCoercionProfile()));
         JaxRsRouterMount.Factory factory =
-                TestFactories.builder().jsonMapperProfileRegistry(registry).build();
+                TestFactories.builder().jsonProfileRegistry(registry).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
         mount.createRouter(vertx)
                 .compose(apiRouter -> {

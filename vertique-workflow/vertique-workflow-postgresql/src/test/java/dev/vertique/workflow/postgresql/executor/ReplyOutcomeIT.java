@@ -11,6 +11,7 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SystemIdentities;
@@ -179,7 +180,9 @@ class ReplyOutcomeIT {
             node.stopExecutor();
             var waitId = f.waitRecords(id).getFirst().waitId();
             String payload = "x".repeat(262143);
-            assertThat(VertiqueJson.mapper().writeValueAsBytes(payload)).hasSize(262145);
+            assertThat(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                            .writeValueAsBytes(payload))
+                    .hasSize(262145);
             long before = f.openSignals(id);
             var result = await(f.caller(() -> {
                 ContextHolder.Scope scope = f.fixture

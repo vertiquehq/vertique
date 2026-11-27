@@ -13,6 +13,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import io.vertx.core.json.Json;
@@ -40,9 +41,9 @@ class RecordTimePayloadValidatorTest {
     @DisplayName("a payload the installed JSON profile can encode is accepted and the byte bound still applies")
     void payloadIsEncodedWithTheProcessMapper() {
         // Given a JSON profile whose mapper encodes java.time values, and a 1024-byte limit
-        VertiqueJson.install(
+        VertiqueJson.install(Jackson2JsonProfiles.of(
                 JsonProfileId.of("record-time-validator-test"),
-                new ObjectMapper().registerModule(new VertxModule()).registerModule(new JavaTimeModule()));
+                new ObjectMapper().registerModule(new VertxModule()).registerModule(new JavaTimeModule())));
         var validator = new RecordTimePayloadValidator(new WorkflowRecordingConfig(5000L, 1024));
 
         // When a payload holding a LocalDate and one over the byte limit are validated

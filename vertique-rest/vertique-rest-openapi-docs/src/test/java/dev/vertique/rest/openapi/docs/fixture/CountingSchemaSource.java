@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
@@ -36,7 +36,7 @@ public class CountingSchemaSource implements OperationSchemaSource {
     public CountingSchemaSource() {}
 
     @Override
-    public final OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public final OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         int call = calls.incrementAndGet();
         callsByOperation
                 .computeIfAbsent(op.operationId(), operationId -> new AtomicInteger())

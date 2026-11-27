@@ -1680,7 +1680,7 @@ document does not publish: @ApiResponse.links on status 200, @Header.hidden on s
 
 - **Output profile.** The operation's output profile is the JSON mapper profile the runtime
   serializes its responses with, such as one selected with `@JsonProfile`, looked up in the
-  `JsonMapperProfileRegistry`. Each output type is described by the framework's output generator for
+  `JsonProfileRegistry`. Each output type is described by the framework's output generator for
   that profile (`AnnotationJsonSchemaGenerator.forOutputProfile`), so the component holds the names
   and members a response carries: the profile's naming strategy applies, a read-only member appears,
   and a write-only member does not.
@@ -2585,7 +2585,7 @@ and the component's multibound sets of `RequestValidationStrategy`, `SecuritySch
 `MountCustomizer`, `Middleware`, `RouterLifecycleHook`, and `RequestInterceptor`, plus an optional
 `AuthEnforcementCapability`, the optional `OperationSchemaSource` that `RestModule` declares, the
 multibound `Set<ResponseProducerBinding<?>>` (from `dev.vertique:vertique-rest-core`), which
-decides which return types publish `default`, and the `JsonMapperProfileRegistry` from
+decides which return types publish `default`, and the `JsonProfileRegistry` from
 `JsonRuntimeModule` (in `dev.vertique:vertique-json`), which `RestModule` includes.
 
 ---
@@ -3057,7 +3057,7 @@ in the runtime document only.
 | `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsModuleInstalled` marker |
 | `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, `ResponseProducerBinding`, `SecuritySchemeHandler` and `SecuritySchemeDescription` (rendered as `securitySchemes`), and `RestConfigurationException` |
 | `dev.vertique:vertique-security-core` | `AccessPolicy`, the type of `@ApiDocs.policy`, and the resolver that validates it and reads its direct requirements |
-| `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
+| `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonProfileRegistry` |
 | `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body; the output generator that describes response types and reports their renamed and hidden members |
 | `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and the operation, parameter, request-body, response, tag, example, and hiding annotations described in [Swagger annotations](#swagger-annotations) and [Operation Responses](#operation-responses) |

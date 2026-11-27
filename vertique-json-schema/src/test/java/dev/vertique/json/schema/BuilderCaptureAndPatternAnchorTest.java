@@ -12,8 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import java.util.List;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
@@ -25,15 +26,15 @@ import org.junit.jupiter.api.Test;
  */
 class BuilderCaptureAndPatternAnchorTest {
 
-    private static JsonMapperProfile profile(ObjectMapper mapper) {
-        return new JsonMapperProfile() {
+    private static JsonProfileCodec profile(ObjectMapper mapper) {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("test");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return mapper;
             }
 

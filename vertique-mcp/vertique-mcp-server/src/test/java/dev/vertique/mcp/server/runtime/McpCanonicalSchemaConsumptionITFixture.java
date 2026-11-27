@@ -3,8 +3,8 @@
 
 package dev.vertique.mcp.server.runtime;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import java.util.Set;
@@ -23,7 +23,7 @@ final class McpCanonicalSchemaConsumptionITFixture {
      * @return the composed factory
      */
     static McpToolRuntimeFactory factory() {
-        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        JsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
         McpServerConfig mcpConfig =
                 McpServerConfig.builder().enabled(true).jsonProfile(null).build();
         return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, java.util.Optional.empty());

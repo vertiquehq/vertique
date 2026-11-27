@@ -29,7 +29,7 @@ import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
 import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
 import jakarta.validation.Validator;
 import java.lang.reflect.Field;
@@ -65,11 +65,11 @@ import java.util.function.Consumer;
  *   <li>{@link #withVictoolsDefaults()} — the current REST-compatible mode. Victools is
  *       constructed without a supplied {@code ObjectMapper}, using its own default mapper. No
  *       profile schema-type override is applied.
- *   <li>{@link #forInputProfile(JsonMapperProfile)} — Victools property discovery is driven by
- *       {@code profile.mapper()}, and only the profile's {@code INPUT}- and {@code BOTH}-direction
+ *   <li>{@link #forInputProfile(JsonProfileCodec)} — Victools property discovery is driven by
+ *       {@code profile.unwrap(ObjectMapper.class)}, and only the profile's {@code INPUT}- and {@code BOTH}-direction
  *       {@code JsonSchemaTypeOverride} declarations apply.
- *   <li>{@link #forOutputProfile(JsonMapperProfile)} — the output-direction counterpart: Victools
- *       property discovery is driven by {@code profile.mapper()}, and only the profile's {@code
+ *   <li>{@link #forOutputProfile(JsonProfileCodec)} — the output-direction counterpart: Victools
+ *       property discovery is driven by {@code profile.unwrap(ObjectMapper.class)}, and only the profile's {@code
  *       OUTPUT}- and {@code BOTH}-direction overrides apply.
  * </ul>
  *
@@ -79,7 +79,7 @@ import java.util.function.Consumer;
  * profile overrides differ between modes.
  *
  * <p><strong>Which properties the input direction describes.</strong>
- * {@link #forInputProfile(JsonMapperProfile)} describes a property when the profile mapper's own
+ * {@link #forInputProfile(JsonProfileCodec)} describes a property when the profile mapper's own
  * resolved bean deserializer reports it bound — a field, a setter, a creator parameter or a builder
  * method — and never through a walk of the Java source's fields. Jackson populates a private field
  * through reflection wherever the mapper infers property mutators — its default, and the setting
@@ -103,7 +103,7 @@ import java.util.function.Consumer;
  * accessor method implies. For a type Jackson deserializes as map-like or collection-like the
  * any-setter is ignored, as Jackson ignores it. A property marked {@code @JsonIgnore} or read-only
  * stays absent, and a write-only property is described with {@code writeOnly}. The output direction
- * is unaffected by this rule: {@link #forOutputProfile(JsonMapperProfile)} describes a property
+ * is unaffected by this rule: {@link #forOutputProfile(JsonProfileCodec)} describes a property
  * Jackson reports serializable whose access is not {@code WRITE_ONLY}.
  *
  * <p><strong>How the input direction describes an any-setter's extra keys.</strong> A type with an
@@ -161,7 +161,7 @@ import java.util.function.Consumer;
  * schema library resolves for it, so a {@code @Schema(name = ...)} can publish a member under a name
  * other than the one the profile's mapper serializes it under. {@link #outputRenames(Type)} reports
  * every such member reachable from a type without changing the document; only a generator built by
- * {@link #forOutputProfile(JsonMapperProfile)} answers it.
+ * {@link #forOutputProfile(JsonProfileCodec)} answers it.
  *
  * <p><strong>Hidden members.</strong> Neither direction honors {@code
  * io.swagger.v3.oas.annotations.Hidden}, and each honors {@code @Schema(hidden = true)} only at some
@@ -169,7 +169,7 @@ import java.util.function.Consumer;
  * the input direction keeps validating it and the output direction keeps publishing it. {@link
  * #hiddenMembers(Type)} reports every member and type the document describes that carries either
  * marker, without changing the document; a generator built by either {@code forInputProfile} overload
- * or by {@link #forOutputProfile(JsonMapperProfile)} answers it for its own direction.
+ * or by {@link #forOutputProfile(JsonProfileCodec)} answers it for its own direction.
  *
  * <p><strong>How the input direction describes an alias spelling.</strong> Every {@code @JsonAlias}
  * spelling Jackson reports for a visible input property that does not back an any-accessor is listed
@@ -265,7 +265,7 @@ public final class AnnotationJsonSchemaGenerator {
 
     /**
      * The output direction's property-name resolver, or {@code null} in the other construction modes.
-     * It is present exactly when the instance was built by {@link #forOutputProfile(JsonMapperProfile)},
+     * It is present exactly when the instance was built by {@link #forOutputProfile(JsonProfileCodec)},
      * the only kind {@link #outputRenames(Type)} answers for.
      */
     private final OutputPropertyNameResolver outputNames;
@@ -273,8 +273,8 @@ public final class AnnotationJsonSchemaGenerator {
     /**
      * The recorder of described members and types that carry {@code @Hidden}, {@code @Schema(hidden =
      * true)}, or both, or {@code null} in the victools-defaults and injected-generator modes. It is
-     * present exactly when the instance was built by {@link #forInputProfile(JsonMapperProfile)}, {@link
-     * #forInputProfile(JsonMapperProfile, Validator)}, or {@link #forOutputProfile(JsonMapperProfile)},
+     * present exactly when the instance was built by {@link #forInputProfile(JsonProfileCodec)}, {@link
+     * #forInputProfile(JsonProfileCodec, Validator)}, or {@link #forOutputProfile(JsonProfileCodec)},
      * the kinds {@link #hiddenMembers(Type)} answers for.
      */
     private final HiddenMemberRecorder hiddenMembers;
@@ -282,8 +282,8 @@ public final class AnnotationJsonSchemaGenerator {
     /**
      * Whether {@link NumericDomainKeywordFilter} runs on every generated document from this instance.
      *
-     * <p>{@code true} only for a profile-aware generator ({@link #forInputProfile(JsonMapperProfile)}
-     * / {@link #forOutputProfile(JsonMapperProfile)}) whose profile declares at least one applicable
+     * <p>{@code true} only for a profile-aware generator ({@link #forInputProfile(JsonProfileCodec)}
+     * / {@link #forOutputProfile(JsonProfileCodec)}) whose profile declares at least one applicable
      * schema-type override — the only case in which a member's declared numeric Java type can end up
      * with a non-numeric effective wire type (wire-honesty). {@code
      * withVictoolsDefaults()} never substitutes a wire type for a Java type, so this is always {@code
@@ -305,8 +305,8 @@ public final class AnnotationJsonSchemaGenerator {
      * instrumented {@link SchemaGenerator} subclass — for instance one that blocks inside {@code
      * generateSchema} — so the per-instance serialization contract can be proven without exposing a
      * Victools type on the public surface. Application code constructs generators exclusively
-     * through {@link #withVictoolsDefaults()}, {@link #forInputProfile(JsonMapperProfile)}, and
-     * {@link #forOutputProfile(JsonMapperProfile)}, all of which delegate here or to the two-argument
+     * through {@link #withVictoolsDefaults()}, {@link #forInputProfile(JsonProfileCodec)}, and
+     * {@link #forOutputProfile(JsonProfileCodec)}, all of which delegate here or to the two-argument
      * constructor.
      *
      * @param generator the configured Victools generator this instance owns for its lifetime; must be
@@ -398,7 +398,7 @@ public final class AnnotationJsonSchemaGenerator {
 
     /**
      * Constructs a generator whose Victools property discovery is driven by {@code
-     * profile.mapper()} and whose applied schema-type overrides are the profile's {@code INPUT}-
+     * profile.unwrap(ObjectMapper.class)} and whose applied schema-type overrides are the profile's {@code INPUT}-
      * and {@code BOTH}-direction declarations.
      *
      * @param profile the resolved JSON mapper profile whose mapper and input-applicable overrides
@@ -412,12 +412,12 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        profile declares a duplicate effective override mapping
      *                                        for this direction
      */
-    public static AnnotationJsonSchemaGenerator forInputProfile(JsonMapperProfile profile) {
+    public static AnnotationJsonSchemaGenerator forInputProfile(JsonProfileCodec profile) {
         return forProfile(profile, Direction.INPUT, null);
     }
 
     /**
-     * Constructs an input-direction generator exactly as {@link #forInputProfile(JsonMapperProfile)}
+     * Constructs an input-direction generator exactly as {@link #forInputProfile(JsonProfileCodec)}
      * does, except that value-schema constraints are additionally read from Bean Validation metadata
      * ({@code validator.getConstraintsForClass}), whenever a non-null {@code validator} is supplied.
      *
@@ -443,13 +443,13 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        profile declares a duplicate effective override mapping
      *                                        for this direction
      */
-    public static AnnotationJsonSchemaGenerator forInputProfile(JsonMapperProfile profile, Validator validator) {
+    public static AnnotationJsonSchemaGenerator forInputProfile(JsonProfileCodec profile, Validator validator) {
         return forProfile(profile, Direction.INPUT, validator);
     }
 
     /**
      * Constructs a generator whose Victools property discovery is driven by {@code
-     * profile.mapper()} and whose applied schema-type overrides are the profile's {@code OUTPUT}-
+     * profile.unwrap(ObjectMapper.class)} and whose applied schema-type overrides are the profile's {@code OUTPUT}-
      * and {@code BOTH}-direction declarations.
      *
      * @param profile the resolved JSON mapper profile whose mapper and output-applicable overrides
@@ -463,7 +463,7 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        profile declares a duplicate effective override mapping
      *                                        for this direction
      */
-    public static AnnotationJsonSchemaGenerator forOutputProfile(JsonMapperProfile profile) {
+    public static AnnotationJsonSchemaGenerator forOutputProfile(JsonProfileCodec profile) {
         return forProfile(profile, Direction.OUTPUT, null);
     }
 
@@ -479,7 +479,7 @@ public final class AnnotationJsonSchemaGenerator {
      * @throws JsonSchemaGenerationException if the profile's declarations are invalid
      */
     private static AnnotationJsonSchemaGenerator forProfile(
-            JsonMapperProfile profile, Direction direction, Validator validator) {
+            JsonProfileCodec profile, Direction direction, Validator validator) {
         Objects.requireNonNull(profile, "profile");
         ValidatedProfile validated = ValidatedProfile.forDirection(profile, direction);
 

@@ -18,11 +18,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
 import java.io.IOException;
@@ -56,8 +57,8 @@ class MapValueDescriptionTest {
 
     // --- Generation helpers ---
 
-    private static JsonMapperProfile profile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec profile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     private static JsonNode inputDocument(Class<?> type) {
@@ -65,7 +66,7 @@ class MapValueDescriptionTest {
                 AnnotationJsonSchemaGenerator.forInputProfile(profile()).generateCanonical(type));
     }
 
-    private static JsonNode inputDocument(Class<?> type, JsonMapperProfile customProfile) {
+    private static JsonNode inputDocument(Class<?> type, JsonProfileCodec customProfile) {
         return assertCanonicalForm(
                 AnnotationJsonSchemaGenerator.forInputProfile(customProfile).generateCanonical(type));
     }
@@ -279,7 +280,7 @@ class MapValueDescriptionTest {
     @Test
     @DisplayName("Sensitivity proof: an override-declared map value type succeeds")
     void mapValueOfAnOverrideDeclaredTypeSucceeds() {
-        JsonMapperProfile withOverride = overrideProfile(
+        JsonProfileCodec withOverride = overrideProfile(
                 RefusedValue.class,
                 JsonSchemaFragment.parse("{\"type\":\"string\",\"format\":\"marker-map-value-override\"}"));
 
@@ -776,16 +777,16 @@ class MapValueDescriptionTest {
 
     // --- Override-profile helper ---
 
-    private static JsonMapperProfile overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
+    private static JsonProfileCodec overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
         List<JsonSchemaTypeOverride> overrides = List.of(JsonSchemaTypeOverride.input(overriddenClass, fragment));
-        return new JsonMapperProfile() {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("map-value-override");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return new ObjectMapper();
             }
 

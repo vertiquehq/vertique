@@ -8,6 +8,7 @@ import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.await;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
@@ -197,7 +198,9 @@ public final class MigrationScenario implements AutoCloseable {
 
     public Object reserved() {
         try {
-            return VertiqueJson.mapper().readValue(state(), Map.class).get("reserved");
+            return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                    .readValue(state(), Map.class)
+                    .get("reserved");
         } catch (java.io.IOException failure) {
             throw new AssertionError("invalid workflow state", failure);
         }

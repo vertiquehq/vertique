@@ -16,6 +16,7 @@ SPDX-License-Identifier: EUPL-1.2
     <name>Vertique MCP Server</name>
     <description>HTTP server composition and lifecycle wiring for the Model Context Protocol</description>
     <dependencies>
+        <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-mcp-core</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rate-limit-core</artifactId></dependency>

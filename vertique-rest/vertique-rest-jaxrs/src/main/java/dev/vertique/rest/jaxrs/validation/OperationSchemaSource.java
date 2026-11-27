@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.validation;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 
 /**
@@ -11,7 +11,7 @@ import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
  * {@link JaxRsOperationDescriptor} and the effective JSON profile the registrar resolved for it.
  *
  * <p>This SPI consumes only the public JAX-RS operation descriptor (parameter and body descriptors,
- * annotations) and the public {@link JsonMapperProfile}, and emits vertx-json-schema JSON. It
+ * annotations) and the public {@link JsonProfileCodec}, and emits vertx-json-schema JSON. It
  * deliberately does <strong>not</strong> reference victools or any rest-jaxrs internal route-dispatch
  * metadata type, so that rest-jaxrs carries no schema-generator dependency — the seam is what lets the
  * runtime victools producer live in {@code vertique-rest-validation}.
@@ -40,5 +40,5 @@ public interface OperationSchemaSource {
      * @return the operation's schemas; never {@code null} (an operation with no body and no
      *     parameters yields an empty {@link OperationSchemas})
      */
-    OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile);
+    OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile);
 }

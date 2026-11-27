@@ -84,11 +84,32 @@ SPDX-License-Identifier: EUPL-1.2
     </dependencies>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!-- PIT runs every test in one JVM and reads only plugin-level Surefire settings,
+                     so it cannot reproduce the flagless reset-gate execution below: its minions get
+                     the reset flag and the flagless refusal proof stays with Surefire. -->
+                <plugin>
+                    <groupId>org.pitest</groupId>
+                    <artifactId>pitest-maven</artifactId>
+                    <configuration>
+                        <jvmArgs>
+                            <jvmArg>-Dvertique.json.codec.allowReset=true</jvmArg>
+                        </jvmArgs>
+                        <excludedTestClasses combine.children="append">
+                            <param>*ProfileDelegatingJsonCodecResetGateTest</param>
+                        </excludedTestClasses>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
-            <!-- The install-step proofs drive the process-global Vertique JSON codec and restore the
-                 raw Vert.x delegate in @AfterEach, so both forks of this module enable the reset
-                 seam. The flag is read once at VertiqueJson class initialization; it is a test-only
-                 argLine and never reaches a shipped runtime. -->
+            <!-- The codec and install-step proofs drive the process-global JSON codec and restore the
+                 raw Vert.x profile in @AfterEach, so the default forks enable the reset seam. The flag
+                 is read once at VertiqueJson class initialization, which is why the refusal half of the
+                 reset-gate proof needs a fork that never saw it: the reset-gate execution below
+                 overrides the plugin-level argLine. The flag is test-only and never reaches a shipped
+                 runtime. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
@@ -97,6 +118,36 @@ SPDX-License-Identifier: EUPL-1.2
                          and adds the reset flag; a bare -D would drop both. -->
                     <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <excludes>
+                                <!-- Runs in the flagless execution below. -->
+                                <exclude>**/ProfileDelegatingJsonCodecResetGateTest.java</exclude>
+                                <!-- Surefire's default exclude, restated because declaring
+                                     <excludes> replaces the default list. -->
+                                <exclude>**/*$*</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- Flagless fork: proves resetForTests() stays refused when the JVM did
+                             not start with -Dvertique.json.codec.allowReset=true, and that a later
+                             System.setProperty cannot open the seam. -->
+                        <id>reset-gate</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
+                            <includes>
+                                <include>**/ProfileDelegatingJsonCodecResetGateTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -8,8 +8,8 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import dev.vertique.codegen.mcp.McpToolProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
@@ -155,7 +155,7 @@ final class McpOptionalMaterializationCanaryTestFixture {
         return McpToolRuntimeFactoryTestSupport.factory(Set.of(new MaterializingProfile()), "strict");
     }
 
-    private static final class MaterializingProfile implements JsonMapperProfile {
+    private static final class MaterializingProfile extends Jackson2JsonProfileCodec {
 
         private final ObjectMapper mapper =
                 new ObjectMapper().registerModule(new Jdk8Module()).registerModule(VertxJsonSupport.module());
@@ -166,13 +166,13 @@ final class McpOptionalMaterializationCanaryTestFixture {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }
 
     /** Registers Vert.x's Jackson support (so the registry's structural probe passes) but no {@code Jdk8Module}. */
-    private static final class NonMaterializingProfile implements JsonMapperProfile {
+    private static final class NonMaterializingProfile extends Jackson2JsonProfileCodec {
 
         private final ObjectMapper mapper = new ObjectMapper().registerModule(VertxJsonSupport.module());
 
@@ -182,7 +182,7 @@ final class McpOptionalMaterializationCanaryTestFixture {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }

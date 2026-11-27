@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
@@ -40,7 +40,7 @@ class JsonSerdeProviderTest {
     // profiles. Every bag in this test omits jsonProfile, so resolution always lands on the
     // registry's vertique mapper (the pre-resolved global default; json.jsonProfile is unset).
     private final JsonSerdeProvider provider =
-            new JsonSerdeProvider(new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults());
+            new JsonSerdeProvider(new DefaultJsonProfileRegistry(Set.of()), JsonConfig.defaults());
 
     // --- Identity ---
 

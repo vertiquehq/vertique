@@ -337,9 +337,9 @@ class McpGeneratedInvokerDaggerValidatorCompositionTest {
 
                 import dagger.Module;
                 import dagger.Provides;
-                import dev.vertique.core.json.JsonMapperProfileRegistry;
+                import dev.vertique.core.json.JsonProfileRegistry;
                 import dev.vertique.sanitization.processing.InputObjectProcessor;
-                import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+                import dev.vertique.json.DefaultJsonProfileRegistry;
                 import dev.vertique.json.JsonConfig;
                 import dev.vertique.mcp.server.McpServerConfig;
                 import jakarta.inject.Singleton;
@@ -369,8 +369,8 @@ class McpGeneratedInvokerDaggerValidatorCompositionTest {
 
                     @Provides
                     @Singleton
-                    static JsonMapperProfileRegistry jsonMapperProfileRegistry() {
-                        return new DefaultJsonMapperProfileRegistry(Set.of());
+                    static JsonProfileRegistry jsonProfileRegistry() {
+                        return new DefaultJsonProfileRegistry(Set.of());
                     }
 
                     @Provides

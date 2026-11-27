@@ -75,7 +75,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Include this module in your application's Dagger component to get the full
  * REST framework with JAX-RS routing. It automatically includes {@link RestCoreModule}
  * for multibinding declarations and standard middleware, and
- * {@link dev.vertique.json.JsonRuntimeModule} so the {@link dev.vertique.core.json.JsonMapperProfileRegistry}
+ * {@link dev.vertique.json.JsonRuntimeModule} so the {@link dev.vertique.core.json.JsonProfileRegistry}
  * is available to resolve per-method request-body JSON profiles.
  *
  * <p>Example usage in a Dagger component:
