@@ -1,0 +1,229 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.core.input;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Unit tests for the shared input context types.
+ *
+ * <p>Covers record equality and accessors for {@link InputValueContext}, {@link InputLocation}
+ * enum values, and the frozen member ledger of {@link InputFieldNameResolver}.
+ */
+class InputContractsTest {
+
+    // --- InputLocation ---
+
+    @Nested
+    @DisplayName("InputLocation enum")
+    class InputLocationTest {
+
+        @Test
+        @DisplayName("declares all expected constants")
+        void hasAllConstants() {
+            Set<String> names =
+                    Set.of(Arrays.stream(InputLocation.values()).map(Enum::name).toArray(String[]::new));
+            assertTrue(names.contains("PATH"));
+            assertTrue(names.contains("QUERY"));
+            assertTrue(names.contains("HEADER"));
+            assertTrue(names.contains("COOKIE"));
+            assertTrue(names.contains("FORM"));
+            assertTrue(names.contains("BODY"));
+            assertTrue(names.contains("BEAN_PARAM"));
+            assertTrue(names.contains("PAYLOAD"));
+            assertEquals(8, names.size());
+        }
+    }
+
+    // --- InputFieldNameResolver ---
+
+    /**
+     * Freezes the published surface of {@link InputFieldNameResolver}.
+     *
+     * <p>The contract is a lambda target implemented outside this module (the Jackson-backed
+     * projection lives in {@code vertique-json}) and is consumed by the input-processing engine, so
+     * its member set is a compatibility commitment. This ledger moved here with the interface when
+     * it was relocated from the input-processing engine; the assertions are unchanged.
+     */
+    @Nested
+    @DisplayName("InputFieldNameResolver contract")
+    class InputFieldNameResolverTest {
+
+        @Test
+        @DisplayName(
+                "public members match the frozen ledger (one abstract method, five default methods, plus IDENTITY)")
+        void publicMembersMatchLedger() {
+            Set<String> methods = Arrays.stream(InputFieldNameResolver.class.getDeclaredMethods())
+                    .filter(method -> Modifier.isPublic(method.getModifiers()))
+                    .filter(method -> !method.isSynthetic())
+                    .map(method -> method.getName() + "("
+                            + Arrays.stream(method.getParameterTypes())
+                                    .map(Class::getSimpleName)
+                                    .collect(Collectors.joining(","))
+                            + ")")
+                    .collect(Collectors.toCollection(TreeSet::new));
+            // promotedFields, promotedField, boundJavaNames and unroutableWireNames joined the
+            // ledger, all as default methods: an implementation that ignores them is
+            // unaffected, which is what keeps the addition compatible on a Stable interface.
+            // polymorphicSubtypes joined the same way, as a default returning the empty set.
+            assertEquals(
+                    new TreeSet<>(Set.of(
+                            "boundJavaNames(Class)",
+                            "logicalName(Class,String)",
+                            "polymorphicSubtypes(Class)",
+                            "precompute(Class)",
+                            "promotedField(Class,String)",
+                            "promotedFields(Class)",
+                            "unroutableWireNames(Class)")),
+                    methods);
+
+            Set<String> fields = Arrays.stream(InputFieldNameResolver.class.getDeclaredFields())
+                    .filter(field -> Modifier.isPublic(field.getModifiers()))
+                    .filter(field -> !field.isSynthetic())
+                    .map(Field::getName)
+                    .collect(Collectors.toCollection(TreeSet::new));
+            assertEquals(new TreeSet<>(Set.of("IDENTITY")), fields);
+
+            assertEquals(0, InputFieldNameResolver.class.getDeclaredConstructors().length);
+        }
+
+        @Test
+        @DisplayName("the contract stays a single-abstract-method interface")
+        void resolverIsFunctional() {
+            assertTrue(
+                    InputFieldNameResolver.class.isAnnotationPresent(FunctionalInterface.class),
+                    "InputFieldNameResolver is published as a lambda target and must stay "
+                            + "@FunctionalInterface — a second abstract method would break every "
+                            + "implementation");
+        }
+
+        @Test
+        @DisplayName("IDENTITY inherits the no-op precompute")
+        void identityPrecomputeIsANoOp() {
+            assertDoesNotThrow(() -> InputFieldNameResolver.IDENTITY.precompute(Object.class));
+        }
+
+        @Test
+        @DisplayName("IDENTITY inherits the empty promotedFields, so a codec that promotes nothing is unaffected")
+        void identityPromotesNothing() {
+            assertTrue(
+                    InputFieldNameResolver.IDENTITY.promotedFields(Object.class).isEmpty());
+        }
+
+        @Test
+        @DisplayName("IDENTITY cannot enumerate what it binds, so the default boundJavaNames is null")
+        void identityBoundNamesAreUnknown() {
+            assertNull(InputFieldNameResolver.IDENTITY.boundJavaNames(Object.class));
+        }
+
+        @Test
+        @DisplayName("IDENTITY routes every key, so the default unroutableWireNames is empty")
+        void identityHasNoUnroutableKeys() {
+            assertTrue(InputFieldNameResolver.IDENTITY
+                    .unroutableWireNames(Object.class)
+                    .isEmpty());
+        }
+
+        @Test
+        @DisplayName("IDENTITY knows no polymorphism, so the default polymorphicSubtypes is empty")
+        void identityHasNoPolymorphicSubtypes() {
+            assertTrue(InputFieldNameResolver.IDENTITY
+                    .polymorphicSubtypes(Object.class)
+                    .isEmpty());
+        }
+
+        @Test
+        @DisplayName("PromotedField copies its enclosing path, so a live list is never published")
+        void promotedFieldCopiesItsPath() {
+            List<String> live = new java.util.ArrayList<>(List.of("holder"));
+            InputFieldNameResolver.PromotedField field =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", live);
+            live.add("mutated");
+            assertEquals(List.of("holder"), field.enclosingPath());
+            assertThrows(UnsupportedOperationException.class, () -> field.enclosingPath()
+                    .add("x"));
+        }
+
+        @Test
+        @DisplayName("PromotedField carries the declaring type, the field name, and the enclosing path")
+        void promotedFieldCarriesItsThreeParts() {
+            InputFieldNameResolver.PromotedField field =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", List.of("holder"));
+            assertEquals(String.class, field.declaringType());
+            assertEquals("value", field.fieldName());
+            assertEquals(List.of("holder"), field.enclosingPath());
+        }
+
+        @Test
+        @DisplayName("the default promotedField reads promotedFields, so one override serves both")
+        void defaultPromotedFieldReadsTheMap() {
+            InputFieldNameResolver.PromotedField promotion =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", List.of("holder"));
+            InputFieldNameResolver resolver = new InputFieldNameResolver() {
+                @Override
+                public String logicalName(Class<?> ownerType, String wireName) {
+                    return wireName;
+                }
+
+                @Override
+                public Map<String, InputFieldNameResolver.PromotedField> promotedFields(Class<?> ownerType) {
+                    return Map.of("wire_value", promotion);
+                }
+            };
+            assertEquals(promotion, resolver.promotedField(Object.class, "wire_value"));
+            assertNull(resolver.promotedField(Object.class, "absent"));
+        }
+    }
+
+    // --- InputValueContext ---
+
+    @Nested
+    @DisplayName("InputValueContext record")
+    class InputValueContextTest {
+
+        @Test
+        @DisplayName("accessors return constructor-supplied values")
+        void accessorsReturnValues() {
+            InputValueContext ctx = new InputValueContext(InputLocation.QUERY, "address.city", "city", String.class);
+            assertEquals(InputLocation.QUERY, ctx.location());
+            assertEquals("address.city", ctx.path());
+            assertEquals("city", ctx.logicalName());
+            assertEquals(String.class, ctx.ownerType());
+        }
+
+        @Test
+        @DisplayName("equals and hashCode are value-based")
+        void equalityIsValueBased() {
+            InputValueContext a = new InputValueContext(InputLocation.BODY, "name", "name", Object.class);
+            InputValueContext b = new InputValueContext(InputLocation.BODY, "name", "name", Object.class);
+            assertEquals(a, b);
+            assertEquals(a.hashCode(), b.hashCode());
+        }
+
+        @Test
+        @DisplayName("records with different fields are not equal")
+        void differentFieldsNotEqual() {
+            InputValueContext a = new InputValueContext(InputLocation.PATH, "id", "id", String.class);
+            InputValueContext b = new InputValueContext(InputLocation.QUERY, "id", "id", String.class);
+            assertNotEquals(a, b);
+        }
+    }
+}

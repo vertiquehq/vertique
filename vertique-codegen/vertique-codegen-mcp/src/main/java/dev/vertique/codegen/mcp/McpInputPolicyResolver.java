@@ -4,9 +4,9 @@
 package dev.vertique.codegen.mcp;
 
 import dev.vertique.codegen.CodegenContext;
-import dev.vertique.input.processing.InvocationPolicyConflictException;
-import dev.vertique.input.processing.apt.ElementInvocationPolicies;
-import dev.vertique.input.processing.apt.ElementInvocationPolicies.ElementPolicyChains;
+import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
+import dev.vertique.sanitization.processing.apt.ElementInvocationPolicies;
+import dev.vertique.sanitization.processing.apt.ElementInvocationPolicies.ElementPolicyChains;
 import java.util.List;
 import java.util.Optional;
 import javax.lang.model.element.ExecutableElement;

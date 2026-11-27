@@ -47,7 +47,7 @@ class AnnotationCollectorTest {
         void fieldLevelCanonChain_capturedInProcessor() {
             JavaFileObject dto = SourceFiles.inline("com.example.ChainDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     import dev.vertique.sanitization.canonicalize.LowerCaseCanonicalizer;
                     public class ChainDto {
@@ -68,7 +68,7 @@ class AnnotationCollectorTest {
         void fieldLevelSanitChain_capturedInProcessor() {
             JavaFileObject dto = SourceFiles.inline("com.example.SanitDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Sanitize;
+                    import dev.vertique.sanitization.Sanitize;
                     import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                     public class SanitDto {
                         @Sanitize(StripControlCharsSanitizer.class)
@@ -94,7 +94,7 @@ class AnnotationCollectorTest {
         void subclassInheritsAnnotatedField_capturedInProcessor() {
             JavaFileObject base = SourceFiles.inline("com.example.BaseDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class BaseDto {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -126,7 +126,7 @@ class AnnotationCollectorTest {
         void recordComponent_canonAnnotation_capturedInProcessor() {
             JavaFileObject record = SourceFiles.inline("com.example.ItemRecord", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public record ItemRecord(
                         @Canonicalize(TrimCanonicalizer.class) String title,
@@ -161,7 +161,7 @@ class AnnotationCollectorTest {
                     import java.lang.annotation.Retention;
                     import java.lang.annotation.RetentionPolicy;
                     import java.lang.annotation.Target;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     @Target({ElementType.ANNOTATION_TYPE, ElementType.FIELD, ElementType.RECORD_COMPONENT})
                     @Retention(RetentionPolicy.RUNTIME)
@@ -202,7 +202,7 @@ class AnnotationCollectorTest {
                     import java.lang.annotation.Retention;
                     import java.lang.annotation.RetentionPolicy;
                     import java.lang.annotation.Target;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     @Target({ElementType.FIELD, ElementType.RECORD_COMPONENT})
                     @Retention(RetentionPolicy.RUNTIME)
@@ -238,7 +238,7 @@ class AnnotationCollectorTest {
      * makes argument 0 accidentally right; {@code Fixed<T> extends ArrayList<String>} makes it wrong
      * even at arity one — the element Jackson binds is {@code String}, never the declared argument;
      * {@code Weird<A, B> extends ArrayList<B>} makes it outright wrong. The reflective
-     * {@code TypeClassifier.elementType} in {@code vertique-input-processing} resolves the same
+     * {@code TypeClassifier.elementType} in {@code vertique-sanitization} resolves the same
      * three shapes the same way, so the generated and reflective paths classify them identically.
      */
     @Nested
@@ -248,7 +248,7 @@ class AnnotationCollectorTest {
         /** The bound a type-variable field must classify against. */
         private static final JavaFileObject BOUND_DTO = SourceFiles.inline("com.example.tv.TvChildDto", """
                 package com.example.tv;
-                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.Sanitize;
                 import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                 public class TvChildDto {
                     @Sanitize(StripControlCharsSanitizer.class)
@@ -277,7 +277,7 @@ class AnnotationCollectorTest {
         void unboundedTypeVariableFieldStaysOther() {
             JavaFileObject dto = SourceFiles.inline("com.example.tv.TvOpenHolder", """
                     package com.example.tv;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class TvOpenHolder<T> {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -297,7 +297,7 @@ class AnnotationCollectorTest {
         /** The element type each collection shape must resolve to. */
         private static final JavaFileObject LEAF_DTO = SourceFiles.inline("com.example.el.ElLeafDto", """
                 package com.example.el;
-                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.Sanitize;
                 import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                 public class ElLeafDto {
                     @Sanitize(StripControlCharsSanitizer.class)
@@ -308,7 +308,7 @@ class AnnotationCollectorTest {
         /** A second DTO, so a wrong argument index picks a distinguishable class. */
         private static final JavaFileObject OTHER_DTO = SourceFiles.inline("com.example.el.ElOtherDto", """
                 package com.example.el;
-                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.Sanitize;
                 import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                 public class ElOtherDto {
                     @Sanitize(StripControlCharsSanitizer.class)
@@ -394,7 +394,7 @@ class AnnotationCollectorTest {
         void fixedElementIsTheSupertypeArgumentNotTheDeclaredOne() {
             JavaFileObject dto = SourceFiles.inline("com.example.el.FixedFieldDto", """
                     package com.example.el;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class FixedFieldDto {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -534,7 +534,7 @@ class AnnotationCollectorTest {
         void ordinaryCollectionShapesAreUnchanged() {
             JavaFileObject dto = SourceFiles.inline("com.example.el.OrdinaryFieldDto", """
                     package com.example.el;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     import java.util.List;
                     public class OrdinaryFieldDto {
@@ -618,7 +618,7 @@ class AnnotationCollectorTest {
         void mapTypedFieldIsNotClassifiedAsANestedDto() {
             JavaFileObject dto = SourceFiles.inline("com.example.MapDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     import java.util.Map;
                     public class MapDto {
@@ -640,7 +640,7 @@ class AnnotationCollectorTest {
         void annotatedMapTypedFieldIsSchemaFreeWithItsDeclaredType() {
             JavaFileObject dto = SourceFiles.inline("com.example.AnnotatedMapDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Sanitize;
+                    import dev.vertique.sanitization.Sanitize;
                     import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                     import java.util.Map;
                     public class AnnotatedMapDto {
@@ -669,7 +669,7 @@ class AnnotationCollectorTest {
         void mapSubtypeFieldIsClassifiedLikeMap() {
             JavaFileObject dto = SourceFiles.inline("com.example.MapSubtypeDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.Canonicalize;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     import java.util.HashMap;
                     public class MapSubtypeDto {
@@ -699,8 +699,8 @@ class AnnotationCollectorTest {
         void canonAndSkipCanon_sameField_compilationError() {
             JavaFileObject dto = SourceFiles.inline("com.example.ConflictDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
-                    import dev.vertique.core.sanitization.SkipCanonicalization;
+                    import dev.vertique.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.SkipCanonicalization;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class ConflictDto {
                         @Canonicalize(TrimCanonicalizer.class)
@@ -719,8 +719,8 @@ class AnnotationCollectorTest {
         void sanitAndSkipSanit_sameField_compilationError() {
             JavaFileObject dto = SourceFiles.inline("com.example.SanitConflictDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Sanitize;
-                    import dev.vertique.core.sanitization.SkipSanitization;
+                    import dev.vertique.sanitization.Sanitize;
+                    import dev.vertique.sanitization.SkipSanitization;
                     import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
                     public class SanitConflictDto {
                         @Sanitize(StripControlCharsSanitizer.class)
@@ -739,8 +739,8 @@ class AnnotationCollectorTest {
         void conflictErrorMessage_containsFieldName() {
             JavaFileObject dto = SourceFiles.inline("com.example.FieldNameConflictDto", """
                     package com.example;
-                    import dev.vertique.core.sanitization.Canonicalize;
-                    import dev.vertique.core.sanitization.SkipCanonicalization;
+                    import dev.vertique.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.SkipCanonicalization;
                     import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
                     public class FieldNameConflictDto {
                         @Canonicalize(TrimCanonicalizer.class)

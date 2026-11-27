@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.jaxrs`
 > **Artifact:** `vertique-codegen-jaxrs`
-> **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `RequestPreconditions` and `dev.vertique.rest.core.application.RestApplication`), `vertique-security-core` (compile — for `dev.vertique.security.authz.Authorized`), `vertique-input-processing` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
+> **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `RequestPreconditions` and `dev.vertique.rest.core.application.RestApplication`), `vertique-security-core` (compile — for `dev.vertique.security.authz.Authorized`), `vertique-sanitization` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
 
 `vertique-codegen-jaxrs` is a unified annotation processor that owns the entire compile-time JAX-RS pipeline: discovery, effective-contract resolution, validation, Dagger DI binding emission, and runtime performance optimization via generated descriptor, bean-param model, and execution plan companions.
 
@@ -65,7 +65,7 @@ Produces `EffectiveResourceContract` (one per class), which contains `EffectiveM
 
 #### Input-policy derivation
 
-Route- and parameter-level canonicalization and sanitization chains (`@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, `@SkipSanitization`) are not resolved here. The resolver delegates them to `ElementInvocationPolicies` in `vertique-input-processing`, the shared adapter the reflective runtime's own resolution is built on, so a generated execution plan carries exactly the chains the reflective path would have derived for the same declarations.
+Route- and parameter-level canonicalization and sanitization chains (`@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, `@SkipSanitization`) are not resolved here. The resolver delegates them to `ElementInvocationPolicies` in `vertique-sanitization`, the shared adapter the reflective runtime's own resolution is built on, so a generated execution plan carries exactly the chains the reflective path would have derived for the same declarations.
 
 The practical consequence is that these annotations obey the same hierarchy rules as every other JAX-RS annotation the processor reads: a policy declared on an interface method, on an inherited superclass method, or at class level on a superclass reaches the generated plan, and a parameter annotation declared only on an interface method's parameter reaches the generated parameter chain. Composed annotations (a custom annotation meta-annotated with `@Sanitize(...)`) resolve recursively.
 
@@ -98,7 +98,7 @@ Four artifact types are emitted for every semantic candidate:
 | `GeneratedJaxRsResourcesModule` Dagger module | A presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding and a lazy `GeneratedJaxRsResourceEntry` catalog entry for each DI-eligible resource, plus a `GeneratedRestApplicationRegistration` for each registered `@RestApplication` declaration — see "Generated Binding Shape" below |
 | `{Resource}_JaxRsDescriptor` | Precomputes `SecurityPolicy` constants and method/parameter metadata, eliminating the reflective `getDeclaredMethods()` walk at startup |
 | `{Bean}_BeanParamModel` | Static field-metadata list per `@BeanParam`/`@RequestParams` type, eliminating the reflective bean-field scan |
-| `{Resource}_{methodName}_{idx}_ExecutionPlan` | Precomputed `EffectiveInputPolicies` (`dev.vertique.input.processing`) constants plus a direct typed method call, eliminating `Method.invoke` from the request hot path. For `CONTEXT` parameters, emits a static `Class<?>` constant (`CTX{i}`) loaded once at class-initialization time and a `support.resolveContext(CTX{i}, ctx, "<declaringClassFqn>", "<method>")` call per parameter — no per-request reflection, no `ParamMeta`/policy entry for `CONTEXT` params |
+| `{Resource}_{methodName}_{idx}_ExecutionPlan` | Precomputed `EffectiveInputPolicies` (`dev.vertique.sanitization.processing`) constants plus a direct typed method call, eliminating `Method.invoke` from the request hot path. For `CONTEXT` parameters, emits a static `Class<?>` constant (`CTX{i}`) loaded once at class-initialization time and a `support.resolveContext(CTX{i}, ctx, "<declaringClassFqn>", "<method>")` call per parameter — no per-request reflection, no `ParamMeta`/policy entry for `CONTEXT` params |
 
 Only the Dagger module row is gated by DI eligibility (see "Semantic vs. DI candidates" above) — the other three are emitted for every semantic candidate regardless.
 
@@ -379,7 +379,7 @@ The processor supports the common OpenAPI Generator pattern where the contract i
 
 A generic override that changes the verb or the parameter source between declarations follows the runtime's merged-list priority on both engines (verb: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS; parameter source: context, preconditions, bean parameter, path, query, header, cookie, form, uploads, entity parts, body), not the first declaration in walk order. A superclass method that a more derived method overrides is not discovered as a second route; a private or static helper with the same erasure is not a route and displaces nothing.
 
-Interface- and superclass-declared canonicalization and sanitization policies follow the same rule on both paths, because both resolve them through the shared adapter in `vertique-input-processing` rather than through their own walk.
+Interface- and superclass-declared canonicalization and sanitization policies follow the same rule on both paths, because both resolve them through the shared adapter in `vertique-sanitization` rather than through their own walk.
 
 Both paths produce identical `ResourceMethodMeta` and identical `SecurityPolicy` outcomes. Removing `vertique-codegen-jaxrs` from `annotationProcessorPaths` changes performance, not behavior. A method `@RequiresPolicy` replaces a type policy, including when the method policy is action-only and its role/scope contract is empty. The match uses the method name and the signature viewed from the resource, so a type-variable parameter matches the type that binds it. The generated method-annotation list is `AccessPolicyResolver.collectMethodAnnotations` of the legacy list, so that action stays on the list even when the declaring method is package-private in the same package or protected. Like other hierarchy members, static methods, private methods, and package-private methods declared in another package are not part of that selection. The scanned method always selects itself whatever its modifiers, and a security annotation on the legacy list that the selection cannot reproduce fails registration instead of being replaced by a broader declaration.
 
@@ -522,13 +522,13 @@ None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor
 | `vertique-rest-jaxrs` | test | Runtime SPI types the generated sources reference by fully qualified name: `GeneratedJaxRsResourceDescriptor`, `ResourceExecutionPlan`, `GeneratedJaxRsBeanParamModel`, `BeanParamFieldMeta`, `GeneratedRestApplicationRegistration`; `ResourceMethodMeta` (for descriptor method signature). The consuming application declares it (see "Adoption"); tests load the generated companions reflectively |
 | `vertique-rest-core` | compile | `RequestPreconditions`, `dev.vertique.rest.core.application.RestApplication` (matched by name) |
 | `vertique-security-core` | compile | `dev.vertique.security.authz.Authorized` and framework security types such as `dev.vertique.security.SecurityContext`, a `ContextValue` the `@Context` parameter checks accept |
-| `vertique-input-processing` | compile | `dev.vertique.input.processing.EffectiveInputPolicies` (referenced by generated `ExecutionPlan` constants); `dev.vertique.input.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains |
+| `vertique-sanitization` | compile | `dev.vertique.sanitization.processing.EffectiveInputPolicies` (referenced by generated `ExecutionPlan` constants); `dev.vertique.sanitization.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains |
 | `jakarta.ws.rs-api` | test | JAX-RS annotation types for resource fixtures; the processor recognizes them by fully qualified name |
 | `jakarta.annotation-api` | compile | `@PermitAll`, `@RolesAllowed`, `@DenyAll` |
 | `swagger-annotations-jakarta` | compile | `@io.swagger.v3.oas.annotations.Operation`, whose `operationId` the processor reads by fully qualified name |
 | `com.palantir.javapoet:javapoet` | compile (transitive) | Source code emission, through `vertique-codegen-core` |
 
-Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the in-reactor-only `vertique-input-processing` test JAR (input-policy fixture stubs; not a published artifact).
+Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the in-reactor-only `vertique-sanitization` test JAR (input-policy fixture stubs; not a published artifact).
 
 ---
 

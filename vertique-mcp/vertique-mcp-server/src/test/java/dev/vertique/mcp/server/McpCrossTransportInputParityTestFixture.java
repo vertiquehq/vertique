@@ -6,12 +6,12 @@ package dev.vertique.mcp.server;
 import dev.vertique.codegen.mcp.McpToolProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.input.processing.InputObjectProcessor;
-import dev.vertique.input.processing.testkit.CrossTransportUppercaseSanitizer;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpToolInvoker;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.testkit.CrossTransportUppercaseSanitizer;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.lang.reflect.Constructor;
@@ -21,7 +21,7 @@ import javax.tools.JavaFileObject;
 /**
  * Framework wiring for {@link McpCrossTransportInputParityTest}: compiles
  * one real {@code com.example.parity.ParityTools} application source — a single parameter typed as the
- * <strong>shared</strong> {@link dev.vertique.input.processing.testkit.CrossTransportFixtureLevel1}
+ * <strong>shared</strong> {@link dev.vertique.sanitization.processing.testkit.CrossTransportFixtureLevel1}
  * corpus record, not a locally re-declared lookalike — with the real {@link McpToolProcessor}, and
  * loads the resulting generated {@code ParityTools_echo_McpToolInvoker} through its real four-argument
  * {@code @Inject} constructor. This is the same construction path {@link
@@ -42,7 +42,7 @@ final class McpCrossTransportInputParityTestFixture {
         JavaFileObject toolSource = SourceFiles.inline(TOOLS_SOURCE_FQN, """
                 package com.example.parity;
 
-                import dev.vertique.input.processing.testkit.CrossTransportFixtureLevel1;
+                import dev.vertique.sanitization.processing.testkit.CrossTransportFixtureLevel1;
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
                 import jakarta.inject.Inject;

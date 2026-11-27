@@ -20,7 +20,7 @@ SPDX-License-Identifier: EUPL-1.2
     <name>Vertique Codegen Sanitization</name>
     <description>Annotation processor that generates {DTO}_InputProcessor walkers for REST request body
         DTOs annotated with @Sanitize/@Canonicalize, replacing the reflective Map traversal of the neutral input
-        processor (dev.vertique.input.processing) with direct field-name switches and pre-resolved chain
+        processor (dev.vertique.sanitization.processing) with direct field-name switches and pre-resolved chain
         constants.</description>
 
     <dependencies>
@@ -35,14 +35,14 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-codegen-core</artifactId>
         </dependency>
 
-        <!-- Compile: emitted code references the runtime SPI in dev.vertique.input.processing —
+        <!-- Compile: emitted code references the runtime SPI in dev.vertique.sanitization.processing —
              GeneratedInputProcessor, ChainResolver, InputTraversalContext,
              GeneratedInputProcessorDispatcher, GeneratedSupport, EffectiveInputPolicies. Also
-             pulls vertique-core (for the sanitization annotations and InputLocation)
+             pulls the sanitization annotations, and vertique-core (for InputLocation),
              transitively. -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
         </dependency>
 
         <!-- Compile: REST-rooted discovery only. RestBodyDiscovery imports
@@ -76,13 +76,6 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>jakarta.ws.rs</groupId>
             <artifactId>jakarta.ws.rs-api</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Built-in canonicalizers/sanitizers referenced by test fixtures -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-sanitization</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

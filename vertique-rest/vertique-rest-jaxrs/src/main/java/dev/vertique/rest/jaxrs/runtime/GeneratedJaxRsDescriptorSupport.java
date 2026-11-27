@@ -3,12 +3,12 @@
 
 package dev.vertique.rest.jaxrs.runtime;
 
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecurityPolicyViolationException;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.security.authz.AccessPolicyResolver;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;

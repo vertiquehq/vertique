@@ -6,8 +6,8 @@ package dev.vertique.codegen.jaxrs;
 import dev.vertique.codegen.jaxrs.stubs.PolicyLiteralAssertions;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.input.processing.PolicyAxis;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios;
+import dev.vertique.sanitization.processing.PolicyAxis;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios;
 import java.util.List;
 import java.util.stream.Stream;
 import javax.tools.JavaFileObject;
@@ -73,9 +73,9 @@ class JaxRsInvocationPolicyMatrixTest {
                 SourceFiles.inline("dev.vertique.test.samemethodconflict.SameMethodConflict", """
                         package dev.vertique.test.samemethodconflict;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -111,9 +111,9 @@ class JaxRsInvocationPolicyMatrixTest {
                 SourceFiles.inline("dev.vertique.test.sameparameterconflict.SameParameterConflict", """
                         package dev.vertique.test.sameparameterconflict;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.C;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.processing.testkit.C;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -146,8 +146,8 @@ class JaxRsInvocationPolicyMatrixTest {
                 SourceFiles.inline("dev.vertique.test.overrideskipconflict.IFoo", """
                         package dev.vertique.test.overrideskipconflict;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
                         import jakarta.ws.rs.QueryParam;
@@ -162,7 +162,7 @@ class JaxRsInvocationPolicyMatrixTest {
                 SourceFiles.inline("dev.vertique.test.overrideskipconflict.FooImpl", """
                         package dev.vertique.test.overrideskipconflict;
 
-                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.SkipSanitization;
                         import jakarta.annotation.security.PermitAll;
 
                         @PermitAll
@@ -191,7 +191,7 @@ class JaxRsInvocationPolicyMatrixTest {
                 SourceFiles.inline("dev.vertique.test.supertypeskipconflict.SupertypeSkipConflictBase", """
                         package dev.vertique.test.supertypeskipconflict;
 
-                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.SkipSanitization;
 
                         @SkipSanitization
                         public class SupertypeSkipConflictBase {
@@ -201,8 +201,8 @@ class JaxRsInvocationPolicyMatrixTest {
                 SourceFiles.inline("dev.vertique.test.supertypeskipconflict.SupertypeSkipConflict", """
                         package dev.vertique.test.supertypeskipconflict;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -266,8 +266,8 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("type-chain", List.of(), List.of("A"), """
                         package dev.vertique.test.typechain;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -288,8 +288,8 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("method-chain", List.of(), List.of("B"), """
                         package dev.vertique.test.methodchain;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -310,9 +310,9 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("method-overrides-type", List.of(), List.of("B"), """
                         package dev.vertique.test.methodoverridestype;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -334,9 +334,9 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("method-skip-over-type-chain", List.of(), List.of(), """
                         package dev.vertique.test.methodskipovertypechain;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -358,7 +358,7 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("method-skip-only", List.of(), List.of(), """
                         package dev.vertique.test.methodskiponly;
 
-                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.SkipSanitization;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -379,9 +379,9 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("parameter-overrides-type", List.of(), List.of("C"), """
                         package dev.vertique.test.parameteroverridestype;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
-                        import dev.vertique.input.processing.testkit.C;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.C;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -402,9 +402,9 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("parameter-skip-over-type-chain", List.of(), List.of(), """
                         package dev.vertique.test.parameterskipovertypechain;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -429,8 +429,8 @@ class JaxRsInvocationPolicyMatrixTest {
                                         "dev.vertique.test.interfacemethodchain.InterfaceMethodChainIface", """
                                         package dev.vertique.test.interfacemethodchain;
 
-                                        import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.B;
+                                        import dev.vertique.sanitization.Sanitize;
+                                        import dev.vertique.sanitization.processing.testkit.B;
                                         import jakarta.ws.rs.GET;
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
@@ -467,8 +467,8 @@ class JaxRsInvocationPolicyMatrixTest {
                                         "dev.vertique.test.superclasstypechain.SuperclassTypeChainBase", """
                                         package dev.vertique.test.superclasstypechain;
 
-                                        import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.A;
+                                        import dev.vertique.sanitization.Sanitize;
+                                        import dev.vertique.sanitization.processing.testkit.A;
 
                                         @Sanitize(A.class)
                                         public class SuperclassTypeChainBase {
@@ -500,7 +500,7 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("composed-annotation", List.of(), List.of("B"), """
                         package dev.vertique.test.composedannotation;
 
-                        import dev.vertique.input.processing.testkit.ComposedSanitize;
+                        import dev.vertique.sanitization.processing.testkit.ComposedSanitize;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -525,8 +525,8 @@ class JaxRsInvocationPolicyMatrixTest {
                                         "dev.vertique.test.interfaceparameterchain.InterfaceParameterChainIface", """
                                         package dev.vertique.test.interfaceparameterchain;
 
-                                        import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.C;
+                                        import dev.vertique.sanitization.Sanitize;
+                                        import dev.vertique.sanitization.processing.testkit.C;
                                         import jakarta.ws.rs.GET;
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
@@ -559,10 +559,10 @@ class JaxRsInvocationPolicyMatrixTest {
                 row("independent-axes", List.of("K"), List.of("B"), """
                         package dev.vertique.test.independentaxes;
 
-                        import dev.vertique.core.sanitization.Canonicalize;
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
-                        import dev.vertique.input.processing.testkit.K;
+                        import dev.vertique.sanitization.Canonicalize;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.K;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.GET;
                         import jakarta.ws.rs.Path;
@@ -588,7 +588,7 @@ class JaxRsInvocationPolicyMatrixTest {
                                         "dev.vertique.test.interfacemethodskip.InterfaceMethodSkipIface", """
                                         package dev.vertique.test.interfacemethodskip;
 
-                                        import dev.vertique.core.sanitization.SkipSanitization;
+                                        import dev.vertique.sanitization.SkipSanitization;
                                         import jakarta.ws.rs.GET;
                                         import jakarta.ws.rs.Path;
                                         import jakarta.ws.rs.QueryParam;
@@ -603,8 +603,8 @@ class JaxRsInvocationPolicyMatrixTest {
                                 SourceFiles.inline("dev.vertique.test.interfacemethodskip.InterfaceMethodSkip", """
                                         package dev.vertique.test.interfacemethodskip;
 
-                                        import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.A;
+                                        import dev.vertique.sanitization.Sanitize;
+                                        import dev.vertique.sanitization.processing.testkit.A;
                                         import jakarta.annotation.security.PermitAll;
 
                                         @PermitAll
@@ -628,8 +628,8 @@ class JaxRsInvocationPolicyMatrixTest {
                                         "dev.vertique.test.overridereplaceschain.OverrideReplacesChainBase", """
                                         package dev.vertique.test.overridereplaceschain;
 
-                                        import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.B;
+                                        import dev.vertique.sanitization.Sanitize;
+                                        import dev.vertique.sanitization.processing.testkit.B;
 
                                         public class OverrideReplacesChainBase {
                                             public OverrideReplacesChainBase() {}
@@ -644,8 +644,8 @@ class JaxRsInvocationPolicyMatrixTest {
                                         "dev.vertique.test.overridereplaceschain.OverrideReplacesChain", """
                                         package dev.vertique.test.overridereplaceschain;
 
-                                        import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.A;
+                                        import dev.vertique.sanitization.Sanitize;
+                                        import dev.vertique.sanitization.processing.testkit.A;
                                         import jakarta.annotation.security.PermitAll;
                                         import jakarta.ws.rs.GET;
                                         import jakarta.ws.rs.Path;

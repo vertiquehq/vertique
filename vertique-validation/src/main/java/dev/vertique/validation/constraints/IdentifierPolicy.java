@@ -3,7 +3,7 @@
 
 package dev.vertique.validation.constraints;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 
 /**
  * Character policy that permits safe identifier characters.

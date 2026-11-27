@@ -12,7 +12,7 @@ import dev.vertique.core.json.VertiqueJson;
  * consistency with the rest of the process.
  *
  * <p>Supports two-phase deserialization for pre-materialization processing by
- * {@link dev.vertique.input.processing.InputObjectProcessor}: first decode to an intermediate
+ * {@link dev.vertique.sanitization.processing.InputObjectProcessor}: first decode to an intermediate
  * map/list structure, apply canonicalization and sanitization, then materialize to the target type.
  */
 public class WebSocketMessageCodec {
@@ -33,7 +33,7 @@ public class WebSocketMessageCodec {
     /**
      * Decodes JSON text to an intermediate representation ({@code Map}, {@code List}, or scalar)
      * suitable for pre-materialization processing by
-     * {@link dev.vertique.input.processing.InputObjectProcessor}.
+     * {@link dev.vertique.sanitization.processing.InputObjectProcessor}.
      *
      * @param text the JSON text to decode; must not be {@code null}
      * @return the intermediate structure; never {@code null} for valid non-null JSON

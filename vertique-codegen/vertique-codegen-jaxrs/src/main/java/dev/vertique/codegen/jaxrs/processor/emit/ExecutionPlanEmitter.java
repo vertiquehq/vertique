@@ -20,6 +20,7 @@ import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
 import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -75,9 +76,9 @@ import javax.lang.model.util.Elements;
  * chains in {@link EffectiveParamContract#canonicalizers()} and
  * {@link EffectiveParamContract#sanitizers()}. Each chain already embeds the route-level baseline
  * overridden by any parameter-level {@code @Canonicalize}/{@code @Sanitize}/{@code @Skip*}
- * annotation: these are the chains {@link dev.vertique.input.processing.apt.ElementInvocationPolicies}
+ * annotation: these are the chains {@link dev.vertique.sanitization.processing.apt.ElementInvocationPolicies}
  * resolved at compile time, which are equal to what
- * {@link dev.vertique.input.processing.ReflectiveInvocationPolicies} derives at runtime for the same
+ * {@link dev.vertique.sanitization.processing.ReflectiveInvocationPolicies} derives at runtime for the same
  * declarations, so the emitted constant faithfully carries the plan's policies.
  *
  * <p>{@code BEAN_PARAM} parameters also emit a {@code POL_i} constant and pass it to
@@ -110,8 +111,7 @@ public final class ExecutionPlanEmitter {
             ClassName.get("dev.vertique.rest.jaxrs", "ResourceMethodMeta", "ParamMeta");
     private static final ClassName PARAM_SOURCE =
             ClassName.get("dev.vertique.rest.jaxrs", "ResourceMethodMeta", "ParamSource");
-    private static final ClassName EFFECTIVE_INPUT_POLICIES =
-            ClassName.get("dev.vertique.input.processing", "EffectiveInputPolicies");
+    private static final ClassName EFFECTIVE_INPUT_POLICIES = ClassName.get(EffectiveInputPolicies.class);
     private static final ClassName REQUEST_PRECONDITIONS =
             ClassName.get("dev.vertique.rest.core.request", "RequestPreconditions");
     private static final ClassName ROUTING_CONTEXT = ClassName.get("io.vertx.ext.web", "RoutingContext");
@@ -515,7 +515,7 @@ public final class ExecutionPlanEmitter {
     /**
      * Builds {@code private static final EffectiveInputPolicies POL{n}} field specs for each
      * parameter that uses a typed support-helper call requiring an
-     * {@link dev.vertique.input.processing.EffectiveInputPolicies} argument
+     * {@link dev.vertique.sanitization.processing.EffectiveInputPolicies} argument
      * ({@code PATH}, {@code QUERY}, {@code HEADER}, {@code COOKIE}, {@code FORM}, {@code BODY}).
      *
      * <p>Each constant is built from the pre-computed per-parameter policy chains in
@@ -915,7 +915,7 @@ public final class ExecutionPlanEmitter {
 
     /**
      * Returns {@code true} for parameter sources whose support-helper call requires an
-     * {@link dev.vertique.input.processing.EffectiveInputPolicies} argument — implying that a
+     * {@link dev.vertique.sanitization.processing.EffectiveInputPolicies} argument — implying that a
      * {@code POL{n}} constant must also be emitted.
      *
      * @param source the parameter source

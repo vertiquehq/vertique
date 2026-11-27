@@ -7,9 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dagger.Component;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.websocket.dagger.WebSocketModule;
 import dev.vertique.sanitization.SanitizationModule;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;

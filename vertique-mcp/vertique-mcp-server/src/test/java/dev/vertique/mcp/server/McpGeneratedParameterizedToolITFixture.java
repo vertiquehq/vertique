@@ -8,9 +8,7 @@ import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
-import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.correlation.CorrelationContextFactory;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -21,6 +19,8 @@ import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
+import dev.vertique.sanitization.Sanitizer;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
@@ -96,7 +96,7 @@ final class McpGeneratedParameterizedToolITFixture {
         JavaFileObject toolSource = SourceFiles.inline(TOOLS_SOURCE_FQN, """
                 package com.example.greeting;
 
-                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.Sanitize;
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
                 import io.vertx.core.Future;
@@ -120,8 +120,8 @@ final class McpGeneratedParameterizedToolITFixture {
         JavaFileObject sanitizerSource = SourceFiles.inline(SANITIZER_SOURCE_FQN, """
                 package com.example.greeting;
 
-                import dev.vertique.core.sanitization.InputValueContext;
-                import dev.vertique.core.sanitization.Sanitizer;
+                import dev.vertique.core.input.InputValueContext;
+                import dev.vertique.sanitization.Sanitizer;
                 import java.util.Locale;
 
                 public class UpperCaseSanitizer implements Sanitizer {

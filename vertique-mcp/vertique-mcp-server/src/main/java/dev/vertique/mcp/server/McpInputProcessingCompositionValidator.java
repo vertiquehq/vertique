@@ -4,7 +4,7 @@
 package dev.vertique.mcp.server;
 
 import dev.vertique.core.lifecycle.ComposeValidator;
-import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;

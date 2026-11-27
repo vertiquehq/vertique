@@ -6,7 +6,6 @@ package dev.vertique.rest.jaxrs;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -20,6 +19,7 @@ import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import io.vertx.ext.web.Router;
 import jakarta.annotation.Nullable;
 import java.util.List;

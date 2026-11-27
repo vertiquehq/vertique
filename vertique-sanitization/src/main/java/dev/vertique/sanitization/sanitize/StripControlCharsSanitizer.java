@@ -3,8 +3,8 @@
 
 package dev.vertique.sanitization.sanitize;
 
-import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.core.input.InputValueContext;
+import dev.vertique.sanitization.Sanitizer;
 
 /**
  * Sanitizer that removes C0 and C1 control characters from a string, preserving tab, line feed,

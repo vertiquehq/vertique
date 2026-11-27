@@ -4,11 +4,10 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ParameterViolation;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.context.RestContextResolution;
@@ -21,6 +20,7 @@ import dev.vertique.rest.jaxrs.request.DefaultBoundRequest;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport;
 import dev.vertique.rest.jaxrs.runtime.ResourceExecutionPlan;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;

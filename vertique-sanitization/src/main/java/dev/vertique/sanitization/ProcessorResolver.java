@@ -3,10 +3,6 @@
 
 package dev.vertique.sanitization;
 
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.CanonicalizerBinding;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.sanitization.SanitizerBinding;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.lang.reflect.InvocationTargetException;

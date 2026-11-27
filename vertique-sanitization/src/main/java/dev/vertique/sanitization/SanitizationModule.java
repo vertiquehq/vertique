@@ -7,11 +7,6 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.Multibinds;
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.CanonicalizerBinding;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.sanitization.SanitizerBinding;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.sanitization.canonicalize.CollapseWhitespaceCanonicalizer;
 import dev.vertique.sanitization.canonicalize.LowerCaseCanonicalizer;
 import dev.vertique.sanitization.canonicalize.NfcCanonicalizer;
@@ -20,10 +15,7 @@ import dev.vertique.sanitization.canonicalize.NormalizeLineEndingsCanonicalizer;
 import dev.vertique.sanitization.canonicalize.RemoveIdentifierSeparatorsCanonicalizer;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
 import dev.vertique.sanitization.canonicalize.UpperCaseCanonicalizer;
-import dev.vertique.sanitization.sanitize.BasicHtmlSanitizer;
-import dev.vertique.sanitization.sanitize.LinksHtmlSanitizer;
-import dev.vertique.sanitization.sanitize.RichTextHtmlSanitizer;
-import dev.vertique.sanitization.sanitize.StripAllHtmlSanitizer;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
 import jakarta.inject.Singleton;
 import java.util.Set;
@@ -53,11 +45,10 @@ import java.util.Set;
  * <p>Built-in sanitizers registered:
  * <ul>
  *   <li>{@link StripControlCharsSanitizer}</li>
- *   <li>{@link StripAllHtmlSanitizer}</li>
- *   <li>{@link BasicHtmlSanitizer}</li>
- *   <li>{@link LinksHtmlSanitizer}</li>
- *   <li>{@link RichTextHtmlSanitizer}</li>
  * </ul>
+ *
+ * <p>A sanitizer class with no binding is created through its public no-arg constructor on first
+ * use, which is how the HTML sanitizers in {@code vertique-sanitization-html} apply.
  *
  * <p>Extension points — add custom processors via:
  * <pre>{@code
@@ -121,12 +112,7 @@ public abstract class SanitizationModule {
     @Provides
     @ElementsIntoSet
     static Set<SanitizerBinding> builtInSanitizerBindings() {
-        return Set.of(
-                new SanitizerBinding(StripControlCharsSanitizer.class, new StripControlCharsSanitizer()),
-                new SanitizerBinding(StripAllHtmlSanitizer.class, new StripAllHtmlSanitizer()),
-                new SanitizerBinding(BasicHtmlSanitizer.class, new BasicHtmlSanitizer()),
-                new SanitizerBinding(LinksHtmlSanitizer.class, new LinksHtmlSanitizer()),
-                new SanitizerBinding(RichTextHtmlSanitizer.class, new RichTextHtmlSanitizer()));
+        return Set.of(new SanitizerBinding(StripControlCharsSanitizer.class, new StripControlCharsSanitizer()));
     }
 
     // --- Input processing wiring ---

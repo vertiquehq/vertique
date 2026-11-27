@@ -8,17 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.input.processing.InputObjectProcessor;
-import dev.vertique.input.processing.testkit.CrossTransportFixtureLevel1;
-import dev.vertique.input.processing.testkit.CrossTransportInputCorpus;
-import dev.vertique.input.processing.testkit.CrossTransportUppercaseSanitizer;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.convert.ConversionContexts;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.testkit.CrossTransportFixtureLevel1;
+import dev.vertique.sanitization.processing.testkit.CrossTransportInputCorpus;
+import dev.vertique.sanitization.processing.testkit.CrossTransportUppercaseSanitizer;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
  * in {@code vertique-mcp-server}. Neither test references the other directly — each asserts
  * independently against the one shared {@link CrossTransportInputCorpus#expectedProcessedInput()}
  * ground truth. Both modules depend on the exact same in-reactor
- * {@code dev.vertique:vertique-input-processing:test-jar} coordinate (not a published artifact) and
+ * {@code dev.vertique:vertique-sanitization:test-jar} coordinate (not a published artifact) and
  * reference the exact same corpus class, so the two assertions can only both pass if
  * REST's and MCP's real input-processing boundaries produce the same result for the same fixtures.
  */

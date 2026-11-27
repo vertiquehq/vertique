@@ -12,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.request.RequestValue;
@@ -24,6 +23,7 @@ import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport;
 import dev.vertique.rest.jaxrs.runtime.ResourceExecutionPlan;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.JsonArray;
 import io.vertx.ext.web.RoutingContext;

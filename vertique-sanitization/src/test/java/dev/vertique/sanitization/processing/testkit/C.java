@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.sanitization.processing.testkit;
+
+import dev.vertique.core.input.InputValueContext;
+import dev.vertique.sanitization.Sanitizer;
+
+/**
+ * Deterministic marker sanitizer used by {@link InvocationPolicyScenarios}; see
+ * {@link A} for the shared rationale.
+ */
+public final class C implements Sanitizer {
+
+    /**
+     * The pure transform this sanitizer applies.
+     *
+     * @param value the raw string value
+     * @return {@code value}, unchanged
+     */
+    public static String transform(String value) {
+        return value;
+    }
+
+    @Override
+    public String sanitize(String value, InputValueContext context) {
+        return transform(value);
+    }
+}

@@ -43,7 +43,7 @@ SPDX-License-Identifier: EUPL-1.2
         <!-- Compile: generated ExecutionPlans reference EffectiveInputPolicies -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
         </dependency>
 
         <!-- Jakarta security annotations: @PermitAll, @RolesAllowed, @DenyAll -->
@@ -85,12 +85,12 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Test: input-policy matrix stubs (A/B/C/K, ComposedSanitize) provided in-reactor (not
-             published) by vertique-input-processing's own test-jar (dev.vertique.input.processing.testkit) — shape
+             published) by vertique-sanitization's own test-jar (dev.vertique.sanitization.processing.testkit) — shape
              mirrors vertique-rest-jaxrs/pom.xml:57-63 (main-artifact dependency above stays compile-scope
              non-test-jar; this is a distinct test-jar artifact of the same module). -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>

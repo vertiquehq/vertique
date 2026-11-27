@@ -17,16 +17,12 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-sanitization</artifactId>
     <name>Vertique Sanitization</name>
-    <description>Built-in canonicalizers, sanitizers, and Dagger wiring for input processing</description>
+    <description>Transport-neutral input processing pipeline with built-in canonicalizers, sanitizers, and Dagger wiring</description>
 
     <dependencies>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.dagger</groupId>
@@ -44,16 +40,6 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-        </dependency>
-
-        <!-- OWASP HTML Sanitizer for HTML sanitizer implementations -->
-        <dependency>
-            <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
-            <artifactId>owasp-java-html-sanitizer</artifactId>
-        </dependency>
 
         <!-- Test -->
         <dependency>
@@ -61,5 +47,47 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Binds SLF4J at test scope so InvocationPolicyResolverTest/ReflectiveInvocationPoliciesTest
+             can capture the inherited-skip WARN through a logback ListAppender. -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Compile-time-only, test-scope harness for the processing.apt.ElementInvocationPolicies
+             probe processor. No cycle: vertique-codegen-test depends only on
+             vertique-codegen-core, compile-testing, opentest4j and javapoet — no dev.vertique edge leads
+             back to vertique-sanitization, and test scope is not transitive. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Attaches the dev.vertique.sanitization.processing.testkit fixture corpus as a test-jar so
+                 REST and MCP consume the exact same corpus at test scope instead of each authoring their
+                 own. In-reactor only: the test-jar is not a published artifact. Mirrors
+                 vertique-config-core's identical pattern. -->
+            <plugin>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>test-jar</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

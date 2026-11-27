@@ -22,6 +22,8 @@ import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
 import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -888,7 +890,7 @@ public final class JaxRsDescriptorEmitter {
      * @return the method spec
      */
     private MethodSpec buildResolveCanonicalizerChainHelper() {
-        ClassName canonicalizer = ClassName.get("dev.vertique.core.sanitization", "Canonicalizer");
+        ClassName canonicalizer = ClassName.get(Canonicalizer.class);
         ParameterizedTypeName classOfCanonicalizerQ = ParameterizedTypeName.get(
                 ClassName.get(Class.class), com.palantir.javapoet.WildcardTypeName.subtypeOf(canonicalizer));
         ParameterizedTypeName listOfCanonicalizerQ = ParameterizedTypeName.get(LIST, classOfCanonicalizerQ);
@@ -912,7 +914,7 @@ public final class JaxRsDescriptorEmitter {
      * @return the method spec
      */
     private MethodSpec buildResolveSanitizerChainHelper() {
-        ClassName sanitizer = ClassName.get("dev.vertique.core.sanitization", "Sanitizer");
+        ClassName sanitizer = ClassName.get(Sanitizer.class);
         ParameterizedTypeName classOfSanitizerQ = ParameterizedTypeName.get(
                 ClassName.get(Class.class), com.palantir.javapoet.WildcardTypeName.subtypeOf(sanitizer));
         ParameterizedTypeName listOfSanitizerQ = ParameterizedTypeName.get(LIST, classOfSanitizerQ);

@@ -5,7 +5,6 @@ package dev.vertique.rest.websocket;
 
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.RouterMount;
@@ -15,6 +14,7 @@ import dev.vertique.rest.security.IdentityPipelineFactory;
 import dev.vertique.rest.security.IdentityPipelineOptions;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.channel.ChannelIdentityManager;

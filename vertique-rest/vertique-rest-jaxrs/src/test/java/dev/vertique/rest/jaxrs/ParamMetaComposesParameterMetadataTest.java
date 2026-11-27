@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.codegen.ParameterMetadata;
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
+import dev.vertique.sanitization.Canonicalize;
+import dev.vertique.sanitization.Canonicalizer;
 import jakarta.ws.rs.QueryParam;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;

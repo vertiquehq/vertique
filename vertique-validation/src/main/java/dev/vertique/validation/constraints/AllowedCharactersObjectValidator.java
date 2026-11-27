@@ -3,8 +3,8 @@
 
 package dev.vertique.validation.constraints;
 
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.core.util.AnnotationResolver;
 import jakarta.annotation.Nullable;
 import jakarta.validation.ConstraintValidator;

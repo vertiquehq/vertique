@@ -8,11 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.CanonicalizerBinding;
-import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.sanitization.SanitizerBinding;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
 import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
 import java.util.Set;

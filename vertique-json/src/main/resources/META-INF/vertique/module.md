@@ -487,7 +487,7 @@ outside Jackson binding; it returns the prepared element node.
 
 Projects the **wire** property names a body is keyed by onto the **Java** property names the
 input-processing engine keys its per-field policies on. Implements
-`dev.vertique.core.sanitization.InputFieldNameResolver`.
+`dev.vertique.core.input.InputFieldNameResolver`.
 
 Input processing (`@Canonicalize` / `@Sanitize`) resolves each field's declared chain by the Java
 property name, while an intermediate parsed from the wire is keyed by whatever Jackson published —
@@ -496,7 +496,7 @@ property name, while an intermediate parsed from the wire is keyed by whatever J
 the projection, a policy declared on a renamed field silently never runs. The resolver lives here
 because the projection is a pure function of the `ObjectMapper` that binds the body, so REST and
 WebSocket share one implementation rather than each deriving their own. Because the contract is
-declared in `vertique-core`, implementing it adds no dependency on `vertique-input-processing` —
+declared in `vertique-core`, implementing it adds no dependency on `vertique-sanitization` —
 this module never sees the processing engine.
 
 ```java
@@ -532,7 +532,7 @@ resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projec
 | Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
 | Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
 | When the projection is composed | `precompute(Class)` composes it for **one** owner type at registration. It is the `InputFieldNameResolver` SPI hook the input-processing engine calls — once per owner type it may pass to `logicalName` while processing a declared body or message type — from `InputObjectProcessor.precomputeFieldNameResolution(Type, InputFieldNameResolver)`. So `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
-| Which types get composed | Decided by the engine, not by this module: the resolver composes exactly the class it is handed and walks no type graph of its own. See the `vertique-input-processing` reference for the owner set `precomputeFieldNameResolution` prepares and the shapes it cannot reach statically |
+| Which types get composed | Decided by the engine, not by this module: the resolver composes exactly the class it is handed and walks no type graph of its own. See the `vertique-sanitization` reference for the owner set `precomputeFieldNameResolution` prepares and the shapes it cannot reach statically |
 | Identity short circuit | When the *computed* projection maps every wire name onto itself, `logicalName` returns the wire name directly and no per-field lookup happens |
 
 Nested types are covered, but that coverage is the engine's postcondition rather than this module's:

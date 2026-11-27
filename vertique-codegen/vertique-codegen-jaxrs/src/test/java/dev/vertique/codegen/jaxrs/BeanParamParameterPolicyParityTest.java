@@ -35,8 +35,8 @@ class BeanParamParameterPolicyParityTest {
                 SourceFiles.inline("dev.vertique.test.bpp.BeanParamSanitizedResource", """
                         package dev.vertique.test.bpp;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.BeanParam;
                         import jakarta.ws.rs.GET;
@@ -81,9 +81,9 @@ class BeanParamParameterPolicyParityTest {
                 SourceFiles.inline("dev.vertique.test.bpp.DualBeanParamResource", """
                         package dev.vertique.test.bpp;
 
-                        import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.Sanitize;
+                        import dev.vertique.sanitization.SkipSanitization;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import jakarta.annotation.security.PermitAll;
                         import jakarta.ws.rs.BeanParam;
                         import jakarta.ws.rs.GET;

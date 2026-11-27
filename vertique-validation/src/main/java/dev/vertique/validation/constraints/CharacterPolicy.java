@@ -3,7 +3,7 @@
 
 package dev.vertique.validation.constraints;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 
 /**
  * Defines a character-set validation policy that rejects input containing disallowed characters.

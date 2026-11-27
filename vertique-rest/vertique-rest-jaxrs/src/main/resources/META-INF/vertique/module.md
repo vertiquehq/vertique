@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.jaxrs`
 > **Artifact:** `vertique-rest-jaxrs`
-> **Depends on:** rest-core, security-core, input-processing, json
+> **Depends on:** rest-core, security-core, sanitization, json
 
 The JAX-RS routing runtime. `vertique-rest-jaxrs` turns annotated resource classes into plain Vert.x
 routes, extracts and coerces method arguments, invokes the resource method, and dispatches whatever it
@@ -267,7 +267,7 @@ carve-out documented on `RestRequestCompletedEvent`.
 ```
 1. Validate      RequestValidationStrategy gate (annotation-synthesized schema by default)
 2. Decode        RequestBodyDecoder chain → intermediate Map/List
-3. Canonicalize  InputObjectProcessor (dev.vertique.input.processing): route-level → object-level
+3. Canonicalize  InputObjectProcessor (dev.vertique.sanitization.processing): route-level → object-level
    + Sanitize    → field-level canonicalizers, then route-level → object-level → field-level sanitizers
 4. Validate      BeanValidator.checkParameters()      (only when ValidationModule is present)
 5. Invoke        the resource method, with processed and validated arguments
@@ -378,6 +378,8 @@ public record CreateUserRequest(
 // {"display_name": "<b>ada</b>"} -> displayName == "ada"
 ```
 
+`StripAllHtmlSanitizer` comes from `dev.vertique.sanitization.html`; add the `dev.vertique:vertique-sanitization-html` dependency to use it.
+
 **Three shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed
 field, and a concrete `@JsonTypeInfo` subtype's own fields all leave the field with its inherited
 route- and object-level chains and nothing else. Registration refuses a policy it can see stranded
@@ -387,7 +389,7 @@ field cannot be seen, so nothing fails and nothing is logged and it stays invisi
 that mattered gets through. A renamed key, a key a codec
 promoted out of an `@JsonUnwrapped` member, and a key matched case-insensitively are all covered
 now, and a governed field the mapper binds under a different property name — `@Sanitize` on
-`streetName` behind `setStreet` — fails registration rather than passing silently. The `vertique-input-processing` reference documents each shape, what still applies, and how to
+`streetName` behind `setStreet` — fails registration rather than passing silently. The `vertique-sanitization` reference documents each shape, what still applies, and how to
 stay inside the covered set.
 
 ### JSON profiles are symmetric
@@ -2215,7 +2217,7 @@ resolved body mapper. **The engine decides which types get composed**, not the r
 hands each body parameter's declared type to `InputObjectProcessor.precomputeFieldNameResolution`,
 which prepares the resolver for every owner type its own descent may consult for that body. The
 postcondition is that no statically knowable owner is left to introspect on the request path — the
-`vertique-input-processing` reference documents the owner set and its bounds in full.
+`vertique-sanitization` reference documents the owner set and its bounds in full.
 
 Two startup failures follow, both of which previously surfaced per request:
 
@@ -2320,7 +2322,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `@RestApplication` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once one or more are declared, one mount per active application instead — see [`@RestApplication`](#restapplication) |
 | `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId rule and its shared-id WARN, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
-| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation` (`OperationSchemaSource`), `validation` (`BeanValidator`), `sanitization` (`InputObjectProcessor`), and the authorization engine, `SecurityAuthzModule` in `vertique-security-runtime` (`ActionRegistry`, `Authorizer`) |
+| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.sanitization.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation` (`OperationSchemaSource`), `validation` (`BeanValidator`), `sanitization` (`InputObjectProcessor`), and the authorization engine, `SecurityAuthzModule` in `vertique-security-runtime` (`ActionRegistry`, `Authorizer`) |
 | `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
@@ -2424,9 +2426,9 @@ These types left this module and have no forwarding type here. Change the import
 | Dependency | Why |
 |---|---|
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
-| `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
+| `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
-| `dev.vertique:vertique-json` | the `JsonMapperProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
+| `dev.vertique:vertique-json` | the `JsonMapperProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.input.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 

@@ -13,7 +13,8 @@ SPDX-License-Identifier: EUPL-1.2
 `vertique-core` is the vocabulary every other Vertique module is written against. It supplies the
 Vert.x dependency-injection seam, the framework exception hierarchy, the typed-configuration
 contract, the extension-ordering and lifecycle contracts, the event-bus dispatch types, and the
-shared annotation vocabularies for validation, sanitization, and JSON profiles.
+shared annotation vocabularies for validation and JSON profiles, and the input context types the
+sanitization module builds on.
 
 Core is almost entirely *declaration*. Most of what it defines is implemented elsewhere: the
 context holder ships in `dev.vertique:vertique-context`, the config parser in
@@ -32,8 +33,8 @@ starter or feature module. Depend on it **directly** when:
 - you throw or catch framework exceptions and want the semantic roots that drive HTTP mapping;
 - you parse a configuration section into a typed record through `ConfigParser`;
 - you implement a framework extension point declared here — a health check, a lifecycle step, a
-  `JsonMapperProfile`, or a canonicalizer;
-- you annotate an operation with `@ValidateWith`, `@Canonicalize`, `@Sanitize`, or `@JsonProfile`.
+  `JsonMapperProfile`, or an `InputFieldNameResolver`;
+- you annotate an operation with `@ValidateWith` or `@JsonProfile`.
 
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
 `ConfigParser`, `vertique-validation` for `BeanValidator`, `vertique-json` for the JSON profile
@@ -957,49 +958,14 @@ application with `ManagementModule` is not `UP` before every verticle phase, and
 completed. It stays `UP` afterwards; a failed startup is torn down and never reaches it. A host that includes the
 module but never runs the lifecycle runner stays not-ready. The `@Readiness Set<HealthCheck>` always holds `startup`, so an in-process evaluation of that set before the gate step has run, including from inside startup, reports `DOWN`.
 
-### `Canonicalizer` and `Sanitizer`
+### `InputValueContext` and `InputLocation`
 
-String normalization (semantics-preserving) and content removal (not semantics-preserving) applied
-to inbound values. Implementations must be stateless and thread-safe; a `Canonicalizer` must also be
-deterministic and idempotent.
+`vertique-core` declares the context every input processor receives, in `dev.vertique.core.input`.
+The `Canonicalizer` and `Sanitizer` contracts, their binding records, and the `@Canonicalize`,
+`@Sanitize`, `@SkipCanonicalization` and `@SkipSanitization` annotations are declared in
+`vertique-sanitization` (`dev.vertique.sanitization`); see that module's reference.
 
-```java
-@FunctionalInterface
-public interface Canonicalizer {
-    String canonicalize(String value, InputValueContext context);
-}
-
-@FunctionalInterface
-public interface Sanitizer {
-    String sanitize(String value, InputValueContext context);
-}
-```
-
-Register each implementation as a binding record keyed by its own type — the `type()` component is
-the lookup key used to resolve the classes named in `@Canonicalize` / `@Sanitize`. Declare the chain
-with those annotations, both `@Target({TYPE, FIELD, RECORD_COMPONENT, PARAMETER, METHOD,
-ANNOTATION_TYPE})`, so they also compose into custom annotations:
-
-```java
-@Provides @IntoSet
-static CanonicalizerBinding trimCanonicalizer(TrimCanonicalizer c) {
-    return new CanonicalizerBinding(TrimCanonicalizer.class, c);
-}
-
-@Path("/users")                                            // type-level: applies to the whole resource
-@Canonicalize({TrimCanonicalizer.class, NfkcCanonicalizer.class})
-public class UserResource { }
-
-public record CreateUserRequest(                           // component-level
-        @Canonicalize(TrimCanonicalizer.class)
-        @Sanitize(BasicHtmlSanitizer.class)
-        String bio) {}
-```
-
-A `Sanitizer` is registered the same way, through `SanitizerBinding`.
-
-`@SkipCanonicalization` and `@SkipSanitization` opt an element out of processing inherited from an
-enclosing type. `InputValueContext` is a `record (InputLocation location, String path, String
+`InputValueContext` is a `record (InputLocation location, String path, String
 logicalName, Class<?> ownerType)`; `InputLocation` is `PATH`, `QUERY`, `HEADER`, `COOKIE`, `FORM`,
 `BODY`, `BEAN_PARAM`, `PAYLOAD`. `PAYLOAD` marks values from message or protocol payloads (e.g.
 WebSocket messages); REST request bodies remain `BODY`. A custom `Canonicalizer`, `Sanitizer`, or
@@ -1066,8 +1032,8 @@ Policies declared with `@Canonicalize` / `@Sanitize` are keyed by the Java prope
 intermediate parsed from the wire is keyed by whatever the codec published —
 `@JsonProperty("user_name")`, a `SNAKE_CASE` naming strategy, or a `@JsonAlias`. Without a
 projection between the two, a policy declared on a renamed field silently never runs. This contract
-is the seam that closes that gap, and declaring it here — beside `InputLocation`, `Canonicalizer`
-and `Sanitizer` — is what keeps both `vertique-input-processing` and `vertique-sanitization` free of
+is the seam that closes that gap, and declaring it here — beside `InputLocation` and
+`InputValueContext` — is what keeps `vertique-sanitization` free of
 any codec dependency: each codec-backed implementation lives in the module that already owns that
 codec (`JacksonFieldNameResolver` in `dev.vertique:vertique-json`).
 

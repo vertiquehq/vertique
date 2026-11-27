@@ -15,18 +15,18 @@ import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.ChainResolver;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.GeneratedInputProcessor;
-import dev.vertique.input.processing.GeneratedInputProcessorDispatcher;
-import dev.vertique.input.processing.InputObjectProcessor;
-import dev.vertique.input.processing.InputTraversalContext;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+import dev.vertique.sanitization.processing.ChainResolver;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.GeneratedInputProcessor;
+import dev.vertique.sanitization.processing.GeneratedInputProcessorDispatcher;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.InputTraversalContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -64,7 +64,7 @@ class SanitizationProcessorRoundtripTest {
     /** Nested DTO with a @Canonicalize-annotated field. Used by the full-fixture test. */
     private static final JavaFileObject COMMENT_DTO = SourceFiles.inline("com.example.rt.CommentDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class CommentDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -75,9 +75,9 @@ class SanitizationProcessorRoundtripTest {
     /** Top-level DTO exercising all field kinds. */
     private static final JavaFileObject ARTICLE_DTO = SourceFiles.inline("com.example.rt.ArticleDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Canonicalize;
-            import dev.vertique.core.sanitization.Sanitize;
-            import dev.vertique.core.sanitization.SkipCanonicalization;
+            import dev.vertique.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Sanitize;
+            import dev.vertique.sanitization.SkipCanonicalization;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             import dev.vertique.sanitization.canonicalize.LowerCaseCanonicalizer;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
@@ -114,8 +114,8 @@ class SanitizationProcessorRoundtripTest {
 
     private static final JavaFileObject SIMPLE_DTO = SourceFiles.inline("com.example.rt.SimpleDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Canonicalize;
-            import dev.vertique.core.sanitization.SkipCanonicalization;
+            import dev.vertique.sanitization.Canonicalize;
+            import dev.vertique.sanitization.SkipCanonicalization;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class SimpleDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -146,7 +146,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject OPT_COMMENT_DTO = SourceFiles.inline("com.example.rt.OptCommentDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class OptCommentDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -162,7 +162,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject OPT_PROFILE_DTO = SourceFiles.inline("com.example.rt.OptProfileDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             import java.util.List;
             import java.util.Optional;
@@ -237,7 +237,7 @@ class SanitizationProcessorRoundtripTest {
     /** Annotated DTO that must <em>not</em> become reachable through an unbounded wildcard. */
     private static final JavaFileObject NEG_COMMENT_DTO = SourceFiles.inline("com.example.rt.NegCommentDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class NegCommentDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -281,7 +281,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject ARRAY_COMMENT_DTO = SourceFiles.inline("com.example.rt.ArrayCommentDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class ArrayCommentDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -296,7 +296,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject ARRAY_ARTICLE_DTO = SourceFiles.inline("com.example.rt.ArrayArticleDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class ArrayArticleDto {
                 public ArrayCommentDto[] comments;
@@ -329,7 +329,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject NESTED_TAG_DTO = SourceFiles.inline("com.example.rt.NestedTagDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class NestedTagDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -346,7 +346,7 @@ class SanitizationProcessorRoundtripTest {
     private static final JavaFileObject NESTED_CONTAINER_DTO =
             SourceFiles.inline("com.example.rt.NestedContainerDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             import java.util.List;
             import java.util.Set;
@@ -380,7 +380,7 @@ class SanitizationProcessorRoundtripTest {
     private static final JavaFileObject RENAMED_ADDRESS_DTO =
             SourceFiles.inline("com.example.rt.RenamedAddressDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class RenamedAddressDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -396,7 +396,7 @@ class SanitizationProcessorRoundtripTest {
     private static final JavaFileObject RENAMED_PROFILE_DTO =
             SourceFiles.inline("com.example.rt.RenamedProfileDto", """
             package com.example.rt;
-            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.Canonicalize;
             import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
             public class RenamedProfileDto {
                 @Canonicalize(TrimCanonicalizer.class)
@@ -668,7 +668,7 @@ class SanitizationProcessorRoundtripTest {
                         public Object continueAt(
                                 Object inter,
                                 Class<?> type,
-                                dev.vertique.input.processing.InputTraversalContext ctx,
+                                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                                 InputLocation location,
                                 String fieldPath,
                                 Class<?> ownerType) {
@@ -678,7 +678,7 @@ class SanitizationProcessorRoundtripTest {
                         @Override
                         public Object walkUnknown(
                                 Object inter,
-                                dev.vertique.input.processing.InputTraversalContext ctx,
+                                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                                 InputLocation location,
                                 String fieldPath,
                                 Class<?> ownerType) {
@@ -1158,7 +1158,7 @@ class SanitizationProcessorRoundtripTest {
         public Object continueAt(
                 Object intermediate,
                 Class<?> targetType,
-                dev.vertique.input.processing.InputTraversalContext ctx,
+                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                 InputLocation location,
                 String fieldPath,
                 Class<?> ownerType) {
@@ -1168,7 +1168,7 @@ class SanitizationProcessorRoundtripTest {
         @Override
         public Object walkUnknown(
                 Object intermediate,
-                dev.vertique.input.processing.InputTraversalContext ctx,
+                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                 InputLocation location,
                 String fieldPath,
                 Class<?> ownerType) {
@@ -1473,7 +1473,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject CONF_LEAF_DTO = SourceFiles.inline("com.example.conf.ConfLeafDto", """
             package com.example.conf;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class ConfLeafDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -1496,7 +1496,7 @@ class SanitizationProcessorRoundtripTest {
     /** Target of the accessor-less field: reachable only through a {@code private} field with no accessor. */
     private static final JavaFileObject CONF_NESTED_DTO = SourceFiles.inline("com.example.conf.ConfNestedDto", """
             package com.example.conf;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class ConfNestedDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -1558,7 +1558,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject CONF_ROOT_DTO = SourceFiles.inline("com.example.conf.ConfRootDto", """
             package com.example.conf;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             import java.util.List;
             import java.util.Map;
@@ -1612,7 +1612,7 @@ class SanitizationProcessorRoundtripTest {
 
     private static final JavaFileObject STRAND_LEAF_DTO = SourceFiles.inline("com.example.strand.StrandLeafDto", """
             package com.example.strand;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class StrandLeafDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -1655,7 +1655,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject ISOLATED_LEAF_DTO = SourceFiles.inline("com.example.iso.IsoLeafDto", """
             package com.example.iso;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class IsoLeafDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -1715,7 +1715,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject WILD_LEAF_DTO = SourceFiles.inline("com.example.wild.WildLeafDto", """
             package com.example.wild;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class WildLeafDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -1775,7 +1775,7 @@ class SanitizationProcessorRoundtripTest {
      */
     private static final JavaFileObject NONGEN_LEAF_DTO = SourceFiles.inline("com.example.ng.NonGenLeafDto", """
             package com.example.ng;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class NonGenLeafDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -1836,7 +1836,7 @@ class SanitizationProcessorRoundtripTest {
     private static final JavaFileObject OWNERBOUND_LEAF_DTO =
             SourceFiles.inline("com.example.ob.OwnerBoundLeafDto", """
             package com.example.ob;
-            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.Sanitize;
             import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
             public class OwnerBoundLeafDto {
                 @Sanitize(StripControlCharsSanitizer.class)
@@ -2427,18 +2427,18 @@ class SanitizationProcessorRoundtripTest {
     private static ChainResolver buildChainResolver() {
         return (value, canonicalizers, sanitizers, ctx) -> {
             String result = value;
-            for (Class<? extends dev.vertique.core.sanitization.Canonicalizer> cls : canonicalizers) {
+            for (Class<? extends dev.vertique.sanitization.Canonicalizer> cls : canonicalizers) {
                 try {
-                    dev.vertique.core.sanitization.Canonicalizer c =
+                    dev.vertique.sanitization.Canonicalizer c =
                             cls.getDeclaredConstructor().newInstance();
                     result = c.canonicalize(result, ctx);
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to instantiate canonicalizer " + cls.getName(), e);
                 }
             }
-            for (Class<? extends dev.vertique.core.sanitization.Sanitizer> cls : sanitizers) {
+            for (Class<? extends dev.vertique.sanitization.Sanitizer> cls : sanitizers) {
                 try {
-                    dev.vertique.core.sanitization.Sanitizer s =
+                    dev.vertique.sanitization.Sanitizer s =
                             cls.getDeclaredConstructor().newInstance();
                     result = s.sanitize(result, ctx);
                 } catch (Exception e) {

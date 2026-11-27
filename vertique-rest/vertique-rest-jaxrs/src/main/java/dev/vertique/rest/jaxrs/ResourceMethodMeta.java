@@ -5,10 +5,10 @@ package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.core.codegen.ReflectiveParameterMetadata;
-import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.runtime.ResourceExecutionPlan;
+import dev.vertique.sanitization.Canonicalizer;
+import dev.vertique.sanitization.Sanitizer;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;

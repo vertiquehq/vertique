@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.sanitization.processing.testkit;
+
+import dev.vertique.core.input.InputValueContext;
+import dev.vertique.sanitization.Canonicalizer;
+
+/**
+ * Deterministic marker canonicalizer used by {@link InvocationPolicyScenarios};
+ * see {@link A} for the shared rationale, applied to the {@code CANONICALIZE} axis.
+ */
+public final class K implements Canonicalizer {
+
+    /**
+     * The pure transform this canonicalizer applies.
+     *
+     * @param value the raw string value
+     * @return {@code value}, unchanged
+     */
+    public static String transform(String value) {
+        return value;
+    }
+
+    @Override
+    public String canonicalize(String value, InputValueContext context) {
+        return transform(value);
+    }
+}

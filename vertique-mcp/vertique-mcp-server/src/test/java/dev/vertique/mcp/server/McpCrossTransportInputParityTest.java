@@ -5,8 +5,8 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.input.processing.testkit.CrossTransportInputCorpus;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
+import dev.vertique.sanitization.processing.testkit.CrossTransportInputCorpus;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 /**
  * {@code shouldMatchRestParityOnTheSharedCorpus}, MCP half.
  *
- * <p>Runs {@link dev.vertique.input.processing.testkit.CrossTransportInputCorpus#rawInput()} through
+ * <p>Runs {@link dev.vertique.sanitization.processing.testkit.CrossTransportInputCorpus#rawInput()} through
  * the real generated MCP stage-2 boundary — {@code prepare()} on a real, compiled generated invoker
  * (see {@link McpCrossTransportInputParityTestFixture}) — and asserts the resulting processed argument
  * tree equals the corpus's shared {@code expectedProcessedInput()}.
@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
  * in {@code vertique-rest-jaxrs}. Neither test references the other directly — each asserts
  * independently against the one shared {@link CrossTransportInputCorpus#expectedProcessedInput()}
  * ground truth, computed once in the corpus itself. Both modules depend on the exact same in-reactor
- * {@code dev.vertique:vertique-input-processing:test-jar} coordinate (not a published artifact) and
+ * {@code dev.vertique:vertique-sanitization:test-jar} coordinate (not a published artifact) and
  * reference the exact same corpus class, so the two assertions can only both pass if MCP's and REST's
  * real input-processing boundaries produce the same result for the same fixtures — a corpus authored
  * twice would let the two halves silently drift apart undetected, which sharing one corpus rules out.

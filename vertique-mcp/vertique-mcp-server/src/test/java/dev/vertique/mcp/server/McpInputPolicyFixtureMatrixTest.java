@@ -5,13 +5,13 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
+import dev.vertique.sanitization.Sanitize;
+import dev.vertique.sanitization.Sanitizer;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  * real generated invoker.
  *
  * <p><strong>This fixture matrix is authored locally for this module.</strong> It is separate from
- * the shared cross-transport fixture corpus in {@code vertique-input-processing}'s attached
+ * the shared cross-transport fixture corpus in {@code vertique-sanitization}'s attached
  * test-jar, which {@code vertique-mcp-server} consumes at test scope only (in-reactor, not a
  * published artifact) and which {@code McpCrossTransportInputParityTest} uses for the REST parity
  * claim. This test proves the half that does not need that corpus: that the production traversal

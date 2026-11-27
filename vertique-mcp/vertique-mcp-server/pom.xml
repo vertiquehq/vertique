@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rate-limit-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-resilience</artifactId></dependency>
         <!-- Mandatory InputObjectProcessor composition binding. -->
-        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-input-processing</artifactId></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-sanitization</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json-schema</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-json-schema</artifactId></dependency>
@@ -70,7 +70,7 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger-compiler</artifactId><version>${dagger.version}</version><scope>test</scope></dependency>
         <!-- The cross-transport input-processing fixture corpus, in-reactor only (not published),
              consumed identically by vertique-rest-jaxrs so both transports read the same artifact. -->
-        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-input-processing</artifactId><version>${project.version}</version><type>test-jar</type><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-sanitization</artifactId><version>${project.version}</version><type>test-jar</type><scope>test</scope></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId></plugin></plugins></build>
 </project>

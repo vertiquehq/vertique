@@ -58,7 +58,6 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-bootstrap</module>
         <module>vertique-launcher</module>
         <module>vertique-localization</module>
-        <module>vertique-input-processing</module>
         <module>vertique-rest</module>
         <module>vertique-mcp</module>
         <module>vertique-context</module>
@@ -77,6 +76,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-application-test</module>
         <module>vertique-validation</module>
         <module>vertique-sanitization</module>
+        <module>vertique-sanitization-html</module>
         <module>vertique-management</module>
         <module>vertique-inbox-outbox</module>
         <module>vertique-workflow</module>
@@ -582,7 +582,7 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
-                <artifactId>vertique-input-processing</artifactId>
+                <artifactId>vertique-sanitization-html</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
