@@ -3,10 +3,12 @@
 
 package dev.vertique.core.json;
 
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.EncodeException;
@@ -16,6 +18,10 @@ import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.json.jackson.JacksonCodec;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.Reader;
+import java.io.Writer;
 import java.util.List;
 import java.util.Map;
 
@@ -25,7 +31,8 @@ import java.util.Map;
  * <p>Vert.x selects this codec through the {@code io.vertx.core.spi.JsonFactory} service loader (see
  * {@link VertiqueJsonFactory}), so {@code Json.encode}, {@code Json.decodeValue},
  * {@code new JsonObject(String|Buffer)}, {@code JsonObject.encode()}, {@code JsonObject.mapTo} and
- * {@code JsonObject.mapFrom} all resolve here. Until {@link VertiqueJson#install} is called the
+ * {@code JsonObject.mapFrom} and the stream, reader and writer forms ({@code fromStream},
+ * {@code fromReader}, {@code toStream}, {@code toWriter}) all resolve here. Until {@link VertiqueJson#install} is called the
  * delegate is Vert.x's own {@link DatabindCodec#mapper()}, which makes this codec byte-identical to
  * the stock {@code DatabindCodec} for every input; afterwards the same operations run on the
  * installed profile's mapper.
@@ -240,7 +247,102 @@ final class VertiqueJsonCodec extends JacksonCodec {
         }
     }
 
+    // --- JsonCodec: streams, readers and writers ---
+
+    /**
+     * Decodes one JSON value from {@code stream} into {@code clazz} on the delegate, as
+     * {@code DatabindCodec.fromStream} does on Vert.x's mapper: the parser comes from the delegate's
+     * own {@code JsonFactory}, never closes the caller's stream, and the trailing-token check applies.
+     * The one-argument {@code fromStream(InputStream)} reaches this method with {@code Object.class}.
+     *
+     * @param <T> the target type
+     * @param stream the JSON input; left open
+     * @param clazz the target type
+     * @return the decoded value
+     * @throws DecodeException if the input is malformed, has trailing content or cannot be bound
+     */
+    @Override
+    public <T> T fromStream(InputStream stream, Class<T> clazz) throws DecodeException {
+        ObjectMapper mapper = mapper();
+        JsonParser parser;
+        try {
+            parser = mapper.getFactory().createParser(stream).disable(JsonParser.Feature.AUTO_CLOSE_SOURCE);
+        } catch (IOException e) {
+            throw new DecodeException("Failed to decode:" + e.getMessage(), e);
+        }
+        return fromParser(mapper, parser, clazz);
+    }
+
+    /**
+     * Decodes one JSON value from {@code reader} into {@code clazz} on the delegate, with the same
+     * parser rules as {@link #fromStream(InputStream, Class)}. The one-argument
+     * {@code fromReader(Reader)} reaches this method with {@code Object.class}.
+     *
+     * @param <T> the target type
+     * @param reader the JSON input; left open
+     * @param clazz the target type
+     * @return the decoded value
+     * @throws DecodeException if the input is malformed, has trailing content or cannot be bound
+     */
+    @Override
+    public <T> T fromReader(Reader reader, Class<T> clazz) throws DecodeException {
+        ObjectMapper mapper = mapper();
+        JsonParser parser;
+        try {
+            parser = mapper.getFactory().createParser(reader).disable(JsonParser.Feature.AUTO_CLOSE_SOURCE);
+        } catch (IOException e) {
+            throw new DecodeException("Failed to decode:" + e.getMessage(), e);
+        }
+        return fromParser(mapper, parser, clazz);
+    }
+
+    /**
+     * Writes {@code object} as JSON to {@code stream} on the delegate, as {@code DatabindCodec.toStream}
+     * does on Vert.x's mapper: the caller's stream is neither closed nor flushed.
+     *
+     * @param object the value to encode
+     * @param stream the target; left open and unflushed
+     * @throws EncodeException if encoding fails
+     */
+    @Override
+    public void toStream(Object object, OutputStream stream) throws EncodeException {
+        try {
+            streamWriter(mapper()).writeValue(stream, object);
+        } catch (Exception e) {
+            throw new EncodeException("Failed to encode as JSON: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Writes {@code object} as JSON to {@code writer} on the delegate, with the same rules as
+     * {@link #toStream(Object, OutputStream)}.
+     *
+     * @param object the value to encode
+     * @param writer the target; left open and unflushed
+     * @throws EncodeException if encoding fails
+     */
+    @Override
+    public void toWriter(Object object, Writer writer) throws EncodeException {
+        try {
+            streamWriter(mapper()).writeValue(writer, object);
+        } catch (Exception e) {
+            throw new EncodeException("Failed to encode as JSON: " + e.getMessage());
+        }
+    }
+
     // --- Internals ---
+
+    /**
+     * Returns a writer on {@code mapper} that neither closes nor flushes the caller's target.
+     *
+     * @param mapper the mapper to write with
+     * @return the configured writer
+     */
+    private static ObjectWriter streamWriter(ObjectMapper mapper) {
+        return mapper.writer()
+                .without(JsonGenerator.Feature.AUTO_CLOSE_TARGET)
+                .without(JsonGenerator.Feature.FLUSH_PASSED_TO_STREAM);
+    }
 
     /**
      * Creates a parser for JSON text from {@code mapper}'s own factory, so the installed profile's

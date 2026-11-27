@@ -753,6 +753,11 @@ in use); dropping them silently leaves Vert.x on its own codec. A container that
 from that classloader has the same effect. `ownsCodec()` reports the outcome, and the install
 step fails the boot when it is `false`.
 
+**Streams, readers and writers.** `fromStream`, `fromReader`, `toStream` and `toWriter` (including
+the one-argument `fromStream(InputStream)` and `fromReader(Reader)`) run on the installed mapper's
+parser and writer, like the string and buffer forms. They never close the caller's stream, reader or
+writer, and the writing forms do not flush it.
+
 **Outside the installed-mapper claim.** Vert.x's `DatabindCodec.createParser`/`fromParser` static
 helpers, and the `JacksonCodec.fromString(String)`/`fromBuffer(Buffer)` streaming overloads that
 return `Object`, are bound to Vert.x's own raw mapper and factory. Code that must use the installed

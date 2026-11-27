@@ -25,8 +25,11 @@ import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.json.jackson.JacksonCodec;
+import java.io.ByteArrayInputStream;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -485,7 +488,8 @@ class VertiqueStrictProfileTest {
      * accepting it. That exclusion is the codec's own documented contract; it is pinned here so a
      * claim of process-wide rejection cannot silently widen.
      *
-     * <p>The five delegated entry points reject; the three excluded ones keep accepting.
+     * <p>The nine delegated entry points reject (the five string, buffer and value forms and the four
+     * stream and reader forms); the three excluded ones keep accepting.
      */
     @Test
     @DisplayName("An installed vertique-strict codec rejects a repeated key only in its delegated decode methods")
@@ -499,7 +503,7 @@ class VertiqueStrictProfileTest {
             VertiqueJson.install(VERTIQUE_STRICT_ID, strictMapper());
             JacksonCodec codec = (JacksonCodec) Json.CODEC;
 
-            // assertAll, so the five delegated rejections and the three documented exclusions are all
+            // assertAll, so the nine delegated rejections and the three documented exclusions are all
             // observed in one run: the exclusions are the half that keeps the claim from widening.
             assertAll(
                     () -> assertThrows(
@@ -524,6 +528,25 @@ class VertiqueStrictProfileTest {
                             DecodeException.class,
                             () -> Json.decodeValue(REPEATED_NOTE, JsonObject.class),
                             "Json.decodeValue(String, Class) must reject it"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> codec.fromStream(
+                                    new ByteArrayInputStream(REPEATED_NOTE.getBytes(StandardCharsets.UTF_8)),
+                                    Object.class),
+                            "fromStream(InputStream, Class) must reject it"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> codec.fromStream(
+                                    new ByteArrayInputStream(REPEATED_NOTE.getBytes(StandardCharsets.UTF_8))),
+                            "fromStream(InputStream) must reject it"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> codec.fromReader(new StringReader(REPEATED_NOTE), Object.class),
+                            "fromReader(Reader, Class) must reject it"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> codec.fromReader(new StringReader(REPEATED_NOTE)),
+                            "fromReader(Reader) must reject it"),
                     () -> assertEquals(
                             "b",
                             ((JsonObject) codec.fromString(REPEATED_NOTE)).getString("note"),
