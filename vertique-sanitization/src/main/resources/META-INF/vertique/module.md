@@ -23,8 +23,7 @@ binds — a REST body or parameter, a service-dispatch payload, an MCP tool argu
 canonicalizer and sanitizer implementations those annotations name, and the engine in
 `dev.vertique.sanitization.processing` that walks the object graph and applies them.
 
-Depend on it directly only to reference a canonicalizer or sanitizer class by name, or an engine type such as `InputObjectProcessor` or `EffectiveInputPolicies`. An application
-that installs a starter already has it on the classpath.
+Depend on it directly from any code that declares the sanitization annotations, references a canonicalizer or sanitizer class, or uses an engine type such as `InputObjectProcessor` or `EffectiveInputPolicies`. Of the starters, only the REST starter brings it in.
 
 ---
 
@@ -536,7 +535,7 @@ Conflicts surface as the same `InvocationPolicyConflictException`, with the same
 
 ##### The `apt` package is compile-time only
 
-`dev.vertique.sanitization.processing.apt` requires the JDK `java.compiler` module and is never loaded by runtime code — nothing outside that package references it, and the module's own tests enforce both directions. Consumers that are not annotation processors can ignore it entirely; it adds no dependency to this artifact, because it imports only JDK types and the engine package `dev.vertique.sanitization.processing`.
+`dev.vertique.sanitization.processing.apt` requires the JDK `java.compiler` module and is never loaded by runtime code — nothing outside that package references it, and the module's own tests enforce both directions. Consumers that are not annotation processors can ignore it entirely; it adds no dependency to this artifact, because it imports only JDK types, the four policy annotations in `dev.vertique.sanitization`, and the engine package `dev.vertique.sanitization.processing`.
 
 
 #### Scenario matrix

@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that the HTML sanitizers apply through {@link SanitizationModule} with no binding of
- * their own (AC-013), and that a binding keyed by an HTML sanitizer class replaces the default
+ * their own, and that a binding keyed by an HTML sanitizer class replaces the default
  * instance.
  */
 class HtmlSanitizersThroughSanitizationModuleTest {

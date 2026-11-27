@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the binding sets {@link SanitizationModule} contributes (AC-014): the eight built-in
+ * Verifies the binding sets {@link SanitizationModule} contributes: the eight built-in
  * canonicalizers and only the control-character sanitizer, with no HTML sanitizer bound.
  */
 class SanitizationModuleBindingsTest {

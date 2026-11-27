@@ -38,7 +38,7 @@ SPDX-License-Identifier: EUPL-1.2
         <!-- Compile: emitted code references the runtime SPI in dev.vertique.sanitization.processing —
              GeneratedInputProcessor, ChainResolver, InputTraversalContext,
              GeneratedInputProcessorDispatcher, GeneratedSupport, EffectiveInputPolicies. Also
-             pulls vertique-core (for the sanitization annotations and InputLocation)
+             pulls the sanitization annotations, and vertique-core (for InputLocation),
              transitively. -->
         <dependency>
             <groupId>dev.vertique</groupId>
