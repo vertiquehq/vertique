@@ -17,9 +17,9 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
@@ -166,8 +166,8 @@ class ReservedNameGuardGateParityTest {
 
     // ---------------------------------------------------------------- schema and gate helpers
 
-    private static JsonMapperProfile profile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("reserved-name-guard-gate-parity-test"), new ObjectMapper());
+    private static JsonProfileCodec profile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("reserved-name-guard-gate-parity-test"), new ObjectMapper());
     }
 
     private static JsonObject canonicalSchema(Class<?> type) {

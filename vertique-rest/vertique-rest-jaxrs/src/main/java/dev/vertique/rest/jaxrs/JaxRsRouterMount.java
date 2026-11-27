@@ -5,11 +5,12 @@ package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.extension.OrderedExtension;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.util.Strings;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.RestExceptionMapper;
@@ -475,7 +476,7 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.actionRegistry,
                 factory.authorizerAvailable,
                 factory.jaxRsConfig,
-                factory.jsonMapperProfileRegistry,
+                factory.jsonProfileRegistry,
                 factory.jsonConfig,
                 declaringType,
                 implicitOperations,
@@ -531,8 +532,8 @@ public class JaxRsRouterMount implements RouterMount {
         // own mapper yields null => no stash => Json.encode (which then runs that very mapper, so the
         // bytes are the same either way). An unknown configured id fails fast here at startup
         // (registry.mapper throws), matching the request-resolution fail-fast.
-        ObjectMapper noMethodDefaultMapper = resolveNoMethodDefaultMapper(
-                factory.jaxRsConfig, factory.jsonConfig, factory.jsonMapperProfileRegistry);
+        ObjectMapper noMethodDefaultMapper =
+                resolveNoMethodDefaultMapper(factory.jaxRsConfig, factory.jsonConfig, factory.jsonProfileRegistry);
 
         // Observe (failure, statusCode) before the terminal handler so a Vert.x fail(int) that rewrites
         // status without clearing failure cannot stash a stale 4xx over an older cause. See
@@ -626,10 +627,10 @@ public class JaxRsRouterMount implements RouterMount {
      *     registered
      */
     private static @Nullable ObjectMapper resolveNoMethodDefaultMapper(
-            JaxRsConfig jaxRsConfig, JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
+            JaxRsConfig jaxRsConfig, JsonConfig jsonConfig, JsonProfileRegistry registry) {
         String boundary = Strings.firstNonBlank(jaxRsConfig.jsonProfile());
         JsonProfileId effectiveId = boundary != null ? JsonProfileId.of(boundary) : jsonConfig.effectiveProfile();
-        ObjectMapper resolved = registry.mapper(effectiveId);
+        ObjectMapper resolved = Jackson2JsonProfileCodec.objectMapper(registry.profile(effectiveId));
         return resolved == VertiqueJson.mapper() ? null : resolved;
     }
 
@@ -832,7 +833,7 @@ public class JaxRsRouterMount implements RouterMount {
         final List<ResponseBodyEncoder> sortedEncoders;
         final HttpConfig httpConfig;
         final JaxRsConfig jaxRsConfig;
-        final JsonMapperProfileRegistry jsonMapperProfileRegistry;
+        final JsonProfileRegistry jsonProfileRegistry;
         final JsonConfig jsonConfig;
         final boolean authEnabled;
         final @Nullable BeanValidator beanValidator;
@@ -910,7 +911,7 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     and {@code uploadsDirectory} to the mount BodyHandler
          *                                     and {@code uploadsDirectory} to the body handler
          * @param jaxRsConfig                  JAX-RS routing configuration (operationId strictness, media type validation mode)
-         * @param jsonMapperProfileRegistry    registry of named JSON mapper profiles, used to resolve the
+         * @param jsonProfileRegistry    registry of named JSON mapper profiles, used to resolve the
          *                                     effective request-body {@code ObjectMapper} per resource method
          *                                     ({@code @JsonProfile} method/class &rarr; {@code jaxrs.jsonProfile}
          *                                     &rarr; {@code json.jsonProfile} &rarr; {@code vertx}); always present via
@@ -966,7 +967,7 @@ public class JaxRsRouterMount implements RouterMount {
                 List<ResponseBodyEncoder> sortedEncoders,
                 HttpConfig httpConfig,
                 JaxRsConfig jaxRsConfig,
-                JsonMapperProfileRegistry jsonMapperProfileRegistry,
+                JsonProfileRegistry jsonProfileRegistry,
                 JsonConfig jsonConfig,
                 Optional<BeanValidator> beanValidator,
                 Optional<InputObjectProcessor> objectProcessor,
@@ -995,7 +996,7 @@ public class JaxRsRouterMount implements RouterMount {
                     sortedEncoders,
                     httpConfig,
                     jaxRsConfig,
-                    jsonMapperProfileRegistry,
+                    jsonProfileRegistry,
                     jsonConfig,
                     beanValidator,
                     objectProcessor,
@@ -1037,7 +1038,7 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     and {@code uploadsDirectory} to the mount BodyHandler
          *                                     and {@code uploadsDirectory} to the body handler
          * @param jaxRsConfig                  JAX-RS routing configuration (operationId strictness, media type validation mode)
-         * @param jsonMapperProfileRegistry    registry of named JSON mapper profiles, used to resolve the
+         * @param jsonProfileRegistry    registry of named JSON mapper profiles, used to resolve the
          *                                     effective request-body {@code ObjectMapper} per resource method
          *                                     ({@code @JsonProfile} method/class &rarr; {@code jaxrs.jsonProfile}
          *                                     &rarr; {@code json.jsonProfile} &rarr; {@code vertx}); always present via
@@ -1097,7 +1098,7 @@ public class JaxRsRouterMount implements RouterMount {
                 List<ResponseBodyEncoder> sortedEncoders,
                 HttpConfig httpConfig,
                 JaxRsConfig jaxRsConfig,
-                JsonMapperProfileRegistry jsonMapperProfileRegistry,
+                JsonProfileRegistry jsonProfileRegistry,
                 JsonConfig jsonConfig,
                 Optional<BeanValidator> beanValidator,
                 Optional<InputObjectProcessor> objectProcessor,
@@ -1125,7 +1126,7 @@ public class JaxRsRouterMount implements RouterMount {
             this.sortedEncoders = sortedEncoders;
             this.httpConfig = httpConfig;
             this.jaxRsConfig = jaxRsConfig;
-            this.jsonMapperProfileRegistry = jsonMapperProfileRegistry;
+            this.jsonProfileRegistry = jsonProfileRegistry;
             this.jsonConfig = jsonConfig;
             this.authEnabled = authEnforcementCapability.isPresent();
             this.beanValidator = beanValidator.orElse(null);

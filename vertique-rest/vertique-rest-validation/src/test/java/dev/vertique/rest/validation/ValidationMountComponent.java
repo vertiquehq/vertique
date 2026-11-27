@@ -6,7 +6,7 @@ package dev.vertique.rest.validation;
 import dagger.BindsInstance;
 import dagger.Component;
 import dev.vertique.core.VertxConfig;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.test.RestTestContributions;
@@ -54,7 +54,7 @@ interface ValidationMountComponent {
     RestTestMount testMount();
 
     /**
-     * Returns the graph's singleton {@link JsonMapperProfileRegistry} — the very instance the mount
+     * Returns the graph's singleton {@link JsonProfileRegistry} — the very instance the mount
      * resolves per-route body profiles through.
      *
      * <p>Exposed so a test can install one of the graph's <em>own</em> profile mappers as the process
@@ -65,7 +65,7 @@ interface ValidationMountComponent {
      *
      * @return the graph's profile registry
      */
-    JsonMapperProfileRegistry jsonMapperProfileRegistry();
+    JsonProfileRegistry jsonProfileRegistry();
 
     /** Factory binding the three instances a consumer supplies to the graph. */
     @Component.Factory

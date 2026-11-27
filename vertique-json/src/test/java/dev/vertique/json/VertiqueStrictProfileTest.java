@@ -42,7 +42,7 @@ import org.junit.jupiter.api.function.Executable;
 
 /**
  * Unit tests for the built-in {@code vertique-strict} profile as seeded by
- * {@link DefaultJsonMapperProfileRegistry}.
+ * {@link DefaultJsonProfileRegistry}.
  *
  * <p>The {@code vertique-strict} profile layers a strict-decimal, strict-string configuration on top
  * of the {@code vertique} opinionated defaults: {@link BigDecimal} serializes/deserializes as a
@@ -59,17 +59,18 @@ class VertiqueStrictProfileTest {
     private static final JsonProfileId VERTIQUE_STRICT_ID = JsonProfileId.of("vertique-strict");
 
     private static ObjectMapper strictMapper() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).mapper(VERTIQUE_STRICT_ID);
+        return Jackson2JsonProfileCodec.objectMapper(
+                new DefaultJsonProfileRegistry(Set.of()).profile(VERTIQUE_STRICT_ID));
     }
 
     @Test
     @DisplayName("vertique-strict profile is seeded and resolvable with an empty application set")
     void registryResolvesVertiqueStrict_withEmptyAppSet() {
         // Given: a registry built with no application-contributed profiles.
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // When: the vertique-strict mapper is resolved.
-        ObjectMapper mapper = registry.mapper(VERTIQUE_STRICT_ID);
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(registry.profile(VERTIQUE_STRICT_ID));
 
         // Then: it resolves non-null and is a distinct instance from the shared Vert.x mapper and
         // from the vertique profile's own mapper.
@@ -79,7 +80,7 @@ class VertiqueStrictProfileTest {
         assertNotNull(mapper, "vertique-strict profile must resolve to a non-null mapper");
         assertNotSame(DatabindCodec.mapper(), mapper, "vertique-strict must not be the shared Vert.x mapper");
         assertNotSame(
-                registry.mapper(VertiqueJsonMapperProfile.ID),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(VertiqueJsonProfileCodec.ID)),
                 mapper,
                 "vertique-strict must own an independent mapper from the vertique profile");
     }
@@ -373,7 +374,7 @@ class VertiqueStrictProfileTest {
         int registeredModuleCount = shared.getRegisteredModuleIds().size();
 
         // When: the registry (which seeds vertique-strict) is constructed.
-        new DefaultJsonMapperProfileRegistry(Set.of());
+        new DefaultJsonProfileRegistry(Set.of());
 
         // Then: the shared mapper's registered module count is unchanged.
         assertEquals(
@@ -408,7 +409,7 @@ class VertiqueStrictProfileTest {
     @DisplayName("Only vertique-strict rejects a repeated identical key on a direct read")
     void repeatedKeyIsRejectedOnDirectRead() {
         ObjectMapper strict = strictMapper();
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // assertAll, so the strict rejections and the lenient characterizations are all observed in one run:
         // the lenient rows are what makes the strict rejection a profile difference rather than a
@@ -435,8 +436,8 @@ class VertiqueStrictProfileTest {
                     "the readValue rejection must also be the duplicate-field parse error; message: "
                             + repeatedValue.getMessage());
         });
-        for (JsonProfileId lenientId : List.of(VertiqueJsonMapperProfile.ID, JsonProfileId.SYSTEM)) {
-            ObjectMapper lenient = registry.mapper(lenientId);
+        for (JsonProfileId lenientId : List.of(VertiqueJsonProfileCodec.ID, JsonProfileId.SYSTEM)) {
+            ObjectMapper lenient = Jackson2JsonProfileCodec.objectMapper(registry.profile(lenientId));
             checks.add(() -> assertEquals(
                     "b",
                     lenient.readTree(REPEATED_NOTE).get("note").asText(),
@@ -463,18 +464,21 @@ class VertiqueStrictProfileTest {
     @Test
     @DisplayName("Two spellings of one property are not duplicates to any built-in mapper")
     void twoSpellingsAreNotDuplicatesToAnyBuiltInMapper() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
-        Integer strictBound =
-                registry.mapper(VERTIQUE_STRICT_ID).readValue(TWO_SPELLINGS, AliasedQuantity.class).quantity;
+        Integer strictBound = Jackson2JsonProfileCodec.objectMapper(registry.profile(VERTIQUE_STRICT_ID))
+                .readValue(TWO_SPELLINGS, AliasedQuantity.class)
+                .quantity;
         assertNotNull(
                 strictBound,
                 "vertique-strict must bind a body carrying both spellings: strict duplicate detection compares"
                         + " key names, and 'quantity' and 'qty' are different names");
-        for (JsonProfileId lenientId : Set.of(VertiqueJsonMapperProfile.ID, JsonProfileId.SYSTEM)) {
+        for (JsonProfileId lenientId : Set.of(VertiqueJsonProfileCodec.ID, JsonProfileId.SYSTEM)) {
             assertEquals(
                     strictBound,
-                    registry.mapper(lenientId).readValue(TWO_SPELLINGS, AliasedQuantity.class).quantity,
+                    Jackson2JsonProfileCodec.objectMapper(registry.profile(lenientId))
+                            .readValue(TWO_SPELLINGS, AliasedQuantity.class)
+                            .quantity,
                     lenientId.value() + " must bind the two spellings exactly as vertique-strict does: the binder"
                             + " accepts several spellings under every profile, so only the schema rule differs");
         }

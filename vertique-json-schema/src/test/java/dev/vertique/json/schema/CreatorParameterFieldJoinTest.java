@@ -12,9 +12,10 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 import java.util.List;
@@ -39,15 +40,15 @@ import org.junit.jupiter.api.Test;
  */
 class CreatorParameterFieldJoinTest {
 
-    private static JsonMapperProfile profile() {
-        return new JsonMapperProfile() {
+    private static JsonProfileCodec profile() {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("test");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return new ObjectMapper();
             }
 

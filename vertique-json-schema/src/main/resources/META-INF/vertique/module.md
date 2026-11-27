@@ -48,21 +48,21 @@ payload schemas, install those modules.
 Victools discovers Jackson properties and which profile-declared schema-type overrides apply:
 
 - `withVictoolsDefaults()` — Victools' own default mapper, with no profile override applied. This
-  is the mode a consumer without a resolved `JsonMapperProfile` uses.
-- `forInputProfile(JsonMapperProfile)` — property discovery and external property names use the
-  input-direction Jackson introspection of `profile.mapper()`; mapper mix-ins, explicit names,
+  is the mode a consumer without a resolved `JsonProfileCodec` uses.
+- `forInputProfile(JsonProfileCodec)` — property discovery and external property names use the
+  input-direction Jackson introspection of `profile.unwrap(ObjectMapper.class)`; mapper mix-ins, explicit names,
   naming strategies, and write-only/read-only access are honored, so read-only properties are not
   advertised as accepted input; only the profile's `INPUT`- and `BOTH`-direction schema-type
   overrides apply.
-- `forInputProfile(JsonMapperProfile, jakarta.validation.Validator)` — identical to
-  `forInputProfile(JsonMapperProfile)`, except that value-schema constraints are additionally
+- `forInputProfile(JsonProfileCodec, jakarta.validation.Validator)` — identical to
+  `forInputProfile(JsonProfileCodec)`, except that value-schema constraints are additionally
   sourced from Bean Validation metadata — the annotation walk still runs first, as the floor every
   generation mode shares; the metadata source only supplements or, for a bounded set of shapes,
   corrects it. See "Constraint sources" below. Pass `null` (or use the single-argument overload)
   when no `Validator` is available; a `null` validator is exactly the single-argument overload's
   behavior, not a degraded mode.
-- `forOutputProfile(JsonMapperProfile)` — property discovery and external property names use the
-  output-direction Jackson introspection of `profile.mapper()`; the same mapper metadata applies,
+- `forOutputProfile(JsonProfileCodec)` — property discovery and external property names use the
+  output-direction Jackson introspection of `profile.unwrap(ObjectMapper.class)`; the same mapper metadata applies,
   so write-only properties are not advertised as emitted output; only the profile's `OUTPUT`- and
   `BOTH`-direction schema-type overrides apply. There is no validator-accepting overload for this
   direction: constraint sourcing applies to input generation only.
@@ -315,7 +315,7 @@ interpolator does not. This module never constructs a `Validator` itself
 
 ### Which properties the input direction describes
 
-`forInputProfile(JsonMapperProfile)` describes a property when the profile mapper's own resolved
+`forInputProfile(JsonProfileCodec)` describes a property when the profile mapper's own resolved
 bean deserializer reports it bound — a field, a setter, a creator parameter or a builder method — and
 never through a walk of the Java source's fields. The set therefore follows the mapper: Jackson
 populates a private field through reflection wherever the mapper infers property mutators — Jackson's
@@ -349,7 +349,7 @@ as map-like or collection-like, the any-setter is ignored, as Jackson itself ign
 
 A property marked `@JsonIgnore` or read-only stays absent from the input document, and a write-only
 property is described with `writeOnly: true`. This rule applies to the input direction only:
-`forOutputProfile(JsonMapperProfile)` describes a property Jackson reports serializable whose access
+`forOutputProfile(JsonProfileCodec)` describes a property Jackson reports serializable whose access
 is not `WRITE_ONLY`, unchanged.
 
 This rule decides which walked properties are *described*; it does not make every key the binder
@@ -790,7 +790,7 @@ discard and rebuild one.
 
 ### Profile overrides consumption
 
-A profile's `jsonSchemaTypeOverrides()` (declared in `dev.vertique.core.json.JsonMapperProfile`,
+A profile's `jsonSchemaTypeOverrides()` (declared in `dev.vertique.core.json.JsonProfileCodec`,
 `dev.vertique:vertique-core`) lets a profile describe an exact-class wire shape that Jackson
 inspection cannot infer — for example a `BigDecimal` field a matched custom serializer/deserializer
 pair represents as a bounded decimal string rather than a JSON number. The generator applies a
@@ -920,7 +920,7 @@ misdescribes the wire:
   `@JsonProperty("code")` naming the member itself, does not take precedence:
   `@Schema(name = "label")` still publishes `label` while Jackson serializes `code`, and the member
   is reported as `(…, code, code, label)`. `outputRenames` answers only for a generator built by
-  `forOutputProfile(JsonMapperProfile)`; calling it on an input-direction generator
+  `forOutputProfile(JsonProfileCodec)`; calling it on an input-direction generator
   (`forInputProfile`) or one built by `withVictoolsDefaults()` throws `IllegalStateException`.
   `dev.vertique:vertique-rest-openapi-docs` refuses to publish an output type for which it reports
   a member.
@@ -1122,7 +1122,7 @@ AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVict
 String schemaJson = generator.generateCanonical(MyRequestBody.class);
 ```
 
-A profile-aware consumer supplies its already-resolved `JsonMapperProfile` and the direction that
+A profile-aware consumer supplies its already-resolved `JsonProfileCodec` and the direction that
 matches the schema's role:
 
 ```java
@@ -1226,7 +1226,7 @@ application text. Log the cause where that is acceptable; log `getMessage()` alo
 
 None for applications. This module exposes a closed generation surface — no schema-generator SPI,
 custom Victools module registration, or configuration key. A framework consumer that needs a custom
-wire shape for an exact Java class declares it once on its `JsonMapperProfile` through
+wire shape for an exact Java class declares it once on its `JsonProfileCodec` through
 `dev.vertique.core.json.JsonSchemaTypeOverride`, which this module's profile-aware construction
 modes consume.
 
@@ -1243,7 +1243,7 @@ None. `vertique-json-schema` is a plain library artifact: applications construct
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonMapperProfile`, `JsonSchemaFragment`, `JsonSchemaTypeOverride` — the stable JSON profile contracts this module consumes |
+| `dev.vertique:vertique-core` | compile | `JsonProfileCodec`, `JsonSchemaFragment`, `JsonSchemaTypeOverride` — the stable JSON profile contracts this module consumes |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` property discovery that Victools' Jackson module introspects |
 | `jakarta.validation:jakarta.validation-api` | compile | Jakarta Validation constraint annotations Victools' Jakarta Validation module introspects; also the `Validator`/constraint-metadata types `forInputProfile(profile, Validator)`'s metadata constraint source reads. No `hibernate-validator` (or any other provider implementation) dependency — Hibernate's `@Length`/`@Range`/`@URL` are recognized by fully-qualified annotation class name, never by simple name alone, keeping this module provider-agnostic |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | compile | `@Schema` / `@ArraySchema` annotations Victools' Swagger 2 module introspects |

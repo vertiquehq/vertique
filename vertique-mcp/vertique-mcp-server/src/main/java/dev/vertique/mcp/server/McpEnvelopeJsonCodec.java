@@ -55,8 +55,8 @@ import java.util.Iterator;
  * not expressible through {@link StreamReadConstraints}, but guards the same out-of-memory
  * plain-form-encode vector the encoder's {@code WRITE_BIGDECIMAL_AS_PLAIN} guard rejects.
  *
- * <p>Tool argument and result values keep using the existing {@code JsonMapperProfile}/
- * {@code JsonMapperProfileRegistry} contract; this codec owns only the JSON-RPC envelope and adds no
+ * <p>Tool argument and result values keep using the existing {@code JsonProfileCodec}/
+ * {@code JsonProfileRegistry} contract; this codec owns only the JSON-RPC envelope and adds no
  * public parser API.
  */
 final class McpEnvelopeJsonCodec {

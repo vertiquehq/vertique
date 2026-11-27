@@ -5,7 +5,6 @@ package dev.vertique.json;
 
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import io.vertx.core.json.jackson.DatabindCodec;
 
@@ -36,7 +35,7 @@ import io.vertx.core.json.jackson.DatabindCodec;
  * stream-read limits to {@link JacksonDefaults#applySystem(ObjectMapper)} so every mapper built
  * from the baseline recipe — including one seeded from a fresh {@link ObjectMapper} — carries them.
  */
-final class SystemJsonMapperProfile implements JsonMapperProfile {
+final class SystemJsonProfileCodec extends Jackson2JsonProfileCodec {
 
     /** The reserved id this built-in profile registers under. */
     static final JsonProfileId ID = JsonProfileId.SYSTEM;
@@ -77,7 +76,7 @@ final class SystemJsonMapperProfile implements JsonMapperProfile {
      * @return the {@link ObjectMapper} backing the {@code system} profile
      */
     @Override
-    public ObjectMapper mapper() {
+    protected ObjectMapper mapper() {
         return mapper;
     }
 }

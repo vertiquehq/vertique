@@ -70,8 +70,8 @@ final class TestFactories {
         private JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
                 .validationStrategy(NoneValidationStrategy.ID)
                 .build();
-        private dev.vertique.core.json.JsonMapperProfileRegistry jsonMapperProfileRegistry =
-                new dev.vertique.json.DefaultJsonMapperProfileRegistry(Set.of());
+        private dev.vertique.core.json.JsonProfileRegistry jsonProfileRegistry =
+                new dev.vertique.json.DefaultJsonProfileRegistry(Set.of());
         private ExceptionMapperRegistry exceptionMapperRegistry = null;
         private ParamConversionResolver paramConversionResolver =
                 ParamConversionResolver.of(ParamConverterRegistry.of(Set.of()), Set.of());
@@ -234,8 +234,8 @@ final class TestFactories {
          * @param registry the profile registry
          * @return this builder
          */
-        Builder jsonMapperProfileRegistry(dev.vertique.core.json.JsonMapperProfileRegistry registry) {
-            this.jsonMapperProfileRegistry = registry;
+        Builder jsonProfileRegistry(dev.vertique.core.json.JsonProfileRegistry registry) {
+            this.jsonProfileRegistry = registry;
             return this;
         }
 
@@ -391,7 +391,7 @@ final class TestFactories {
                         encoders, // sortedEncoders
                         httpConfig,
                         jaxRsConfig,
-                        jsonMapperProfileRegistry, // jsonMapperProfileRegistry
+                        jsonProfileRegistry, // jsonProfileRegistry
                         dev.vertique.json.JsonConfig
                                 .defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
                         beanValidator, // beanValidator
@@ -425,7 +425,7 @@ final class TestFactories {
                     encoders, // sortedEncoders
                     httpConfig,
                     jaxRsConfig,
-                    jsonMapperProfileRegistry, // jsonMapperProfileRegistry
+                    jsonProfileRegistry, // jsonProfileRegistry
                     dev.vertique.json.JsonConfig.defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
                     beanValidator, // beanValidator
                     objectProcessor, // objectProcessor

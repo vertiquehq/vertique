@@ -15,7 +15,7 @@
  *
  * <p>{@link dev.vertique.json.schema.AnnotationJsonSchemaGenerator} is the single entry point,
  * offering three construction modes — the current REST-compatible default, and profile-aware
- * input and output modes that consume a resolved {@code dev.vertique.core.json.JsonMapperProfile}.
+ * input and output modes that consume a resolved {@code dev.vertique.core.json.JsonProfileCodec}.
  * {@link dev.vertique.json.schema.JsonSchemaGenerationException} is the one bounded failure type
  * this package throws; no Victools type is ever exposed through a public signature.
  *

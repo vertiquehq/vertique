@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.validation;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <ul>
  *   <li><strong>Body</strong> — the body type is handed to the transport-neutral
  *       {@link AnnotationJsonSchemaGenerator} built for the operation's <em>effective JSON
- *       profile</em> with {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)
+ *       profile</em> with {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonProfileCodec)
  *       forInputProfile}, which produces a complete object schema (nested objects, required fields,
  *       constraints) with canonically ordered object keys and the swagger sentinel already removed.
  *       The canonical document is bridged to vertx-json-schema JSON via {@link JsonObject}, and the
@@ -88,7 +88,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * alone. No schema is cached by operation id, Java type, or mapper identity.
  *
  * <p><strong>One generator per profile instance.</strong> Generators, unlike schemas, are cached:
- * each distinct {@link JsonMapperProfile} <em>instance</em> — compared by reference, never by id,
+ * each distinct {@link JsonProfileCodec} <em>instance</em> — compared by reference, never by id,
  * mapper, or equality — resolves to at most one {@link AnnotationJsonSchemaGenerator}, built on
  * first use and retained for this source's lifetime. Retention is therefore bounded by the number of
  * distinct instances the profile registry hands out; a registry that returns a fresh instance per
@@ -172,7 +172,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * profile.
      */
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         return synthesize(op, profile);
     }
 
@@ -186,7 +186,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * @param profile the operation's effective JSON profile, used for the body path only
      * @return the freshly synthesized schemas
      */
-    private OperationSchemas synthesize(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    private OperationSchemas synthesize(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         OperationSchemas.Builder schemas = OperationSchemas.builder();
 
         op.body().ifPresent(body -> synthesizeBody(op.operationId(), body, profile, schemas));
@@ -219,7 +219,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      *     cannot be represented, or generation fails
      */
     private void synthesizeBody(
-            String operationId, BodyDescriptor body, JsonMapperProfile profile, OperationSchemas.Builder schemas) {
+            String operationId, BodyDescriptor body, JsonProfileCodec profile, OperationSchemas.Builder schemas) {
         Type type = body.genericType() != null ? body.genericType() : body.type();
         try {
             CanonicalSchema generated = generateBodySchema(type, profile);
@@ -257,7 +257,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * @throws JsonSchemaGenerationException if the profile yields no generator, the body type cannot
      *     be represented, or generation fails
      */
-    protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+    protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
         return generatorFor(profile).describe(type);
     }
 
@@ -274,7 +274,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * @throws JsonSchemaGenerationException if the profile's id, mapper, or override declarations are
      *     invalid, or it declares a duplicate effective input override
      */
-    private AnnotationJsonSchemaGenerator generatorFor(JsonMapperProfile profile) {
+    private AnnotationJsonSchemaGenerator generatorFor(JsonProfileCodec profile) {
         return generatorsByProfile.computeIfAbsent(new ProfileKey(profile), key -> {
             AnnotationJsonSchemaGenerator built =
                     AnnotationJsonSchemaGenerator.forInputProfile(key.profile(), validator.orElse(null));
@@ -304,7 +304,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     }
 
     /**
-     * Cache key giving a {@link JsonMapperProfile} reference-identity semantics.
+     * Cache key giving a {@link JsonProfileCodec} reference-identity semantics.
      *
      * <p>The contract keys the generator cache by reference identity, while a map keyed on the profile
      * itself would key by {@code equals}: two distinct instances that happen to be equal records would
@@ -313,7 +313,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      *
      * @param profile the profile this key stands for, compared by reference
      */
-    private record ProfileKey(JsonMapperProfile profile) {
+    private record ProfileKey(JsonProfileCodec profile) {
 
         @Override
         public boolean equals(Object other) {

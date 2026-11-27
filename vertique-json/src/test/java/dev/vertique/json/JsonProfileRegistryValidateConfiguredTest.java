@@ -13,10 +13,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link dev.vertique.core.json.JsonMapperProfileRegistry#validateConfigured(String)}
- * as implemented by {@link DefaultJsonMapperProfileRegistry}.
+ * Unit tests for {@link dev.vertique.core.json.JsonProfileRegistry#validateConfigured(String)}
+ * as implemented by {@link DefaultJsonProfileRegistry}.
  *
- * <p>Uses a real {@link DefaultJsonMapperProfileRegistry} seeded with no application profiles
+ * <p>Uses a real {@link DefaultJsonProfileRegistry} seeded with no application profiles
  * (the built-in {@code vertx} and {@code vertique} profiles are always present). Verifies:
  *
  * <ul>
@@ -28,16 +28,16 @@ import org.junit.jupiter.api.Test;
  *   <li>an unknown non-blank id throws {@link JsonProfileConfigurationException}.
  * </ul>
  */
-@DisplayName("JsonMapperProfileRegistry.validateConfigured")
-class JsonMapperProfileRegistryValidateConfiguredTest {
+@DisplayName("JsonProfileRegistry.validateConfigured")
+class JsonProfileRegistryValidateConfiguredTest {
 
-    private DefaultJsonMapperProfileRegistry registry;
+    private DefaultJsonProfileRegistry registry;
 
     @BeforeEach
     void setUp() {
         // Seed with no application profiles — the built-ins (system, vertique, vertique-strict) are
         // seeded automatically.
-        registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        registry = new DefaultJsonProfileRegistry(Set.of());
     }
 
     @Test

@@ -28,11 +28,11 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
@@ -337,12 +337,12 @@ class ReservedNameManifestTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static JsonMapperProfile profile() {
+    private static JsonProfileCodec profile() {
         return profileNamed("reserved-name-manifest-test");
     }
 
-    private static JsonMapperProfile profileNamed(String id) {
-        return JsonMapperProfiles.of(JsonProfileId.of(id), new ObjectMapper());
+    private static JsonProfileCodec profileNamed(String id) {
+        return Jackson2JsonProfiles.of(JsonProfileId.of(id), new ObjectMapper());
     }
 
     private static AnnotationJsonSchemaGenerator inputGenerator() {
@@ -354,7 +354,7 @@ class ReservedNameManifestTest {
      * the profile validation requires of a bean-like type, whose fragment declares its own {@link
      * #DECLARED_PROPERTY_NAMES}.
      */
-    private static JsonMapperProfile declaredPropertyNamesProfile() {
+    private static JsonProfileCodec declaredPropertyNamesProfile() {
         String fragment = "{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"}},"
                 + "\"propertyNames\":" + DECLARED_PROPERTY_NAMES + ",\"type\":\"object\"}";
         return HardeningFixtures.profile(
@@ -371,7 +371,7 @@ class ReservedNameManifestTest {
      * @param nameSchema the schema of the fragment's {@code name} property, as JSON text
      * @return the profile
      */
-    private static JsonMapperProfile markerFragmentProfile(String id, String nameSchema) {
+    private static JsonProfileCodec markerFragmentProfile(String id, String nameSchema) {
         String fragment =
                 "{\"additionalProperties\":false,\"properties\":{\"name\":" + nameSchema + "},\"type\":\"object\"}";
         return HardeningFixtures.profile(
@@ -747,9 +747,9 @@ class ReservedNameManifestTest {
             + " profile; one carrying it inside literal data is accepted")
     void overrideFragmentCannotCarryTheGuardMarker() {
         String marker = InputPropertyDescriber.RESERVED_NAME_GUARD_MARKER;
-        JsonMapperProfile atSchemaPosition = markerFragmentProfile(
+        JsonProfileCodec atSchemaPosition = markerFragmentProfile(
                 MARKER_AT_SCHEMA_POSITION_PROFILE, "{\"" + marker + "\":true,\"type\":\"string\"}");
-        JsonMapperProfile inLiteralData =
+        JsonProfileCodec inLiteralData =
                 markerFragmentProfile(MARKER_IN_LITERAL_DATA_PROFILE, "{\"const\":{\"" + marker + "\":true}}");
 
         JsonSchemaGenerationException refused = assertThrows(

@@ -74,7 +74,7 @@ public record JsonConfig(
      * @return the effective managed-edge profile id; never {@code null}
      */
     public JsonProfileId effectiveProfile() {
-        return isBlank(jsonProfile) ? VertiqueJsonMapperProfile.ID : JsonProfileId.of(jsonProfile);
+        return isBlank(jsonProfile) ? VertiqueJsonProfileCodec.ID : JsonProfileId.of(jsonProfile);
     }
 
     /**

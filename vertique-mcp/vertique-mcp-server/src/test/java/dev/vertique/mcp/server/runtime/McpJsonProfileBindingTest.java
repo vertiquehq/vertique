@@ -11,10 +11,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import dev.vertique.mcp.tool.McpAccessMode;
@@ -189,19 +190,19 @@ class McpJsonProfileBindingTest {
     private static void shouldGenerateSchemaWithAndRetainTheSameEffectiveProfileMapper() throws IOException {
         McpJsonProfileResolver resolver = McpJsonProfileBindingTestFixture.resolver("mcp-default", "global-default");
 
-        JsonMapperProfile methodProfile = resolver.resolve(JsonProfileId.of("method"));
-        JsonMapperProfile methodProfileAgain = resolver.resolve(JsonProfileId.of("method"));
+        JsonProfileCodec methodProfile = resolver.resolve(JsonProfileId.of("method"));
+        JsonProfileCodec methodProfileAgain = resolver.resolve(JsonProfileId.of("method"));
 
-        assertThat(methodProfile.mapper())
+        assertThat(Jackson2JsonProfileCodec.objectMapper(methodProfile))
                 .as("repeated resolution yields the one stable mapper, never a rebuilt one")
-                .isSameAs(methodProfileAgain.mapper());
+                .isSameAs(Jackson2JsonProfileCodec.objectMapper(methodProfileAgain));
 
         McpToolRuntime<Map<String, Object>> methodBinding = McpJsonProfileBindingTestFixture.binding(methodProfile);
         assertThat(write(methodBinding, new ProfileMarker()))
                 .as("the retained mapper is the effective profile's mapper")
                 .isEqualTo("\"method\"");
 
-        JsonMapperProfile typeProfile = resolver.resolve(JsonProfileId.of("type"));
+        JsonProfileCodec typeProfile = resolver.resolve(JsonProfileId.of("type"));
         McpToolRuntime<Map<String, Object>> typeBinding = McpJsonProfileBindingTestFixture.binding(typeProfile);
         assertThat(write(typeBinding, new ProfileMarker()))
                 .as("a tool declaring another profile is bound to that profile's mapper")
@@ -306,7 +307,7 @@ class McpJsonProfileBindingTest {
 
         /** Builds the runtime binding a generated invoker would obtain for the resolved profile. */
         @SuppressWarnings("unchecked")
-        static McpToolRuntime<Map<String, Object>> binding(JsonMapperProfile profile) {
+        static McpToolRuntime<Map<String, Object>> binding(JsonProfileCodec profile) {
             McpToolDescriptor descriptor = new McpToolDescriptor(
                     "weather.lookup",
                     null,
@@ -316,14 +317,15 @@ class McpJsonProfileBindingTest {
                     null,
                     new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
             return new McpToolRuntime<>(
-                    descriptor, profile.mapper(), (Class<Map<String, Object>>) (Class<?>) Map.class);
+                    descriptor, Jackson2JsonProfileCodec.objectMapper(profile), (Class<Map<String, Object>>)
+                            (Class<?>) Map.class);
         }
     }
 
     /** The registered profile set of the Given, each with its own marker-serializing mapper. */
-    private static final class StubProfileRegistry implements JsonMapperProfileRegistry {
+    private static final class StubProfileRegistry implements JsonProfileRegistry {
 
-        private final Map<JsonProfileId, JsonMapperProfile> profilesById = new LinkedHashMap<>();
+        private final Map<JsonProfileId, JsonProfileCodec> profilesById = new LinkedHashMap<>();
 
         private StubProfileRegistry() {
             Stream.of(
@@ -339,13 +341,8 @@ class McpJsonProfileBindingTest {
         }
 
         @Override
-        public ObjectMapper mapper(JsonProfileId id) {
-            return profile(id).mapper();
-        }
-
-        @Override
-        public JsonMapperProfile profile(JsonProfileId id) {
-            JsonMapperProfile profile = profilesById.get(id);
+        public JsonProfileCodec profile(JsonProfileId id) {
+            JsonProfileCodec profile = profilesById.get(id);
             if (profile == null) {
                 throw new JsonProfileConfigurationException(
                         "Unknown JSON profile id '" + (id == null ? null : id.value()) + "'");
@@ -360,7 +357,7 @@ class McpJsonProfileBindingTest {
     }
 
     /** One registered profile whose mapper serializes {@link ProfileMarker} to the profile id. */
-    private static final class StubProfile implements JsonMapperProfile {
+    private static final class StubProfile extends Jackson2JsonProfileCodec {
 
         private final JsonProfileId id;
         private final ObjectMapper mapper;
@@ -378,7 +375,7 @@ class McpJsonProfileBindingTest {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }

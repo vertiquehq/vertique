@@ -44,11 +44,12 @@ import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.util.StdConverter;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.core.jackson.ModelResolver;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -139,31 +140,31 @@ class HiddenMemberReportTest {
     /** Bounded wait for an event the lock-ordering row requires; a timeout fails the row. */
     private static final long AWAIT_SECONDS = 10L;
 
-    private static final JsonMapperProfile PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test"), new ObjectMapper());
+    private static final JsonProfileCodec PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test"), new ObjectMapper());
 
     /** A profile whose mapper registers {@link RegisteredSubtypeShape.PremiumAccount} as a subtype by name. */
-    private static final JsonMapperProfile REGISTERED_SUBTYPE_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec REGISTERED_SUBTYPE_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-registered-subtype"), registeredSubtypeMapper());
 
     /** A profile whose mapper registers {@link MixInShape.RootMixIn} as the mix-in of {@link MixInShape.Root}. */
-    private static final JsonMapperProfile MIX_IN_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in"), mixInMapper());
+    private static final JsonProfileCodec MIX_IN_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in"), mixInMapper());
 
     /** A profile whose mapper registers {@link MixInTypeShape.StowedMixIn} for {@link MixInTypeShape.Stowed}. */
-    private static final JsonMapperProfile MIX_IN_TYPE_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-type"), mixInTypeMapper());
+    private static final JsonProfileCodec MIX_IN_TYPE_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-type"), mixInTypeMapper());
 
     /** A profile whose mapper registers {@link MixInRootShape.RootMixIn} for {@link MixInRootShape.Root}. */
-    private static final JsonMapperProfile MIX_IN_ROOT_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-root"), mixInRootMapper());
+    private static final JsonProfileCodec MIX_IN_ROOT_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-root"), mixInRootMapper());
 
     /** A profile whose mapper registers a mix-in for the superclass {@link MixInSuperclassShape.Parent}. */
-    private static final JsonMapperProfile MIX_IN_SUPERCLASS_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec MIX_IN_SUPERCLASS_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-mix-in-superclass"), mixInSuperclassMapper());
 
     /** A profile whose mapper registers a mix-in for the setter-bound {@link SetterBoundMixInShape.Panel}. */
-    private static final JsonMapperProfile SETTER_BOUND_MIX_IN_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec SETTER_BOUND_MIX_IN_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-setter-bound-mix-in"), setterBoundMixInMapper());
 
     /**
@@ -171,7 +172,7 @@ class HiddenMemberReportTest {
      * the fragment's own property name is none of the shape's, so a document the override shaped would
      * name it instead of the base's content.
      */
-    private static final JsonMapperProfile OVERRIDDEN_BASE_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec OVERRIDDEN_BASE_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-overridden-base"),
             new ObjectMapper(),
             List.of(JsonSchemaTypeOverride.both(
@@ -181,64 +182,64 @@ class HiddenMemberReportTest {
                             + "\"additionalProperties\":false}"))));
 
     /** A profile whose mapper registers mix-ins inheriting {@code @Hidden} from their own superclasses. */
-    private static final JsonMapperProfile MIX_IN_ANCESTOR_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-ancestor"), mixInAncestorMapper());
+    private static final JsonProfileCodec MIX_IN_ANCESTOR_PROFILE = Jackson2JsonProfiles.of(
+            JsonProfileId.of("hidden-member-report-test-mix-in-ancestor"), mixInAncestorMapper());
 
     /** A profile whose mapper registers a mix-in for {@link InheritedMixInMethodShape.Ancestor}. */
-    private static final JsonMapperProfile INHERITED_MIX_IN_METHOD_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec INHERITED_MIX_IN_METHOD_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-inherited-mix-in-method"), inheritedMixInMethodMapper());
 
     /** A profile whose mapper registers {@link EnumMixInShape.TierMixIn} for {@link EnumMixInShape.Tier}. */
-    private static final JsonMapperProfile ENUM_MIX_IN_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-enum-mix-in"), enumMixInMapper());
+    private static final JsonProfileCodec ENUM_MIX_IN_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-enum-mix-in"), enumMixInMapper());
 
     /**
      * A profile whose mapper registers {@link MixInSchemaSetterShape.RootMixIn} as the mix-in of {@link
      * MixInSchemaSetterShape.Root}.
      */
-    private static final JsonMapperProfile SETTER_SCHEMA_MIX_IN_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec SETTER_SCHEMA_MIX_IN_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-setter-schema-mix-in"), setterSchemaMixInMapper());
 
     /**
      * A profile whose mapper registers {@link SubclassMixInHiddenShape.RootMixIn} as the mix-in of {@link
      * SubclassMixInHiddenShape.Root}.
      */
-    private static final JsonMapperProfile SUBCLASS_MIX_IN_HIDDEN_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec SUBCLASS_MIX_IN_HIDDEN_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-subclass-mix-in-hidden"), subclassMixInHiddenMapper());
 
     /**
      * A profile whose mapper registers {@link SubclassMixInSchemaShape.RootMixIn} as the mix-in of {@link
      * SubclassMixInSchemaShape.Root}.
      */
-    private static final JsonMapperProfile SUBCLASS_MIX_IN_SCHEMA_PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec SUBCLASS_MIX_IN_SCHEMA_PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of("hidden-member-report-test-subclass-mix-in-schema"), subclassMixInSchemaMapper());
 
     /**
      * A profile whose mapper registers {@link MixOverShape.MixOverSubMixIn} as the mix-in of {@link
      * MixOverShape.MixOverSub}.
      */
-    private static final JsonMapperProfile MIX_OVER_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-over"), mixOverMapper());
+    private static final JsonProfileCodec MIX_OVER_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-over"), mixOverMapper());
 
     /**
      * A profile whose mapper registers {@link MixBaseMixIn} as the mix-in of {@link MixBase}.
      */
-    private static final JsonMapperProfile MIX_SUPER_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-super"), mixSuperMapper());
+    private static final JsonProfileCodec MIX_SUPER_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-super"), mixSuperMapper());
 
     /**
      * A profile whose mapper registers {@link MixInTargetShape.MixInTargetMixIn} as the mix-in of {@link
      * MixInTargetShape.MixInTarget}.
      */
-    private static final JsonMapperProfile MIX_IN_TARGET_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-target"), mixInTargetMapper());
+    private static final JsonProfileCodec MIX_IN_TARGET_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-target"), mixInTargetMapper());
 
     /**
      * A profile whose mapper registers {@link MixInBothShape.MixInBothTargetMixIn} as the mix-in of {@link
      * MixInBothShape.MixInBothTarget}.
      */
-    private static final JsonMapperProfile MIX_IN_BOTH_PROFILE =
-            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-both"), mixInBothMapper());
+    private static final JsonProfileCodec MIX_IN_BOTH_PROFILE =
+            Jackson2JsonProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-in-both"), mixInBothMapper());
 
     // ---------------------------------------------------------------- body and response fixtures
 
@@ -3501,7 +3502,7 @@ class HiddenMemberReportTest {
                 AnnotationJsonSchemaGenerator.forInputProfile(PROFILE).hiddenMembers(HeldHidden.class));
 
         GatingIntrospector gate = new GatingIntrospector();
-        AnnotationJsonSchemaGenerator gated = AnnotationJsonSchemaGenerator.forInputProfile(JsonMapperProfiles.of(
+        AnnotationJsonSchemaGenerator gated = AnnotationJsonSchemaGenerator.forInputProfile(Jackson2JsonProfiles.of(
                 JsonProfileId.of("hidden-member-report-test-gated"),
                 JsonMapper.builder().annotationIntrospector(gate).build()));
         FutureTask<String> heldGeneration = new FutureTask<>(() -> gated.generateCanonical(HeldHidden.class));
@@ -3610,7 +3611,7 @@ class HiddenMemberReportTest {
     void reportsEveryDescribedMarkedMemberInBothDirections(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Class<?> shape,
             Type root,
             List<HiddenMember> expected) {
@@ -3630,19 +3631,22 @@ class HiddenMemberReportTest {
                 // fixture types' marked declarations, so no described declaration is left out of the expectation.
                 () -> assertEquals(
                         markedDeclarations(expected),
-                        describedMarkedDeclarations(before, shape, direction, profile.mapper()),
+                        describedMarkedDeclarations(
+                                before, shape, direction, Jackson2JsonProfileCodec.objectMapper(profile)),
                         () -> label + ": the expected list must be exactly the marked declarations of the shape's"
                                 + " types that the document describes: " + before),
                 // Differential: what swagger-core, on the row profile's mapper, omits because of either marker.
                 () -> assertEquals(
                         List.of(),
-                        uncoveredSwaggerCoreOmissions(before, root, profile.mapper(), actual),
+                        uncoveredSwaggerCoreOmissions(
+                                before, root, Jackson2JsonProfileCodec.objectMapper(profile), actual),
                         () -> label + ": every property the document describes that swagger-core's model omits"
                                 + " because of a hiding marker must be reported: " + before),
                 // Merged view: what Jackson's merged annotations on the profile mapper see as marked.
                 () -> assertEquals(
                         List.of(),
-                        uncoveredMergedViewCarriers(before, shape, direction, profile.mapper(), actual),
+                        uncoveredMergedViewCarriers(
+                                before, shape, direction, Jackson2JsonProfileCodec.objectMapper(profile), actual),
                         () -> label + ": every property and type the document describes that the profile mapper's"
                                 + " merged view sees as carrying a hiding marker must be reported: " + before),
                 () -> assertEquals(before, after, "hiddenMembers must not change what generateCanonical publishes"));
@@ -4859,7 +4863,7 @@ class HiddenMemberReportTest {
     void reportsSchemaHiddenWhereTheGeneratorIgnoresIt(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Type root,
             List<HiddenMember> expected,
             String property) {
@@ -5228,7 +5232,7 @@ class HiddenMemberReportTest {
     void reportsBothMarkersWhereTheGeneratorIgnoresThem(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Type root,
             List<HiddenMember> expected,
             String property) {
@@ -5415,7 +5419,7 @@ class HiddenMemberReportTest {
     void hideableFlagMatchesTheFieldOrGetterFix(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Type original,
             HiddenMember entry,
             Class<?> twin,
@@ -5705,7 +5709,7 @@ class HiddenMemberReportTest {
         // Lock ordering: a report waiting behind another type's generation on the same instance still
         // yields its own merged entry, once.
         GatingIntrospector gate = new GatingIntrospector();
-        AnnotationJsonSchemaGenerator gated = AnnotationJsonSchemaGenerator.forInputProfile(JsonMapperProfiles.of(
+        AnnotationJsonSchemaGenerator gated = AnnotationJsonSchemaGenerator.forInputProfile(Jackson2JsonProfiles.of(
                 JsonProfileId.of("hidden-member-report-test-gated-merge"),
                 JsonMapper.builder().annotationIntrospector(gate).build()));
         FutureTask<String> heldGeneration = new FutureTask<>(() -> gated.generateCanonical(HeldHidden.class));
@@ -5762,18 +5766,18 @@ class HiddenMemberReportTest {
     private enum Direction {
         INPUT {
             @Override
-            AnnotationJsonSchemaGenerator generator(JsonMapperProfile profile) {
+            AnnotationJsonSchemaGenerator generator(JsonProfileCodec profile) {
                 return AnnotationJsonSchemaGenerator.forInputProfile(profile);
             }
         },
         OUTPUT {
             @Override
-            AnnotationJsonSchemaGenerator generator(JsonMapperProfile profile) {
+            AnnotationJsonSchemaGenerator generator(JsonProfileCodec profile) {
                 return AnnotationJsonSchemaGenerator.forOutputProfile(profile);
             }
         };
 
-        abstract AnnotationJsonSchemaGenerator generator(JsonMapperProfile profile);
+        abstract AnnotationJsonSchemaGenerator generator(JsonProfileCodec profile);
     }
 
     /** A shape-matrix row over the plain profile. */
@@ -5785,7 +5789,7 @@ class HiddenMemberReportTest {
     private static Arguments shape(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Class<?> shape,
             Type root,
             List<HiddenMember> expected) {
@@ -5801,7 +5805,7 @@ class HiddenMemberReportTest {
     private static Arguments position(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Type root,
             String property,
             List<HiddenMember> expected) {
@@ -5811,7 +5815,7 @@ class HiddenMemberReportTest {
     private static Arguments twin(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Type original,
             HiddenMember entry,
             Class<?> twin,
@@ -5827,7 +5831,7 @@ class HiddenMemberReportTest {
     private static void assertPositionReport(
             String label,
             Direction direction,
-            JsonMapperProfile profile,
+            JsonProfileCodec profile,
             Type root,
             List<HiddenMember> expected,
             String property) {

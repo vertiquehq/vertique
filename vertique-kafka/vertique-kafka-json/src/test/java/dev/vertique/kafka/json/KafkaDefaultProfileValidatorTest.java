@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * fail-fast seam for {@code kafka.jsonProfile}.
  *
  * <p>Mirrors the {@code JaxRsDefaultProfileValidatorTest} pattern: a real Dagger component installs
- * {@link JsonRuntimeModule} (for the {@link dev.vertique.core.json.JsonMapperProfileRegistry}) plus a
+ * {@link JsonRuntimeModule} (for the {@link dev.vertique.core.json.JsonProfileRegistry}) plus a
  * test module supplying a pre-built {@link KafkaConfig}, the empty {@code @VertxConfig JsonObject},
  * and a minimal {@link ConfigParser}. Resolving the {@code Set<ComposeValidator>} multibinding forces
  * construction of {@link KafkaDefaultProfileValidator}, running its {@code @Inject} constructor — the

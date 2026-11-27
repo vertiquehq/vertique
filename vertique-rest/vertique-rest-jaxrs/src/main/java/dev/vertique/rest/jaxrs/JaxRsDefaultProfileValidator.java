@@ -3,8 +3,8 @@
 
 package dev.vertique.rest.jaxrs;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import jakarta.inject.Inject;
@@ -13,7 +13,7 @@ import jakarta.inject.Singleton;
 /**
  * {@link ComposeValidator} that fails the application's {@code VALIDATE} phase when the configured
  * JAX-RS per-boundary default profile ({@code jaxrs.jsonProfile}) names a profile id that the
- * {@link JsonMapperProfileRegistry} does not know.
+ * {@link JsonProfileRegistry} does not know.
  *
  * <p>The validation is performed in the {@code @Inject} constructor (the
  * constructible-as-validation pattern), mirroring {@code JsonDefaultProfileValidator} in
@@ -39,7 +39,7 @@ public final class JaxRsDefaultProfileValidator implements ComposeValidator {
      *     profile id
      */
     @Inject
-    public JaxRsDefaultProfileValidator(JaxRsConfig config, JsonMapperProfileRegistry registry) {
+    public JaxRsDefaultProfileValidator(JaxRsConfig config, JsonProfileRegistry registry) {
         registry.validateConfigured(config.jsonProfile());
     }
 }

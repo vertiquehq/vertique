@@ -13,9 +13,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
@@ -134,8 +134,8 @@ class ReservedNameGuardVerdictTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static JsonMapperProfile profile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("reserved-name-guard-verdict-test"), new ObjectMapper());
+    private static JsonProfileCodec profile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("reserved-name-guard-verdict-test"), new ObjectMapper());
     }
 
     private static String canonical(Class<?> type) {

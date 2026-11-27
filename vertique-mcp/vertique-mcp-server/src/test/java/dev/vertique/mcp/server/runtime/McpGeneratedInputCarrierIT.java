@@ -6,7 +6,7 @@ package dev.vertique.mcp.server.runtime;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import java.util.HashMap;
 import java.util.List;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Timeout;
  *
  * <p>Given a composed server exposing one record-parameter tool ({@code identity.register}'s
  * address carrier) and one {@code Optional<T>} tool ({@code identity.register}'s nickname carrier)
- * under a real {@link dev.vertique.json.DefaultJsonMapperProfileRegistry} and a registered {@code
+ * under a real {@link dev.vertique.json.DefaultJsonProfileRegistry} and a registered {@code
  * strict} profile — with the address carrier resolved through {@link McpJsonProfileResolver}'s
  * unconfigured tail (the {@code vertique} profile) and the nickname carrier bound to the
  * selected profile ({@code strict} in the Given, swapped to {@code vertx} by the sensitivity
@@ -47,8 +47,8 @@ class McpGeneratedInputCarrierIT {
     void shouldMaterializeCarriersThroughTheEffectiveMapper() {
         // --- Given: a composed server, the resolver's unconfigured tail, and a registered strict profile ---
         McpJsonProfileResolver resolver = McpGeneratedInputCarrierITFixture.resolver();
-        JsonMapperProfile addressEffectiveProfile = resolver.resolve(null);
-        JsonMapperProfile nicknameEffectiveProfile = resolver.resolve(JsonProfileId.of(SELECTED_PROFILE));
+        JsonProfileCodec addressEffectiveProfile = resolver.resolve(null);
+        JsonProfileCodec nicknameEffectiveProfile = resolver.resolve(JsonProfileId.of(SELECTED_PROFILE));
         McpToolRuntime<AddressToolInput> addressRuntime =
                 McpGeneratedInputCarrierITFixture.runtime(addressEffectiveProfile, AddressToolInput.class);
         McpToolRuntime<NicknameToolInput> nicknameRuntime =

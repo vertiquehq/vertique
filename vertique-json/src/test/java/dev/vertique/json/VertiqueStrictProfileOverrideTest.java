@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
 import java.math.BigDecimal;
@@ -25,15 +25,15 @@ import org.junit.jupiter.api.Test;
  */
 class VertiqueStrictProfileOverrideTest {
 
-    private static JsonMapperProfile strictProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(VertiqueStrictJsonMapperProfile.ID);
+    private static JsonProfileCodec strictProfile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(VertiqueStrictJsonProfileCodec.ID);
     }
 
     @Test
     @DisplayName("vertique-strict declares exactly one BigDecimal BOTH override built from the serde constants")
     void strictProfileDeclaresBigDecimalBothOverride() {
         // Given: the built-in vertique-strict profile.
-        JsonMapperProfile profile = strictProfile();
+        JsonProfileCodec profile = strictProfile();
 
         // When: its declared schema overrides are read.
         List<JsonSchemaTypeOverride> overrides = profile.jsonSchemaTypeOverrides();
@@ -61,7 +61,7 @@ class VertiqueStrictProfileOverrideTest {
     @Test
     @DisplayName("vertique-strict's declared override list is the same stable instance on repeated calls")
     void strictProfileOverrideListStable() {
-        JsonMapperProfile profile = strictProfile();
+        JsonProfileCodec profile = strictProfile();
 
         List<JsonSchemaTypeOverride> first = profile.jsonSchemaTypeOverrides();
         List<JsonSchemaTypeOverride> second = profile.jsonSchemaTypeOverrides();
@@ -72,10 +72,10 @@ class VertiqueStrictProfileOverrideTest {
     @Test
     @DisplayName("the system and vertique built-in profiles declare no schema overrides")
     void systemAndVertiqueProfilesDeclareNoOverrides() {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
-        JsonMapperProfile system = registry.profile(SystemJsonMapperProfile.ID);
-        JsonMapperProfile vertique = registry.profile(VertiqueJsonMapperProfile.ID);
+        JsonProfileCodec system = registry.profile(SystemJsonProfileCodec.ID);
+        JsonProfileCodec vertique = registry.profile(VertiqueJsonProfileCodec.ID);
 
         assertTrue(system.jsonSchemaTypeOverrides().isEmpty(), "system profile must declare no schema overrides");
         assertTrue(vertique.jsonSchemaTypeOverrides().isEmpty(), "vertique profile must declare no schema overrides");

@@ -16,11 +16,12 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
@@ -164,14 +165,14 @@ public class ProfiledErrorResponseIT {
      *
      * @return the {@code error-profile} profile
      */
-    private static JsonMapperProfile opinionatedErrorProfile() {
+    private static JsonProfileCodec opinionatedErrorProfile() {
         ObjectMapper mapper = JsonMapper.builder()
                 .addModule(new JavaTimeModule())
                 .addModule(VertxJsonSupport.module())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .build();
         mapper.addMixIn(ErrorEntity.class, NonNullMixin.class);
-        return JsonMapperProfiles.of(JsonProfileId.of(OPINIONATED_PROFILE), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of(OPINIONATED_PROFILE), mapper);
     }
 
     /**
@@ -185,14 +186,14 @@ public class ProfiledErrorResponseIT {
      *
      * @return the {@code throwing-error-profile} profile
      */
-    private static JsonMapperProfile throwingErrorProfile() {
+    private static JsonProfileCodec throwingErrorProfile() {
         SimpleModule throwing = new SimpleModule();
         throwing.addSerializer(ErrorEntity.class, new ThrowingErrorEntitySerializer());
         ObjectMapper mapper = JsonMapper.builder()
                 .addModule(VertxJsonSupport.module())
                 .addModule(throwing)
                 .build();
-        return JsonMapperProfiles.of(JsonProfileId.of(THROWING_PROFILE), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of(THROWING_PROFILE), mapper);
     }
 
     /** Mix-in applying {@code NON_NULL} inclusion to the error entity only (not the probe samples). */
@@ -798,7 +799,7 @@ public class ProfiledErrorResponseIT {
             Set<Object> resources,
             Set<Middleware> middlewares,
             JsonObject config,
-            Set<JsonMapperProfile> profiles,
+            Set<JsonProfileCodec> profiles,
             BiConsumer<Integer, WebClient> afterListen) {
         deploy(vertx, ctx, resources, middlewares, config, profiles, false, afterListen);
     }
@@ -855,7 +856,7 @@ public class ProfiledErrorResponseIT {
             Set<Object> resources,
             Set<Middleware> middlewares,
             JsonObject config,
-            Set<JsonMapperProfile> profiles,
+            Set<JsonProfileCodec> profiles,
             boolean installSystemAsProcessCodec,
             BiConsumer<Integer, WebClient> afterListen) {
         RestTestContributions.Builder contributions = RestTestContributions.builder()
@@ -867,14 +868,16 @@ public class ProfiledErrorResponseIT {
                 .addExceptionMapper(new NoMethodFailureMapper())
                 .addExceptionMapper(new UnsupportedMediaTypeMapper());
         middlewares.forEach(contributions::addMiddleware);
-        profiles.forEach(contributions::addJsonMapperProfile);
+        profiles.forEach(contributions::addJsonProfileCodec);
 
         ValidationMountComponent component = MountFixtures.component(vertx, config, contributions.build());
         if (installSystemAsProcessCodec) {
             // Before the router is built: the resolver captures its sentinel comparison at router-build
             // time, so an install afterwards would no longer match the routes already decided.
             VertiqueJson.install(
-                    JsonProfileId.SYSTEM, component.jsonMapperProfileRegistry().mapper(JsonProfileId.SYSTEM));
+                    JsonProfileId.SYSTEM,
+                    Jackson2JsonProfileCodec.objectMapper(
+                            component.jsonProfileRegistry().profile(JsonProfileId.SYSTEM)));
         }
         RestTestMounts.startServer(vertx, component.testMount(), resources).onComplete(ctx.succeeding(s -> {
             server = s;

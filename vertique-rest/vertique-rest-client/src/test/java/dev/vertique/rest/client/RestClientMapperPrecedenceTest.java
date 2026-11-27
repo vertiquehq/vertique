@@ -16,14 +16,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JsonConfig;
-import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.config.RestClientDefaults;
@@ -119,7 +120,7 @@ class RestClientMapperPrecedenceTest {
 
     /**
      * Creates a fresh {@link ObjectMapper} with Vert.x JSON-type support registered so it passes the
-     * {@link DefaultJsonMapperProfileRegistry} round-trip probe.
+     * {@link DefaultJsonProfileRegistry} round-trip probe.
      *
      * @return a new probe-passing mapper instance
      */
@@ -128,29 +129,29 @@ class RestClientMapperPrecedenceTest {
     }
 
     /**
-     * Builds a real {@link DefaultJsonMapperProfileRegistry} from the three app profiles A/B/C.
+     * Builds a real {@link DefaultJsonProfileRegistry} from the three app profiles A/B/C.
      *
      * @return a registry resolving {@code profile-a/b/c} plus the reserved {@code vertx}
      */
-    private static JsonMapperProfileRegistry registryWithAbc() {
-        return new DefaultJsonMapperProfileRegistry(Set.of(
-                JsonMapperProfiles.of(ID_A, mapperA),
-                JsonMapperProfiles.of(ID_B, mapperB),
-                JsonMapperProfiles.of(ID_C, mapperC)));
+    private static JsonProfileRegistry registryWithAbc() {
+        return new DefaultJsonProfileRegistry(Set.of(
+                Jackson2JsonProfiles.of(ID_A, mapperA),
+                Jackson2JsonProfiles.of(ID_B, mapperB),
+                Jackson2JsonProfiles.of(ID_C, mapperC)));
     }
 
     /**
-     * Builds a {@link DefaultJsonMapperProfileRegistry} from all five app profiles A/B/C/D/E.
+     * Builds a {@link DefaultJsonProfileRegistry} from all five app profiles A/B/C/D/E.
      *
      * @return a registry resolving {@code profile-a/b/c/d/e} plus the reserved {@code vertx}
      */
-    private static JsonMapperProfileRegistry registryWithAbcDe() {
-        return new DefaultJsonMapperProfileRegistry(Set.of(
-                JsonMapperProfiles.of(ID_A, mapperA),
-                JsonMapperProfiles.of(ID_B, mapperB),
-                JsonMapperProfiles.of(ID_C, mapperC),
-                JsonMapperProfiles.of(ID_D, mapperD),
-                JsonMapperProfiles.of(ID_E, mapperE)));
+    private static JsonProfileRegistry registryWithAbcDe() {
+        return new DefaultJsonProfileRegistry(Set.of(
+                Jackson2JsonProfiles.of(ID_A, mapperA),
+                Jackson2JsonProfiles.of(ID_B, mapperB),
+                Jackson2JsonProfiles.of(ID_C, mapperC),
+                Jackson2JsonProfiles.of(ID_D, mapperD),
+                Jackson2JsonProfiles.of(ID_E, mapperE)));
     }
 
     /**
@@ -210,11 +211,11 @@ class RestClientMapperPrecedenceTest {
         void explicitObjectMapper_wins() {
             ObjectMapper custom = newVertxAwareMapper();
             // Registry that throws if consulted, proving the explicit mapper short-circuits it.
-            JsonMapperProfileRegistry throwingRegistry = new ThrowingRegistry();
+            JsonProfileRegistry throwingRegistry = new ThrowingRegistry();
             RestClientBuilder builder = RestClientBuilder.create(vertx)
                     .objectMapper(custom)
                     .jsonProfile(ID_B)
-                    .jsonMapperProfileRegistry(throwingRegistry);
+                    .jsonProfileRegistry(throwingRegistry);
 
             RestClientConfig config = configWithProfile("profile-a");
             ObjectMapper resolved = builder.resolveEffectiveMapper(config, AnnotatedClient.class, "svc");
@@ -226,7 +227,7 @@ class RestClientMapperPrecedenceTest {
         @DisplayName("configProfile_overridesBuilderAndAnnotation — config A beats builder B and annotation C")
         void configProfile_overridesBuilderAndAnnotation() {
             RestClientBuilder builder =
-                    RestClientBuilder.create(vertx).jsonProfile(ID_B).jsonMapperProfileRegistry(registryWithAbc());
+                    RestClientBuilder.create(vertx).jsonProfile(ID_B).jsonProfileRegistry(registryWithAbc());
 
             RestClientConfig config = configWithProfile("profile-a");
             ObjectMapper resolved = builder.resolveEffectiveMapper(config, AnnotatedClient.class, "svc");
@@ -238,7 +239,7 @@ class RestClientMapperPrecedenceTest {
         @DisplayName("builderProfile_overridesAnnotation — builder B beats annotation C when no config")
         void builderProfile_overridesAnnotation() {
             RestClientBuilder builder =
-                    RestClientBuilder.create(vertx).jsonProfile(ID_B).jsonMapperProfileRegistry(registryWithAbc());
+                    RestClientBuilder.create(vertx).jsonProfile(ID_B).jsonProfileRegistry(registryWithAbc());
 
             // config with no jsonProfile set
             RestClientConfig config = configWithProfile(null);
@@ -250,7 +251,7 @@ class RestClientMapperPrecedenceTest {
         @Test
         @DisplayName("annotationProfile_used_whenNoConfigOrBuilder — annotation C used when only source")
         void annotationProfile_used_whenNoConfigOrBuilder() {
-            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonMapperProfileRegistry(registryWithAbc());
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfileRegistry(registryWithAbc());
 
             // null config, no builder profile → only @JsonProfile("profile-c")
             ObjectMapper resolved = builder.resolveEffectiveMapper(null, AnnotatedClient.class, "svc");
@@ -330,7 +331,7 @@ class RestClientMapperPrecedenceTest {
         void unknownProfileId_throwsAtBuild() {
             RestClientBuilder builder = RestClientBuilder.create(vertx)
                     .jsonProfile(JsonProfileId.of("not-registered"))
-                    .jsonMapperProfileRegistry(registryWithAbc());
+                    .jsonProfileRegistry(registryWithAbc());
 
             assertThrows(
                     JsonProfileConfigurationException.class,
@@ -355,10 +356,10 @@ class RestClientMapperPrecedenceTest {
         @Test
         @DisplayName("generatedProxy_inheritsResolvedMapper — generated proxy client resolves to profile-A mapper")
         void generatedProxy_inheritsResolvedMapper() {
-            JsonMapperProfileRegistry registry = registryWithAbc();
+            JsonProfileRegistry registry = registryWithAbc();
             RestClientBuilder builder = RestClientBuilder.create(vertx)
                     .baseUrl("http://localhost:9999")
-                    .jsonMapperProfileRegistry(registry);
+                    .jsonProfileRegistry(registry);
 
             // The interface carries @JsonProfile("profile-a") and has a generated
             // stand-in proxy on the test classpath (GeneratedProfileClient_RestClientProxy).
@@ -422,10 +423,10 @@ class RestClientMapperPrecedenceTest {
                     RestClientConfig.indexFromConfig(root, parser).get("svc");
             JsonConfig jsonConfig = new JsonConfig("profile-e"); // global tier is present
 
-            JsonMapperProfileRegistry registry = registryWithAbcDe();
+            JsonProfileRegistry registry = registryWithAbcDe();
             // Seed both lower tiers so the assertion proves per-client truly wins over them
             RestClientBuilder builder = RestClientBuilder.create(vertx)
-                    .jsonMapperProfileRegistry(registry)
+                    .jsonProfileRegistry(registry)
                     .defaultsJsonProfileId(defaults.jsonProfile())
                     .jsonConfig(jsonConfig);
 
@@ -447,9 +448,9 @@ class RestClientMapperPrecedenceTest {
                     RestClientConfig.indexFromConfig(root, parser).get("svc");
             JsonConfig jsonConfig = new JsonConfig("profile-e");
 
-            JsonMapperProfileRegistry registry = registryWithAbcDe();
+            JsonProfileRegistry registry = registryWithAbcDe();
             RestClientBuilder builder = RestClientBuilder.create(vertx)
-                    .jsonMapperProfileRegistry(registry)
+                    .jsonProfileRegistry(registry)
                     .defaultsJsonProfileId(defaults.jsonProfile())
                     .jsonConfig(jsonConfig);
 
@@ -468,9 +469,9 @@ class RestClientMapperPrecedenceTest {
                     RestClientConfig.indexFromConfig(root, parser).get("svc");
             JsonConfig jsonConfig = new JsonConfig("profile-e");
 
-            JsonMapperProfileRegistry registry = registryWithAbcDe();
+            JsonProfileRegistry registry = registryWithAbcDe();
             RestClientBuilder builder = RestClientBuilder.create(vertx)
-                    .jsonMapperProfileRegistry(registry)
+                    .jsonProfileRegistry(registry)
                     .jsonConfig(jsonConfig);
 
             ObjectMapper resolved = builder.resolveEffectiveMapper(clientConfig, PlainClient.class, "svc");
@@ -488,9 +489,9 @@ class RestClientMapperPrecedenceTest {
             RestClientConfig clientConfig =
                     RestClientConfig.indexFromConfig(root, parser).get("svc");
 
-            JsonMapperProfileRegistry throwingRegistry = new ThrowingRegistry();
+            JsonProfileRegistry throwingRegistry = new ThrowingRegistry();
             RestClientBuilder builder =
-                    RestClientBuilder.create(vertx).objectMapper(custom).jsonMapperProfileRegistry(throwingRegistry);
+                    RestClientBuilder.create(vertx).objectMapper(custom).jsonProfileRegistry(throwingRegistry);
 
             // The explicit objectMapper must win; the registry must never be consulted
             ObjectMapper resolved = builder.resolveEffectiveMapper(clientConfig, PlainClient.class, "svc");
@@ -515,7 +516,7 @@ class RestClientMapperPrecedenceTest {
 
     /**
      * Every id, including the reserved {@code system} id, now resolves through a
-     * {@link JsonMapperProfileRegistry} — the injected one, or a builder-private, lazily-created
+     * {@link JsonProfileRegistry} — the injected one, or a builder-private, lazily-created
      * seeded registry for reserved ids when none is injected. A non-reserved id without a registry
      * still fails fast.
      *
@@ -545,13 +546,13 @@ class RestClientMapperPrecedenceTest {
         @Test
         @DisplayName("(a) injectedRegistry_noProfileAnywhere_resolvesReservedVertiqueIdByIdentity")
         void injectedRegistry_noProfileAnywhere_resolvesReservedVertiqueIdByIdentity() {
-            JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
-            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonMapperProfileRegistry(registry);
+            JsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfileRegistry(registry);
 
             ObjectMapper resolved = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
 
             assertSame(
-                    registry.mapper(JsonProfileId.of("vertique")),
+                    Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                     resolved,
                     "with an injected registry and no profile anywhere, the reserved 'vertique' id must resolve"
                             + " through the registry");
@@ -661,14 +662,9 @@ class RestClientMapperPrecedenceTest {
     // --- Test doubles ---
 
     /** Registry that fails any consultation, proving the explicit-objectMapper path never calls it. */
-    private static final class ThrowingRegistry implements JsonMapperProfileRegistry {
+    private static final class ThrowingRegistry implements JsonProfileRegistry {
         @Override
-        public ObjectMapper mapper(JsonProfileId id) {
-            throw new AssertionError("registry must not be consulted when an explicit objectMapper is set");
-        }
-
-        @Override
-        public JsonMapperProfile profile(JsonProfileId id) {
+        public JsonProfileCodec profile(JsonProfileId id) {
             throw new AssertionError("registry must not be consulted when an explicit objectMapper is set");
         }
 

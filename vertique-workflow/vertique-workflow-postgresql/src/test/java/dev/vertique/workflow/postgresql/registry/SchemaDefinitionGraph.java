@@ -9,10 +9,10 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
@@ -123,8 +123,8 @@ final class SchemaDefinitionGraph {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

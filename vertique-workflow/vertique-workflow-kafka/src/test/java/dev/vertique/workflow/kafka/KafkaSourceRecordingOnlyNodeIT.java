@@ -14,10 +14,11 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.kafka.ShipmentSignals.DeliveryConfirmed;
 import dev.vertique.workflow.kafka.ShipmentSignals.OrdersContract;
@@ -66,7 +67,7 @@ class KafkaSourceRecordingOnlyNodeIT {
     private static final Instant DELIVERED_AT = Instant.parse("2026-10-30T12:34:56.789123Z");
 
     private static final Duration SETTLE = Duration.ofSeconds(30);
-    private static final JsonMapperProfile PROFILE = new EpochMicrosProfile("recording-only-source-epoch-micros");
+    private static final JsonProfileCodec PROFILE = new EpochMicrosProfile("recording-only-source-epoch-micros");
 
     /** Frees the process JSON codec of the profile of an earlier class, where the JVM allows it. */
     @BeforeAll
@@ -88,9 +89,9 @@ class KafkaSourceRecordingOnlyNodeIT {
         // Given a system profile whose encoding of the date differs from the default's, so that a date that went
         // through
         // any other codec would not round-trip
-        assertThat(PROFILE.mapper().writeValueAsString(DELIVERED_AT))
-                .isNotEqualTo(new DefaultJsonMapperProfileRegistry(Set.of())
-                        .mapper(JsonProfileId.SYSTEM)
+        assertThat(Jackson2JsonProfileCodec.objectMapper(PROFILE).writeValueAsString(DELIVERED_AT))
+                .isNotEqualTo(Jackson2JsonProfileCodec.objectMapper(
+                                new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.SYSTEM))
                         .writeValueAsString(DELIVERED_AT));
         SignalNodesFixture fixture = SignalNodesFixture.compile();
         try (fixture;
@@ -227,14 +228,15 @@ class KafkaSourceRecordingOnlyNodeIT {
      * A system profile that is the built-in one with a single difference: an instant is written as the number of
      * microseconds since the epoch, and read the same way. The built-in profile writes it as text.
      */
-    private static final class EpochMicrosProfile implements JsonMapperProfile {
+    private static final class EpochMicrosProfile extends Jackson2JsonProfileCodec {
 
         private final JsonProfileId id;
         private final ObjectMapper mapper;
 
         EpochMicrosProfile(String id) {
             this.id = JsonProfileId.of(id);
-            ObjectMapper system = new DefaultJsonMapperProfileRegistry(Set.of()).mapper(JsonProfileId.SYSTEM);
+            ObjectMapper system = Jackson2JsonProfileCodec.objectMapper(
+                    new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.SYSTEM));
             SimpleModule micros = new SimpleModule("epoch-micros-instants");
             micros.addSerializer(Instant.class, new StdSerializer<>(Instant.class) {
                 @Override
@@ -258,7 +260,7 @@ class KafkaSourceRecordingOnlyNodeIT {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }

@@ -61,7 +61,7 @@ SPDX-License-Identifier: EUPL-1.2
 
         <!-- Test -->
         <dependency>
-            <!-- CorrelationEnvelopeTest: DefaultJsonMapperProfileRegistry + JacksonDefaults for
+            <!-- CorrelationEnvelopeTest: DefaultJsonProfileRegistry + JacksonDefaults for
                  the cross-profile decode proof. Acyclic: vertique-json depends only on vertique-core. -->
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>

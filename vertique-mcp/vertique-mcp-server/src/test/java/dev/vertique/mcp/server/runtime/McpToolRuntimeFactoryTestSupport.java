@@ -3,9 +3,9 @@
 
 package dev.vertique.mcp.server.runtime;
 
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import jakarta.annotation.Nullable;
@@ -57,8 +57,8 @@ public final class McpToolRuntimeFactoryTestSupport {
      * @return the composed factory
      */
     public static McpToolRuntimeFactory factory(
-            Set<JsonMapperProfile> applicationProfiles, @Nullable String mcpJsonProfile) {
-        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(applicationProfiles);
+            Set<JsonProfileCodec> applicationProfiles, @Nullable String mcpJsonProfile) {
+        JsonProfileRegistry registry = new DefaultJsonProfileRegistry(applicationProfiles);
         McpServerConfig mcpConfig = McpServerConfig.builder()
                 .enabled(true)
                 .jsonProfile(mcpJsonProfile)
@@ -79,7 +79,7 @@ public final class McpToolRuntimeFactoryTestSupport {
      * @return the composed, validator-backed factory
      */
     public static McpToolRuntimeFactory factoryWithValidator(Validator validator) {
-        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        JsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
         McpServerConfig mcpConfig =
                 McpServerConfig.builder().enabled(true).jsonProfile(null).build();
         return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, Optional.of(validator));

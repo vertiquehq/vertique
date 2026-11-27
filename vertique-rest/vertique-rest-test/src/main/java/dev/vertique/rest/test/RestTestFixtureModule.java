@@ -7,7 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dev.vertique.config.parser.ConfigParsingModule;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.request.FileContentVerifier;
@@ -177,15 +177,15 @@ public abstract class RestTestFixtureModule {
     }
 
     /**
-     * Unions the contributed profiles into the framework {@code Set<JsonMapperProfile>} multibinding.
+     * Unions the contributed profiles into the framework {@code Set<JsonProfileCodec>} multibinding.
      *
      * @param contributions the test contributions
      * @return the contributed JSON mapper profiles
      */
     @Provides
     @ElementsIntoSet
-    static Set<JsonMapperProfile> fixtureJsonMapperProfiles(RestTestContributions contributions) {
-        return contributions.jsonMapperProfiles();
+    static Set<JsonProfileCodec> fixtureJsonProfileCodecs(RestTestContributions contributions) {
+        return contributions.jsonProfileCodecs();
     }
 
     /**

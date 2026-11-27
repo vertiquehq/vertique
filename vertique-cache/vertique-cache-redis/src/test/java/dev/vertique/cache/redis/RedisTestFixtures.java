@@ -12,9 +12,10 @@ import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheValueDescriptor;
 import dev.vertique.cache.spi.ResolvedCacheKey;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.redis.client.Response;
@@ -68,31 +69,26 @@ final class RedisTestFixtures {
         return store.put(key, descriptor(type), value, ttl);
     }
 
-    static RedisCacheStore store(RedisCommandClient commands, CacheConfig config, JsonMapperProfileRegistry profiles) {
+    static RedisCacheStore store(RedisCommandClient commands, CacheConfig config, JsonProfileRegistry profiles) {
         return new RedisCacheStore(commands, REDIS_CONFIG, config, profiles);
     }
 
-    static JsonMapperProfileRegistry profiles(String id, ObjectMapper mapper) {
+    static JsonProfileRegistry profiles(String id, ObjectMapper mapper) {
         JsonProfileId profileId = JsonProfileId.of(id);
-        JsonMapperProfile profile = new JsonMapperProfile() {
+        JsonProfileCodec profile = new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return profileId;
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return mapper;
             }
         };
-        return new JsonMapperProfileRegistry() {
+        return new JsonProfileRegistry() {
             @Override
-            public ObjectMapper mapper(JsonProfileId requested) {
-                return profile(requested).mapper();
-            }
-
-            @Override
-            public JsonMapperProfile profile(JsonProfileId requested) {
+            public JsonProfileCodec profile(JsonProfileId requested) {
                 if (!profileId.equals(requested)) {
                     throw new IllegalArgumentException("unknown test JSON profile: " + requested);
                 }

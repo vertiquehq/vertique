@@ -12,14 +12,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JsonConfig;
-import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -131,9 +132,9 @@ class RequestBodyProfileResolverTest {
     // --- Helpers ---
 
     /** Builds a probe-passing application profile whose mapper registers Vert.x JSON support. */
-    private static JsonMapperProfile appProfile(String id) {
+    private static JsonProfileCodec appProfile(String id) {
         ObjectMapper mapper = new ObjectMapper().registerModule(VertxJsonSupport.module());
-        return JsonMapperProfiles.of(JsonProfileId.of(id), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of(id), mapper);
     }
 
     /**
@@ -141,8 +142,8 @@ class RequestBodyProfileResolverTest {
      * (the {@code jaxrs.jsonProfile} tier), and {@code global-profile} (the {@code json.jsonProfile}
      * tier) apps.
      */
-    private static DefaultJsonMapperProfileRegistry registryWithAppProfiles() {
-        return new DefaultJsonMapperProfileRegistry(Set.of(
+    private static DefaultJsonProfileRegistry registryWithAppProfiles() {
+        return new DefaultJsonProfileRegistry(Set.of(
                 appProfile("method-profile"),
                 appProfile("class-profile"),
                 appProfile("config-profile"),
@@ -204,7 +205,7 @@ class RequestBodyProfileResolverTest {
     @Test
     @DisplayName("method @JsonProfile overrides class @JsonProfile, which overrides config, which overrides the floor")
     void methodProfile_overridesClassProfile_overridesConfig_overridesFloor() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         JsonConfig noGlobal = JsonConfig.defaults();
 
         // 1. Method annotation wins over class annotation and config.
@@ -214,7 +215,7 @@ class RequestBodyProfileResolverTest {
                 methodAnnotations(ClassAnnotatedResource.class, "methodOverride"),
                 classAnnotations(ClassAnnotatedResource.class));
         assertSame(
-                registry.mapper(JsonProfileId.of("method-profile")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("method-profile"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(
                                 methodWins, configWith("config-profile"), noGlobal, registry)
                         .stashMapper(),
@@ -227,7 +228,7 @@ class RequestBodyProfileResolverTest {
                 methodAnnotations(ClassAnnotatedResource.class, "inheritsClass"),
                 classAnnotations(ClassAnnotatedResource.class));
         assertSame(
-                registry.mapper(JsonProfileId.of("class-profile")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("class-profile"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(
                                 classWins, configWith("config-profile"), noGlobal, registry)
                         .stashMapper(),
@@ -240,7 +241,7 @@ class RequestBodyProfileResolverTest {
                 methodAnnotations(UnannotatedResource.class, "plain"),
                 classAnnotations(UnannotatedResource.class));
         assertSame(
-                registry.mapper(JsonProfileId.of("config-profile")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("config-profile"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(
                                 configWins, configWith("config-profile"), noGlobal, registry)
                         .stashMapper(),
@@ -248,7 +249,7 @@ class RequestBodyProfileResolverTest {
 
         // 4. With nothing set anywhere, the effective id is the vertique floor -> that profile's mapper.
         assertSame(
-                registry.mapper(JsonProfileId.of("vertique")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(configWins, configWith(null), noGlobal, registry)
                         .stashMapper(),
                 "the vertique floor must resolve to the vertique profile's mapper");
@@ -257,7 +258,7 @@ class RequestBodyProfileResolverTest {
     @Test
     @DisplayName("an unknown configured profile id throws JsonProfileConfigurationException at resolution")
     void unknownConfiguredProfile_throwsAtResolution() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 UnannotatedResource.class,
                 "plain",
@@ -275,7 +276,7 @@ class RequestBodyProfileResolverTest {
     @Test
     @DisplayName("an unknown method @JsonProfile id throws JsonProfileConfigurationException at resolution")
     void unknownAnnotatedProfile_throwsAtResolution() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 UnknownProfileResource.class,
                 "unknown",
@@ -293,7 +294,7 @@ class RequestBodyProfileResolverTest {
     @Test
     @DisplayName("no selection resolves the vertique floor's mapper; an explicit system resolves the system mapper")
     void noSelection_resolvesTheFloorMapper() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         JsonConfig noGlobal = JsonConfig.defaults();
         ResourceMethodMeta meta = metaFor(
                 UnannotatedResource.class,
@@ -305,15 +306,15 @@ class RequestBodyProfileResolverTest {
         // "system" resolves the registry's system mapper, which in this unbooted harness (nothing
         // installed as the process codec) is NOT the process mapper and so is returned, not nulled.
         assertSame(
-                registry.mapper(JsonProfileId.of("vertique")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(meta, configWith(null), noGlobal, registry)
                         .stashMapper());
         assertSame(
-                registry.mapper(JsonProfileId.of("vertique")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(meta, configWith("  "), noGlobal, registry)
                         .stashMapper());
         assertSame(
-                registry.mapper(JsonProfileId.SYSTEM),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(meta, configWith("system"), noGlobal, registry)
                         .stashMapper());
     }
@@ -325,7 +326,7 @@ class RequestBodyProfileResolverTest {
     void methodAnnotationWins() throws Exception {
         // given a method @JsonProfile("method-profile"), jaxrs.jsonProfile="config-profile",
         // json.jsonProfile="global-profile"
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 ClassAnnotatedResource.class,
                 "methodOverride",
@@ -338,14 +339,17 @@ class RequestBodyProfileResolverTest {
                 .stashMapper();
 
         // then the method annotation id "method-profile" wins
-        assertSame(registry.mapper(JsonProfileId.of("method-profile")), resolved, "method annotation must win");
+        assertSame(
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("method-profile"))),
+                resolved,
+                "method annotation must win");
     }
 
     @Test
     @DisplayName("class @JsonProfile wins over both jaxrs.jsonProfile and json.jsonProfile defaults")
     void classAnnotationOverDefaults() throws Exception {
         // given only a class @JsonProfile("class-profile") plus both defaults set
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 ClassAnnotatedResource.class,
                 "inheritsClass",
@@ -358,14 +362,17 @@ class RequestBodyProfileResolverTest {
                 .stashMapper();
 
         // then the class annotation id "class-profile" wins
-        assertSame(registry.mapper(JsonProfileId.of("class-profile")), resolved, "class annotation must win");
+        assertSame(
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("class-profile"))),
+                resolved,
+                "class annotation must win");
     }
 
     @Test
     @DisplayName("jaxrs.jsonProfile wins over json.jsonProfile when no annotation present")
     void jaxrsDefaultOverGlobal() throws Exception {
         // given no annotation, jaxrs.jsonProfile="config-profile", json.jsonProfile="global-profile"
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 UnannotatedResource.class,
                 "plain",
@@ -378,14 +385,17 @@ class RequestBodyProfileResolverTest {
                 .stashMapper();
 
         // then the jaxrs.jsonProfile id "config-profile" wins
-        assertSame(registry.mapper(JsonProfileId.of("config-profile")), resolved, "jaxrs.jsonProfile must win");
+        assertSame(
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("config-profile"))),
+                resolved,
+                "jaxrs.jsonProfile must win");
     }
 
     @Test
     @DisplayName("json.jsonProfile applies when no annotation and no jaxrs.jsonProfile")
     void globalDefaultApplies() throws Exception {
         // given no annotation and no jaxrs.jsonProfile, json.jsonProfile="global-profile"
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 UnannotatedResource.class,
                 "plain",
@@ -398,14 +408,17 @@ class RequestBodyProfileResolverTest {
                 .stashMapper();
 
         // then the json.jsonProfile id "global-profile" applies (the resolver must not ignore the global tier)
-        assertSame(registry.mapper(JsonProfileId.of("global-profile")), resolved, "json.jsonProfile must apply");
+        assertSame(
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("global-profile"))),
+                resolved,
+                "json.jsonProfile must apply");
     }
 
     @Test
     @DisplayName("vertique floor: nothing set anywhere resolves the vertique profile's mapper")
     void vertiqueFloor() throws Exception {
         // given nothing set: no annotation, no jaxrs.jsonProfile, no json.jsonProfile
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 UnannotatedResource.class,
                 "plain",
@@ -414,7 +427,7 @@ class RequestBodyProfileResolverTest {
 
         // when resolved, then the vertique floor resolves that profile's mapper
         assertSame(
-                registry.mapper(JsonProfileId.of("vertique")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(
                                 meta, configWith(null), JsonConfig.defaults(), registry)
                         .stashMapper(),
@@ -444,7 +457,7 @@ class RequestBodyProfileResolverTest {
     @DisplayName("the floor is vertique and the null sentinel fires only for the process mapper instance")
     void floorIsVertiqueAndSentinelFiresOnlyForTheProcessMapper() throws Exception {
         // given meta without annotations, no jaxrs.jsonProfile, and a seeded registry
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 UnannotatedResource.class,
                 "plain",
@@ -459,7 +472,7 @@ class RequestBodyProfileResolverTest {
                 // (a) nothing configured anywhere, the process codec still on its raw delegate: the
                 // tail is the vertique floor's mapper, not a null "no override".
                 () -> assertSame(
-                        registry.mapper(vertique),
+                        Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique)),
                         RequestBodyProfileResolver.resolveRequestBodyProfile(
                                         meta, configWith(null), JsonConfig.defaults(), registry)
                                 .stashMapper(),
@@ -468,7 +481,9 @@ class RequestBodyProfileResolverTest {
                 // process codec's mapper: the resolved instance is the process mapper, so the sentinel
                 // returns null.
                 () -> {
-                    VertiqueJson.install(JsonProfileId.SYSTEM, registry.mapper(JsonProfileId.SYSTEM));
+                    VertiqueJson.install(
+                            JsonProfileId.SYSTEM,
+                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
                     assertNull(
                             RequestBodyProfileResolver.resolveRequestBodyProfile(
                                             meta, configWith(null), new JsonConfig("system", null), registry)
@@ -481,9 +496,9 @@ class RequestBodyProfileResolverTest {
                 // process mapper, so it is returned.
                 () -> {
                     VertiqueJson.resetForTests();
-                    VertiqueJson.install(vertique, registry.mapper(vertique));
+                    VertiqueJson.install(vertique, Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique)));
                     assertSame(
-                            registry.mapper(JsonProfileId.SYSTEM),
+                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                             RequestBodyProfileResolver.resolveRequestBodyProfile(
                                             meta, configWith(null), new JsonConfig("system", "vertique"), registry)
                                     .stashMapper(),
@@ -496,7 +511,7 @@ class RequestBodyProfileResolverTest {
 
     /**
      * The resolver's result carries both the registry profile it selected and the process-codec verdict
-     * — {@code profile.mapper() == VertiqueJson.mapper()} — which the registrar turns into the nullable
+     * — {@code objectMapper(profile) == VertiqueJson.mapper()} — which the registrar turns into the nullable
      * stash mapper.
      *
      * <p>The verdict is an identity read, not an id comparison, so the same two routes invert their
@@ -517,7 +532,7 @@ class RequestBodyProfileResolverTest {
     @DisplayName("the resolved profile carries the process-codec verdict, read by mapper identity")
     void resolvedProfileCarriesTheProcessCodecVerdict() throws Exception {
         // given an explicitly system-profiled method, an unannotated method, and a seeded registry
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         JsonProfileId vertique = JsonProfileId.of("vertique");
         ResourceMethodMeta explicitSystem = metaFor(
                 SystemProfileResource.class,
@@ -535,7 +550,9 @@ class RequestBodyProfileResolverTest {
         assertAll(
                 // (a) the registry's system mapper IS the process codec's mapper.
                 () -> {
-                    VertiqueJson.install(JsonProfileId.SYSTEM, registry.mapper(JsonProfileId.SYSTEM));
+                    VertiqueJson.install(
+                            JsonProfileId.SYSTEM,
+                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
                     var system = RequestBodyProfileResolver.resolveRequestBodyProfile(
                             explicitSystem, configWith(null), JsonConfig.defaults(), registry);
                     var floor = RequestBodyProfileResolver.resolveRequestBodyProfile(
@@ -561,7 +578,7 @@ class RequestBodyProfileResolverTest {
                 // invert while both selected profiles stay exactly as they were.
                 () -> {
                     VertiqueJson.resetForTests();
-                    VertiqueJson.install(vertique, registry.mapper(vertique));
+                    VertiqueJson.install(vertique, Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique)));
                     var system = RequestBodyProfileResolver.resolveRequestBodyProfile(
                             explicitSystem, configWith(null), JsonConfig.defaults(), registry);
                     var floor = RequestBodyProfileResolver.resolveRequestBodyProfile(
@@ -591,7 +608,7 @@ class RequestBodyProfileResolverTest {
     @DisplayName("blank method @JsonProfile falls through to a valid class @JsonProfile")
     void blankMethodJsonProfile_fallsThroughToClassProfile() throws Exception {
         // given a method @JsonProfile("") and a class @JsonProfile("class-profile")
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 BlankMethodOverClassResource.class,
                 "blankMethod",
@@ -605,7 +622,7 @@ class RequestBodyProfileResolverTest {
 
         // then the blank method annotation is treated as absent and the class profile applies
         assertSame(
-                registry.mapper(JsonProfileId.of("class-profile")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("class-profile"))),
                 resolved,
                 "blank method @JsonProfile must fall through to the class profile, not mask it");
     }
@@ -614,7 +631,7 @@ class RequestBodyProfileResolverTest {
     @DisplayName("blank @JsonProfile alone falls through to the vertique floor (no IllegalArgumentException)")
     void blankJsonProfileAlone_fallsThroughToVertiqueFloor() throws Exception {
         // given only a blank method @JsonProfile(""), no class annotation, no jaxrs/global default
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 BlankMethodOnlyResource.class,
                 "blankMethod",
@@ -623,7 +640,7 @@ class RequestBodyProfileResolverTest {
 
         // when resolved, then the vertique floor's mapper comes back with no exception thrown
         assertSame(
-                registry.mapper(JsonProfileId.of("vertique")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))),
                 RequestBodyProfileResolver.resolveRequestBodyProfile(
                                 meta, configWith(null), JsonConfig.defaults(), registry)
                         .stashMapper(),
@@ -634,7 +651,7 @@ class RequestBodyProfileResolverTest {
     @DisplayName("blank method @JsonProfile falls through to the jaxrs.jsonProfile default")
     void blankMethodJsonProfile_fallsThroughToJaxrsDefault() throws Exception {
         // given a blank method @JsonProfile(""), no class annotation, jaxrs.jsonProfile="config-profile"
-        DefaultJsonMapperProfileRegistry registry = registryWithAppProfiles();
+        DefaultJsonProfileRegistry registry = registryWithAppProfiles();
         ResourceMethodMeta meta = metaFor(
                 BlankMethodOnlyResource.class,
                 "blankMethod",
@@ -648,7 +665,7 @@ class RequestBodyProfileResolverTest {
 
         // then the blank method annotation is absent and the jaxrs default applies
         assertSame(
-                registry.mapper(JsonProfileId.of("config-profile")),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("config-profile"))),
                 resolved,
                 "blank method @JsonProfile must fall through to the jaxrs.jsonProfile default");
     }

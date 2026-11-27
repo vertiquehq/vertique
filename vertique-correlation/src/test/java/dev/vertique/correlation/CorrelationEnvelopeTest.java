@@ -25,7 +25,8 @@ import dev.vertique.core.correlation.CorrelationSessionRef;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.correlation.CorrelationEnvelope.EnvelopeProtocolCorrelation;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonDefaults;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
@@ -235,15 +236,20 @@ class CorrelationEnvelopeTest {
         VertiqueJson.resetForTests();
 
         // --- Cross-profile phase ---
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
-        String vertiqueJson = registry.mapper(JsonProfileId.of("vertique")).writeValueAsString(env);
-        String systemJson = registry.mapper(JsonProfileId.SYSTEM).writeValueAsString(env);
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
+        String vertiqueJson = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique")))
+                .writeValueAsString(env);
+        String systemJson = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM))
+                .writeValueAsString(env);
 
-        VertiqueJson.install(JsonProfileId.SYSTEM, registry.mapper(JsonProfileId.SYSTEM));
+        VertiqueJson.install(
+                JsonProfileId.SYSTEM, Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
         assertEquals(pinnedSnapshot, decodeToSnapshot(decoder, vertiqueJson));
         VertiqueJson.resetForTests();
 
-        VertiqueJson.install(JsonProfileId.of("vertique"), registry.mapper(JsonProfileId.of("vertique")));
+        VertiqueJson.install(
+                JsonProfileId.of("vertique"),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))));
         assertEquals(pinnedSnapshot, decodeToSnapshot(decoder, systemJson));
         VertiqueJson.resetForTests();
 

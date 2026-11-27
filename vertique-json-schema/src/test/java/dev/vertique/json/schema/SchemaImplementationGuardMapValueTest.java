@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.util.Map;
@@ -34,7 +34,7 @@ class SchemaImplementationGuardMapValueTest {
     @Test
     @DisplayName("A redirect over a directly declared Map<K,V> member with an overridden V fails generation")
     void redirectPlusOverriddenMapValueFailsGeneration() {
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
         AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.forInputProfile(strict);
 
         JsonSchemaGenerationException failure = assertThrows(
@@ -57,7 +57,7 @@ class SchemaImplementationGuardMapValueTest {
     @Test
     @DisplayName("Sensitivity proof: a non-map-valued redirect still fails generation")
     void nonMapValuedRedirectStillFails() {
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
         AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.forInputProfile(strict);
 
         // The directly overridden declared type — GeneratorCompositionTest's own shape — must

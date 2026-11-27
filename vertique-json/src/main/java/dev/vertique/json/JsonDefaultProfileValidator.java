@@ -3,8 +3,8 @@
 
 package dev.vertique.json;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import jakarta.inject.Inject;
@@ -14,15 +14,15 @@ import jakarta.inject.Singleton;
  * INTERNAL framework seam — profile-runtime collaborator consumed by sibling framework modules;
  * not an application contract and outside the maturity promise. An application uses the profile
  * ids, the configuration keys, and the extension point this module documents, and reaches the
- * registry through {@link dev.vertique.core.json.JsonMapperProfileRegistry}.
+ * registry through {@link dev.vertique.core.json.JsonProfileRegistry}.
  *
  * <p>{@link ComposeValidator} that fails the application's {@code VALIDATE} phase when the configured
  * managed-edge default profile ({@code json.jsonProfile}) names a profile id that the
- * {@link JsonMapperProfileRegistry} does not know.
+ * {@link JsonProfileRegistry} does not know.
  *
  * <p>The validation is performed in the {@code @Inject} constructor (the
  * constructible-as-validation pattern) and is a pure delegate to
- * {@link JsonMapperProfileRegistry#validateConfigured(String)} — the registry owns every message,
+ * {@link JsonProfileRegistry#validateConfigured(String)} — the registry owns every message,
  * including the one naming the {@code vertx} → {@code system} rename. When
  * {@code json.jsonProfile} is non-null and non-blank, the constructor resolves it through the
  * registry; an unknown id — and the retired {@code vertx} id — throws
@@ -53,7 +53,7 @@ public final class JsonDefaultProfileValidator implements ComposeValidator {
      *     {@code config.systemProfile()} names an unregistered or retired profile id
      */
     @Inject
-    public JsonDefaultProfileValidator(JsonConfig config, JsonMapperProfileRegistry registry) {
+    public JsonDefaultProfileValidator(JsonConfig config, JsonProfileRegistry registry) {
         registry.validateConfigured(config.jsonProfile());
         registry.validateConfigured(config.systemProfile());
         // The install seam checks the mapper it is handed, but the installed

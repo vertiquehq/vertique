@@ -43,7 +43,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-core</artifactId>
         </dependency>
 
-        <!-- JSON mapper profile SPI (JsonMapperProfile, the schema seam's second argument) -->
+        <!-- JSON mapper profile SPI (JsonProfileCodec, the schema seam's second argument) -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-core</artifactId>
@@ -113,7 +113,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Built-in profile registry the seam proofs resolve their effective profile through
-             (DefaultJsonMapperProfileRegistry) -->
+             (DefaultJsonProfileRegistry) -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>

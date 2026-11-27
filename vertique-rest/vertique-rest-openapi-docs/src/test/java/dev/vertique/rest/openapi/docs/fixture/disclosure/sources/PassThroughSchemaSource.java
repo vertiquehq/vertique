@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.disclosure.sources;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
@@ -35,7 +35,7 @@ public final class PassThroughSchemaSource implements OperationSchemaSource {
     }
 
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         return delegate.schemasFor(op, profile);
     }
 }

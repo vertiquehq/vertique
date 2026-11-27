@@ -10,7 +10,7 @@ import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
@@ -93,14 +93,14 @@ interface SignalNode {
     final class Rig {
 
         private final Pool pool;
-        private final JsonMapperProfile profile;
+        private final JsonProfileCodec profile;
         private final RecordingInterceptor interceptor;
         private final List<WorkflowDefinition<?, ?>> definitions;
         private final List<Function<WorkflowKafkaSignals, KafkaConsumerBinding<?>>> sources;
 
         Rig(
                 Pool pool,
-                JsonMapperProfile profile,
+                JsonProfileCodec profile,
                 RecordingInterceptor interceptor,
                 List<WorkflowDefinition<?, ?>> definitions,
                 List<Function<WorkflowKafkaSignals, KafkaConsumerBinding<?>>> sources) {
@@ -119,7 +119,7 @@ interface SignalNode {
 
         @Provides
         @IntoSet
-        JsonMapperProfile profile() {
+        JsonProfileCodec profile() {
             return profile;
         }
 

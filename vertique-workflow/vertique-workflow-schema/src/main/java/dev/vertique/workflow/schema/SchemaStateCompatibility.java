@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.schema;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
@@ -54,7 +54,7 @@ final class SchemaStateCompatibility implements WorkflowStateCompatibility {
     private final ConcurrentHashMap<Class<?>, JsonObject> schemas = new ConcurrentHashMap<>();
 
     @Inject
-    SchemaStateCompatibility(JsonMapperProfileRegistry profileRegistry, JsonConfig jsonConfig) {
+    SchemaStateCompatibility(JsonProfileRegistry profileRegistry, JsonConfig jsonConfig) {
         // The comparison reads types, not constraints, so no bean validator supplements the schemas.
         this(new PayloadSchemaGenerator(profileRegistry, jsonConfig, Optional.empty()));
     }

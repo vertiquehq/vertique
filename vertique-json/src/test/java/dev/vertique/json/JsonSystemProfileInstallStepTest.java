@@ -20,10 +20,10 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import io.vertx.core.Future;
@@ -48,7 +48,7 @@ import org.slf4j.LoggerFactory;
  * the codec, so the same step succeeds where the {@code () -> false} seam failed.
  *
  * <p>The second test pins the mapper-shape guards. Two of the three profiles it needs ({@code nomodule},
- * {@code typed}) are ones {@link DefaultJsonMapperProfileRegistry} refuses to register at all — its
+ * {@code typed}) are ones {@link DefaultJsonProfileRegistry} refuses to register at all — its
  * own construction-time guards are a different proof — so these cases resolve through a
  * {@link FakeRegistry}: the seam under test is the step's re-check, and it must fire for <em>any</em>
  * registry implementation an application binds. The retired-{@code vertx} case, by contrast, uses the
@@ -70,7 +70,7 @@ class JsonSystemProfileInstallStepTest {
     @Test
     @DisplayName("the step refuses to install when Vertique does not own the process codec")
     void failsWhenVertiqueDoesNotOwnTheProcessCodec() {
-        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        JsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
 
         // --- Case 1: the ownership seam reports a foreign codec ---
         JsonSystemProfileInstallStep foreign =
@@ -105,7 +105,7 @@ class JsonSystemProfileInstallStepTest {
                 "the injected supplier must consult VertiqueJson.ownsCodec(), which is true here, "
                         + "so the very same step installs the system profile");
         assertSame(
-                registry.mapper(JsonProfileId.SYSTEM),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                 VertiqueJson.mapper(),
                 "the step installs the registry's mapper instance for the effective system profile");
     }
@@ -153,7 +153,7 @@ class JsonSystemProfileInstallStepTest {
             assertTrue(VertiqueJson.profile().isEmpty(), "nothing may be installed after a refusal");
 
             // --- vertx: the retired reserved id, rejected by the real registry ---
-            Throwable renamedFailure = failureOf(stepFor("vertx", new DefaultJsonMapperProfileRegistry(Set.of())));
+            Throwable renamedFailure = failureOf(stepFor("vertx", new DefaultJsonProfileRegistry(Set.of())));
             String renamedMessage = messageOf(renamedFailure, "vertx");
             assertTrue(
                     renamedMessage.contains("renamed") && renamedMessage.contains("system"),
@@ -177,7 +177,7 @@ class JsonSystemProfileInstallStepTest {
 
             // --- the core seam is the backstop for a direct, post-install caller ---
             VertiqueJson.resetForTests();
-            JsonMapperProfileRegistry real = new DefaultJsonMapperProfileRegistry(Set.of());
+            JsonProfileRegistry real = new DefaultJsonProfileRegistry(Set.of());
             succeed(new JsonSystemProfileInstallStep(JsonConfig.defaults(), real));
             ObjectMapper installed = VertiqueJson.mapper();
 
@@ -210,7 +210,7 @@ class JsonSystemProfileInstallStepTest {
             FakeRegistry registry = new FakeRegistry().with("caseinsensitive", caseInsensitive);
 
             succeed(new JsonSystemProfileInstallStep(
-                    JsonConfig.defaults(), new DefaultJsonMapperProfileRegistry(Set.of()), () -> true));
+                    JsonConfig.defaults(), new DefaultJsonProfileRegistry(Set.of()), () -> true));
             assertNull(
                     logContaining(appender, Level.WARN, "accepts more than the baseline"),
                     "the baseline system profile must not log a leniency warning; captured: " + appender.list);
@@ -250,7 +250,7 @@ class JsonSystemProfileInstallStepTest {
             VertiqueJson.resetForTests();
             appender.list.clear();
             succeed(new JsonSystemProfileInstallStep(
-                    JsonConfig.defaults(), new DefaultJsonMapperProfileRegistry(Set.of()), () -> true));
+                    JsonConfig.defaults(), new DefaultJsonProfileRegistry(Set.of()), () -> true));
             assertNull(
                     logContaining(appender, Level.WARN, "FAIL_ON_TRAILING_TOKENS"),
                     "the baseline system profile rejects trailing tokens and must not be warned about; captured: "
@@ -270,7 +270,7 @@ class JsonSystemProfileInstallStepTest {
      * @param registry the registry the step resolves the mapper from
      * @return the constructed step
      */
-    private static JsonSystemProfileInstallStep stepFor(String systemProfile, JsonMapperProfileRegistry registry) {
+    private static JsonSystemProfileInstallStep stepFor(String systemProfile, JsonProfileRegistry registry) {
         return new JsonSystemProfileInstallStep(new JsonConfig(null, systemProfile), registry, () -> true);
     }
 
@@ -339,12 +339,12 @@ class JsonSystemProfileInstallStepTest {
     // --- Fixtures ---
 
     /**
-     * Minimal {@link JsonMapperProfileRegistry} that hands back exactly the mappers it was seeded
+     * Minimal {@link JsonProfileRegistry} that hands back exactly the mappers it was seeded
      * with. It exists so the shape-guard test can present the step with profile shapes
-     * {@link DefaultJsonMapperProfileRegistry} would refuse to register — the step's guards must hold
+     * {@link DefaultJsonProfileRegistry} would refuse to register — the step's guards must hold
      * for any application-bound registry implementation, which is the whole point of re-checking them.
      */
-    private static final class FakeRegistry implements JsonMapperProfileRegistry {
+    private static final class FakeRegistry implements JsonProfileRegistry {
 
         private final Map<JsonProfileId, ObjectMapper> mappers = new LinkedHashMap<>();
 
@@ -361,17 +361,12 @@ class JsonSystemProfileInstallStepTest {
         }
 
         @Override
-        public ObjectMapper mapper(JsonProfileId id) {
+        public JsonProfileCodec profile(JsonProfileId id) {
             ObjectMapper mapper = mappers.get(id);
             if (mapper == null) {
                 throw new JsonProfileConfigurationException("Unknown JSON profile id '" + id.value() + "'");
             }
-            return mapper;
-        }
-
-        @Override
-        public JsonMapperProfile profile(JsonProfileId id) {
-            return JsonMapperProfiles.of(id, mapper(id));
+            return Jackson2JsonProfiles.of(id, mapper);
         }
 
         @Override

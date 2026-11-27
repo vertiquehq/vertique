@@ -5,10 +5,11 @@ package dev.vertique.mcp.server.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.mcp.server.McpServerConfig;
@@ -21,7 +22,7 @@ import java.util.Set;
 
 /**
  * Framework wiring for {@link McpGeneratedInputCarrierIT}: a real
- * {@link DefaultJsonMapperProfileRegistry} composed with one application-registered {@code strict}
+ * {@link DefaultJsonProfileRegistry} composed with one application-registered {@code strict}
  * profile alongside the always-present framework {@code vertx} profile, a real
  * {@link McpJsonProfileResolver} resolving the effective profile exactly as composition does, and
  * direct {@link McpToolRuntime} construction through its package-private constructor — the same
@@ -43,7 +44,7 @@ final class McpGeneratedInputCarrierITFixture {
      * @return the composed resolver
      */
     static McpJsonProfileResolver resolver() {
-        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(new StrictProfile()));
+        JsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of(new StrictProfile()));
         McpServerConfig mcpConfig =
                 McpServerConfig.builder().enabled(true).jsonProfile(null).build();
         return new McpJsonProfileResolver(registry, JsonConfig.defaults(), mcpConfig);
@@ -58,7 +59,7 @@ final class McpGeneratedInputCarrierITFixture {
      * @param <I>              the carrier type
      * @return the runtime binding
      */
-    static <I> McpToolRuntime<I> runtime(JsonMapperProfile profile, Class<I> inputCarrierType) {
+    static <I> McpToolRuntime<I> runtime(JsonProfileCodec profile, Class<I> inputCarrierType) {
         McpToolDescriptor descriptor = new McpToolDescriptor(
                 "identity.register",
                 null,
@@ -67,7 +68,7 @@ final class McpGeneratedInputCarrierITFixture {
                 "{\"type\":\"object\"}",
                 null,
                 new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
-        return new McpToolRuntime<>(descriptor, profile.mapper(), inputCarrierType);
+        return new McpToolRuntime<>(descriptor, Jackson2JsonProfileCodec.objectMapper(profile), inputCarrierType);
     }
 
     /**
@@ -75,7 +76,7 @@ final class McpGeneratedInputCarrierITFixture {
      * {@code Optional} materialization, plus Vert.x's Jackson support so the registry's structural
      * round-trip probe (which round-trips a {@code JsonObject}/{@code JsonArray}) passes.
      */
-    private static final class StrictProfile implements JsonMapperProfile {
+    private static final class StrictProfile extends Jackson2JsonProfileCodec {
 
         private final ObjectMapper mapper =
                 new ObjectMapper().registerModule(new Jdk8Module()).registerModule(VertxJsonSupport.module());
@@ -86,7 +87,7 @@ final class McpGeneratedInputCarrierITFixture {
         }
 
         @Override
-        public ObjectMapper mapper() {
+        protected ObjectMapper mapper() {
             return mapper;
         }
     }

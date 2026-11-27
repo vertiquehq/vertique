@@ -15,7 +15,6 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
@@ -109,10 +108,10 @@ import java.util.List;
  * inclusion and the string wire form do not affect it. Applications must not contribute a profile
  * with the reserved {@code vertique-strict} id.
  *
- * @see VertiqueJsonMapperProfile
+ * @see VertiqueJsonProfileCodec
  * @see JacksonDefaults
  */
-final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
+final class VertiqueStrictJsonProfileCodec extends Jackson2JsonProfileCodec {
 
     /** The reserved id this built-in profile registers under. */
     static final JsonProfileId ID = JsonProfileId.of("vertique-strict");
@@ -299,7 +298,7 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      * @return the {@link ObjectMapper} backing the {@code vertique-strict} profile
      */
     @Override
-    public ObjectMapper mapper() {
+    protected ObjectMapper mapper() {
         return mapper;
     }
 

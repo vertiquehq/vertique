@@ -11,8 +11,8 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import io.vertx.core.json.JsonObject;
@@ -24,35 +24,35 @@ import java.util.Set;
  *
  * <p>Consumer modules ({@code rest-jaxrs}, {@code rest-client}, {@code kafka-json}) install this via
  * {@code @Module(includes = JsonRuntimeModule.class)}. It declares the empty
- * application multibinding seed for {@link JsonMapperProfile} (so an app that contributes no
- * profiles still wires) and binds {@link JsonMapperProfileRegistry} to
- * {@link DefaultJsonMapperProfileRegistry}.
+ * application multibinding seed for {@link JsonProfileCodec} (so an app that contributes no
+ * profiles still wires) and binds {@link JsonProfileRegistry} to
+ * {@link DefaultJsonProfileRegistry}.
  *
  * <p>The three built-in profiles ({@code system}, {@code vertique}, {@code vertique-strict}) are
  * <strong>not</strong> contributed into the set here — they are seeded inside
- * {@link DefaultJsonMapperProfileRegistry} separately from application profiles.
+ * {@link DefaultJsonProfileRegistry} separately from application profiles.
  */
 @Module
 public abstract class JsonRuntimeModule {
 
     /**
-     * Declares the empty application multibinding seed for {@link JsonMapperProfile}. Applications
+     * Declares the empty application multibinding seed for {@link JsonProfileCodec}. Applications
      * contribute profiles into this set via {@code @IntoSet}; the set may be empty.
      *
      * @return the empty set declaration for application-contributed profiles
      */
     @Multibinds
-    abstract Set<JsonMapperProfile> jsonMapperProfiles();
+    abstract Set<JsonProfileCodec> jsonProfileCodecs();
 
     /**
-     * Binds the {@link JsonMapperProfileRegistry} contract to its default implementation.
+     * Binds the {@link JsonProfileRegistry} contract to its default implementation.
      *
      * @param impl the validating registry implementation
-     * @return the registry bound to {@link DefaultJsonMapperProfileRegistry}
+     * @return the registry bound to {@link DefaultJsonProfileRegistry}
      */
     @Binds
     @Singleton
-    abstract JsonMapperProfileRegistry registry(DefaultJsonMapperProfileRegistry impl);
+    abstract JsonProfileRegistry registry(DefaultJsonProfileRegistry impl);
 
     /**
      * Parses the {@code json} configuration section into a typed {@link JsonConfig} at the Dagger

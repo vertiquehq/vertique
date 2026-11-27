@@ -18,7 +18,7 @@ import java.util.Set;
 /**
  * One self-contained JSON Schema (Draft 2020-12) fragment, held as an immutable canonical value.
  *
- * <p>A fragment describes the wire contract a {@link JsonMapperProfile} imposes on one Java class
+ * <p>A fragment describes the wire contract a {@link JsonProfileCodec} imposes on one Java class
  * (see {@link JsonSchemaTypeOverride}). It is a <em>fragment</em>, not a document: the schema
  * generator owns the document dialect and definition graph, so the dialect and reference keywords
  * {@code $schema}, {@code $id}, {@code $anchor}, {@code $dynamicAnchor}, {@code $ref},

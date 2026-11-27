@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.publication.fixture;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
@@ -38,7 +38,7 @@ public final class CountingSchemaSource implements OperationSchemaSource {
     }
 
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         int call = calls.incrementAndGet();
         OperationSchemas schemas = factory.apply(op, call);
         retained.put(op.operationId(), schemas);

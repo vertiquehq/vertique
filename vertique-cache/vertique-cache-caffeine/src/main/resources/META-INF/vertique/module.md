@@ -57,7 +57,7 @@ Install it in the application component for local caching. Annotation apps also 
 `CacheStore` backed by per-region Caffeine caches. Public constructors:
 
 - `CaffeineCacheStore(CacheConfig)` — direct use without a Dagger graph (empty JSON profile set)
-- `CaffeineCacheStore(CacheConfig, JsonMapperProfileRegistry)` — Dagger-injected form
+- `CaffeineCacheStore(CacheConfig, JsonProfileRegistry)` — Dagger-injected form
 
 ### ObjectCache and CaffeineObjectCache
 

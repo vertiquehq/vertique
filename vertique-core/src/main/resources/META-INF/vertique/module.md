@@ -33,7 +33,7 @@ starter or feature module. Depend on it **directly** when:
 - you throw or catch framework exceptions and want the semantic roots that drive HTTP mapping;
 - you parse a configuration section into a typed record through `ConfigParser`;
 - you implement a framework extension point declared here — a health check, a lifecycle step, a
-  `JsonMapperProfile`, or an `InputFieldNameResolver`;
+  `JsonProfileCodec`, or an `InputFieldNameResolver`;
 - you annotate an operation with `@ValidateWith` or `@JsonProfile`.
 
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
@@ -625,9 +625,8 @@ public record JsonProfileId(String value) {
     public static JsonProfileId of(String value);
 }
 
-public interface JsonMapperProfileRegistry {
-    ObjectMapper mapper(JsonProfileId id);
-    JsonMapperProfile profile(JsonProfileId id);
+public interface JsonProfileRegistry {
+    JsonProfileCodec profile(JsonProfileId id);
     Set<JsonProfileId> profileIds();
     default void validateConfigured(@Nullable String profileId);
 }
@@ -1113,28 +1112,43 @@ declared by `dev.vertique:vertique-rest-jaxrs`, and `ServiceExceptionMapperCusto
 by `dev.vertique:vertique-services`. The database mapper in `dev.vertique:vertique-db-core` is
 extended by subclassing and has no customizer SPI.
 
-### `JsonMapperProfile`
+### `JsonProfileCodec`
 
-Contributes one named `ObjectMapper` profile.
+Contributes one named JSON profile.
 
 ```java
-public interface JsonMapperProfile {
+public interface JsonProfileCodec {
     JsonProfileId id();
-    ObjectMapper mapper();
+    Buffer encode(@Nullable Object value);
+    String encodeToString(@Nullable Object value);
+    void encodeTo(@Nullable Object value, OutputStream out);
+    <T> T decode(Buffer json, Type type);
+    <T> T decode(String json, Type type);
+    <T> T convert(@Nullable Object value, Type type);
+    <T> Optional<T> unwrap(Class<T> type);
     default List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides();
 }
 ```
 
 The registry that collects profiles ships in `dev.vertique:vertique-json`; contribute a profile
 through that module's multibinding. `JsonProfileId.SYSTEM` (`"system"`) is reserved for the baseline
-profile; `vertique` and `vertique-strict` are reserved too. `mapper()` returns **one stable instance
-per profile** — the same reference on every call — and callers never mutate it. A registry
+profile; `vertique` and `vertique-strict` are reserved too. A Jackson 2 profile's mapper, read through
+`Jackson2JsonProfileCodec.objectMapper(profile)`, is **one stable instance per profile** — the same
+reference on every call — and callers never mutate it. A registry
 implementation must register all three reserved ids; no application profile may activate Jackson
 default typing or claim the retired `vertx` id.
 
+The contract names no Jackson type. The Jackson 2 implementation is `Jackson2JsonProfileCodec` in
+`dev.vertique:vertique-json`; build one with `Jackson2JsonProfiles.of(id, mapper)` or extend it. The
+registry refuses any other implementation, naming its id. `decode` rejects content after the value
+whatever the mapper's own setting, and for an `Object` target returns `JsonObject` or `JsonArray`.
+Failures throw `JsonCodecException` with a fixed message (`JSON encoding failed`, `JSON decoding
+failed`, `JSON conversion failed`) and the Jackson exception as the cause; the cause may quote the
+input, so never return it to a client.
+
 `jsonSchemaTypeOverrides()` declares the schema overrides described under
 [JSON schema overrides on a profile](#json-schema-overrides-on-a-profile). It defaults to an empty
-list, so a profile that only implements `id()` and `mapper()` stays valid. An implementation that
+list, so a profile that only implements the neutral members stays valid. An implementation that
 overrides it returns the same stable, non-null, unmodifiable list on every call and defensively
 copies any caller-supplied collection.
 
@@ -1493,7 +1507,7 @@ runtime or annotation vocabulary.
 - **Do not capture `VertiqueJson.mapper()` in a Dagger provider or a static initializer.** Both run
   before the `CONFIGURE` phase installs the system profile, so the captured instance is Vert.x's raw
   mapper. Read it at use time, or capture it in an object built at `CONFIGURE` or later.
-- **Do not configure Jackson by mutating a shared mapper.** Contribute a `JsonMapperProfile` and
+- **Do not configure Jackson by mutating a shared mapper.** Contribute a `JsonProfileCodec` and
   select it through `json.systemProfile` and/or `json.jsonProfile`. Jackson forbids reconfiguring a
   mapper after first use, and the process codec has already parsed the application's configuration
   by the time any startup step runs.

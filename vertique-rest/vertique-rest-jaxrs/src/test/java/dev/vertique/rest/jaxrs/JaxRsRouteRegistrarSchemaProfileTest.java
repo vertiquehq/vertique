@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * </ol>
  *
  * <p>The three built-in ids ({@code system}, {@code vertique}, {@code vertique-strict}) are seeded by
- * {@link dev.vertique.json.DefaultJsonMapperProfileRegistry}, so the builds need no application
+ * {@link dev.vertique.json.DefaultJsonProfileRegistry}, so the builds need no application
  * profile. The operation ids are the fixtures' method names (the scanner's fallback when no
  * {@code @Operation(operationId = …)} is present), which is what the captured map is keyed by.
  */

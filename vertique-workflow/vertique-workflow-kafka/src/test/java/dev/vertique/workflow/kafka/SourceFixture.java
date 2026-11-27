@@ -11,7 +11,7 @@ import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.correlation.CorrelationContextFactory;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.kafka.KafkaConsumerBinding;
 import dev.vertique.kafka.KafkaConsumerRegistry;
@@ -154,7 +154,7 @@ final class SourceFixture {
                 .put("kafka", new JsonObject().put("consumers", new JsonObject().put(binding.name(), consumerConfig)));
         ServiceContractRegistry services = ServiceContractRegistry.build(Set.of(), parser);
         KafkaSerdeRegistry serdes = new KafkaSerdeRegistry(
-                Set.of(new JsonSerdeProvider(new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults())));
+                Set.of(new JsonSerdeProvider(new DefaultJsonProfileRegistry(Set.of()), JsonConfig.defaults())));
         return KafkaConsumerRegistry.build(
                 Set.of(binding),
                 Set.of(),

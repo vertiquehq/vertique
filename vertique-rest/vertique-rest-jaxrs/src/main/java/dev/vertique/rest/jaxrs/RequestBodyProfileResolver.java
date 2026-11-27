@@ -4,12 +4,13 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.util.Strings;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import jakarta.annotation.Nullable;
@@ -58,7 +59,7 @@ import java.util.List;
  * running the {@code CONFIGURE} startup phase — nothing has been installed, the process codec still
  * runs Vert.x's raw mapper, and no registry mapper equals it: an explicit {@code system} selection
  * then resolves to the registry's {@code system} mapper instead of {@code null}. Such a harness that
- * needs the fast path installs {@code registry.mapper(SYSTEM)} through
+ * needs the fast path installs {@code objectMapper(registry.profile(SYSTEM))} through
  * {@link VertiqueJson#install(dev.vertique.core.json.JsonProfileId, ObjectMapper)} in setup.
  *
  * <p>This is a stateless helper; it is not instantiated.
@@ -77,10 +78,10 @@ final class RequestBodyProfileResolver {
      * Splitting them means the identity read happens exactly once per route, here, and nowhere else.
      *
      * @param profile the registry-resolved profile for the route; never {@code null}
-     * @param processCodec whether {@code profile.mapper()} is the same instance as
+     * @param processCodec whether {@code objectMapper(profile)} is the same instance as
      *     {@link VertiqueJson#mapper()} — the mapper the process JSON codec runs on
      */
-    record ResolvedRequestBodyProfile(JsonMapperProfile profile, boolean processCodec) {
+    record ResolvedRequestBodyProfile(JsonProfileCodec profile, boolean processCodec) {
 
         /**
          * Returns the nullable request-body mapper override every registrar consumer expects:
@@ -91,7 +92,7 @@ final class RequestBodyProfileResolver {
          */
         @Nullable
         ObjectMapper stashMapper() {
-            return processCodec ? null : profile.mapper();
+            return processCodec ? null : Jackson2JsonProfileCodec.objectMapper(profile);
         }
     }
 
@@ -109,12 +110,13 @@ final class RequestBodyProfileResolver {
      *     registered
      */
     static ResolvedRequestBodyProfile resolveRequestBodyProfile(
-            ResourceMethodMeta meta, JaxRsConfig config, JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
-        JsonMapperProfile profile = registry.profile(JsonProfileId.of(resolveEffectiveId(meta, config, jsonConfig)));
+            ResourceMethodMeta meta, JaxRsConfig config, JsonConfig jsonConfig, JsonProfileRegistry registry) {
+        JsonProfileCodec profile = registry.profile(JsonProfileId.of(resolveEffectiveId(meta, config, jsonConfig)));
         // Identity, not id equality: "no override" means "this route's mapper IS the process codec's
         // mapper", so the Vert.x fast paths already produce the profile's bytes. Read at use time —
         // router build runs in the EDGE phase, after CONFIGURE installed the process mapper.
-        return new ResolvedRequestBodyProfile(profile, profile.mapper() == VertiqueJson.mapper());
+        return new ResolvedRequestBodyProfile(
+                profile, Jackson2JsonProfileCodec.objectMapper(profile) == VertiqueJson.mapper());
     }
 
     /**

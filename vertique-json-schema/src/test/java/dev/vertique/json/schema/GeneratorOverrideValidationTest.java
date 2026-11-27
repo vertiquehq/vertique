@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
@@ -40,7 +40,7 @@ class GeneratorOverrideValidationTest {
     @DisplayName("A null profile id, mapper, override list, or list element fails construction, bounded")
     void constructionFailsOnNullProfileIdMapperListOrOverrideMember() {
         // Given: a profile declaring a null id.
-        JsonMapperProfile nullId = HardeningFixtures.malformedProfile(null, new ObjectMapper(), List.of());
+        JsonProfileCodec nullId = HardeningFixtures.malformedProfile(null, new ObjectMapper(), List.of());
 
         // When/Then: construction fails without inventing an id for the profile.
         String nullIdMessage = assertBothDirectionsFail(nullId, "a null profile id");
@@ -48,19 +48,18 @@ class GeneratorOverrideValidationTest {
         assertTrue(nullIdMessage.contains("id"), "the message must name the violated rule; was: " + nullIdMessage);
 
         // Given/When/Then: a profile declaring a null mapper names its id.
-        JsonMapperProfile nullMapper =
-                HardeningFixtures.malformedProfile(JsonProfileId.of(PROFILE_ID), null, List.of());
+        JsonProfileCodec nullMapper = HardeningFixtures.malformedProfile(JsonProfileId.of(PROFILE_ID), null, List.of());
         assertNamesProfileId(assertBothDirectionsFail(nullMapper, "a null mapper"));
 
         // Given/When/Then: a profile declaring a null override list names its id.
-        JsonMapperProfile nullList =
+        JsonProfileCodec nullList =
                 HardeningFixtures.malformedProfile(JsonProfileId.of(PROFILE_ID), new ObjectMapper(), null);
         assertNamesProfileId(assertBothDirectionsFail(nullList, "a null override list"));
 
         // Given/When/Then: a profile whose override list contains a null element names its id.
         List<JsonSchemaTypeOverride> withNullElement = new ArrayList<>(Arrays.asList(
                 JsonSchemaTypeOverride.both(BigDecimal.class, HardeningFixtures.markerFragment("null-element")), null));
-        JsonMapperProfile nullElement =
+        JsonProfileCodec nullElement =
                 HardeningFixtures.malformedProfile(JsonProfileId.of(PROFILE_ID), new ObjectMapper(), withNullElement);
         assertNamesProfileId(assertBothDirectionsFail(nullElement, "a null override list element"));
     }
@@ -69,7 +68,7 @@ class GeneratorOverrideValidationTest {
     @DisplayName("A duplicate effective (class, direction) mapping fails both direction factories")
     void wholeDeclarationConflictFailsBothDirections() {
         // Given: BOTH plus INPUT for the same class — the OUTPUT direction alone is conflict-free.
-        JsonMapperProfile bothPlusInput = HardeningFixtures.profile(
+        JsonProfileCodec bothPlusInput = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(
                         JsonSchemaTypeOverride.both(BigDecimal.class, HardeningFixtures.markerFragment("both")),
@@ -79,7 +78,7 @@ class GeneratorOverrideValidationTest {
         assertNamesProfileId(assertBothDirectionsFail(bothPlusInput, "BOTH plus INPUT"));
 
         // Given/When/Then: BOTH plus OUTPUT is symmetric — the INPUT direction alone is conflict-free.
-        JsonMapperProfile bothPlusOutput = HardeningFixtures.profile(
+        JsonProfileCodec bothPlusOutput = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(
                         JsonSchemaTypeOverride.both(BigDecimal.class, HardeningFixtures.markerFragment("both")),
@@ -87,7 +86,7 @@ class GeneratorOverrideValidationTest {
         assertNamesProfileId(assertBothDirectionsFail(bothPlusOutput, "BOTH plus OUTPUT"));
 
         // Given/When/Then: a plain INPUT duplicate also fails the conflict-free OUTPUT direction.
-        JsonMapperProfile inputTwice = HardeningFixtures.profile(
+        JsonProfileCodec inputTwice = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(
                         JsonSchemaTypeOverride.input(BigDecimal.class, HardeningFixtures.markerFragment("first")),
@@ -99,7 +98,7 @@ class GeneratorOverrideValidationTest {
     @DisplayName("Direction filtering applies an override to its own direction only")
     void directionFilteringSelectsOnlyApplicableOverrides() {
         // Given: a profile declaring an INPUT-only override for BigDecimal.
-        JsonMapperProfile inputOnly = HardeningFixtures.profile(
+        JsonProfileCodec inputOnly = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         BigDecimal.class, HardeningFixtures.markerFragment(HardeningFixtures.INPUT_MARKER))));
@@ -118,7 +117,7 @@ class GeneratorOverrideValidationTest {
                 "the un-overridden OUTPUT property must keep the numeric wire type; was: " + asOutput);
 
         // Given/When/Then: the OUTPUT-only mirror behaves symmetrically.
-        JsonMapperProfile outputOnly = HardeningFixtures.profile(
+        JsonProfileCodec outputOnly = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.output(
                         BigDecimal.class, HardeningFixtures.markerFragment(HardeningFixtures.OUTPUT_MARKER))));
@@ -141,7 +140,7 @@ class GeneratorOverrideValidationTest {
     @DisplayName("An override matches the exact raw class only, never a subclass")
     void overrideMatchesExactRawClassOnly() {
         // Given: an override declared for the supertype only.
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.both(
                         HardeningFixtures.Money.class,
@@ -175,7 +174,7 @@ class GeneratorOverrideValidationTest {
     @DisplayName("A map key position never receives a fragment, while a map value position and a non-key position do")
     void overrideNotAppliedToMapKeys() {
         // Given: an override declared for BigDecimal in both directions.
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.both(
                         BigDecimal.class, HardeningFixtures.markerFragment(HardeningFixtures.MAP_POSITION_MARKER))));
@@ -210,7 +209,7 @@ class GeneratorOverrideValidationTest {
         // Given: the documented remedy for a generator refusal, applied bare — {"type":"object"} — for a
         // bean-like type (a public-field DTO, exactly what the generator's own beanLike check treats as
         // bean-like).
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
@@ -231,14 +230,14 @@ class GeneratorOverrideValidationTest {
     @Test
     @DisplayName("declaring properties (or additionalProperties) remedies the open-override refusal")
     void closedOverrideForBeanLikeTypeAtInputIsAccepted() {
-        JsonMapperProfile withProperties = HardeningFixtures.profile(
+        JsonProfileCodec withProperties = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         HardeningFixtures.Money.class,
                         JsonSchemaFragment.parse("{\"type\":\"object\",\"properties\":{}}"))));
         AnnotationJsonSchemaGenerator.forInputProfile(withProperties); // must not throw
 
-        JsonMapperProfile withAdditionalProperties = HardeningFixtures.profile(
+        JsonProfileCodec withAdditionalProperties = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         HardeningFixtures.Money.class,
@@ -251,14 +250,14 @@ class GeneratorOverrideValidationTest {
     void openOverrideIsScopedToInputBeanLikeTypesOnly() {
         // A non-bean-like type (no introspected properties — a private final field with no accessor,
         // exactly the shape the generator's own beanLike check exempts) carries no open-object risk.
-        JsonMapperProfile scalarOverride = HardeningFixtures.profile(
+        JsonProfileCodec scalarOverride = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         NotBeanLike.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
         AnnotationJsonSchemaGenerator.forInputProfile(scalarOverride); // must not throw
 
         // An OUTPUT-direction override is not the refusal's documented remedy and is unaffected.
-        JsonMapperProfile outputOverride = HardeningFixtures.profile(
+        JsonProfileCodec outputOverride = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.output(
                         HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
@@ -300,7 +299,7 @@ class GeneratorOverrideValidationTest {
         // openObjectOverrideForBeanLikeTypeAtInputIsRefused already pins this; restated here beside
         // the four accepted shapes so the four accepted forms and this one refused form are read
         // together as one contrast.
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
@@ -320,7 +319,7 @@ class GeneratorOverrideValidationTest {
      * @param why           why this shape carries no open-object risk
      */
     private static void assertOverrideAccepted(String fragmentJson, String why) {
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 PROFILE_ID,
                 List.of(JsonSchemaTypeOverride.input(
                         HardeningFixtures.Money.class, JsonSchemaFragment.parse(fragmentJson))));
@@ -353,7 +352,7 @@ class GeneratorOverrideValidationTest {
      * @param label   the scenario label used in assertion messages
      * @return the bounded failure message both factories produced
      */
-    private static String assertBothDirectionsFail(JsonMapperProfile profile, String label) {
+    private static String assertBothDirectionsFail(JsonProfileCodec profile, String label) {
         JsonSchemaGenerationException input = assertThrows(
                 JsonSchemaGenerationException.class,
                 () -> AnnotationJsonSchemaGenerator.forInputProfile(profile),

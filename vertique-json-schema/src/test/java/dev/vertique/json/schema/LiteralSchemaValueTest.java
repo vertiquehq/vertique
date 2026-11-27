@@ -14,7 +14,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import io.vertx.core.json.JsonObject;
@@ -67,7 +67,7 @@ class LiteralSchemaValueTest {
     }
 
     private static AnnotationJsonSchemaGenerator generatorFor(String fragment) {
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 "literal-fixture",
                 List.of(JsonSchemaTypeOverride.both(BigDecimal.class, JsonSchemaFragment.parse(fragment))));
         return AnnotationJsonSchemaGenerator.forInputProfile(profile);

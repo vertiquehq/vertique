@@ -9,8 +9,8 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -24,7 +24,7 @@ class McpJsonProfileDefaultValidatorTest {
     @DisplayName("inherits blank and accepts registered profile ids")
     void shouldAcceptBlankOrRegisteredConfiguredProfile(
             String row, boolean enabled, boolean shadowedByMethodAnnotation, String profileId) {
-        JsonMapperProfileRegistry registry = mock(JsonMapperProfileRegistry.class);
+        JsonProfileRegistry registry = mock(JsonProfileRegistry.class);
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(enabled)
                 .jsonProfile(profileId)
@@ -40,7 +40,7 @@ class McpJsonProfileDefaultValidatorTest {
     @DisplayName("rejects an unknown configured profile even when MCP is inert")
     void shouldFailUnknownConfiguredProfileEvenWhenDisabledOrShadowed(
             String row, boolean enabled, boolean shadowedByMethodAnnotation) {
-        JsonMapperProfileRegistry registry = mock(JsonMapperProfileRegistry.class);
+        JsonProfileRegistry registry = mock(JsonProfileRegistry.class);
         doThrow(new JsonProfileConfigurationException("Unknown JSON profile id 'missing'"))
                 .when(registry)
                 .validateConfigured("missing");

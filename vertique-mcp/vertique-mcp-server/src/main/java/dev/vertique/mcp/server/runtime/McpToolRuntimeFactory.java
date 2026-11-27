@@ -4,9 +4,10 @@
 package dev.vertique.mcp.server.runtime;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.mcp.server.McpServerConfig;
@@ -46,9 +47,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * module reference, not enforced here.
  *
  * <p>Schema construction: for each distinct effective profile used by a tool, this factory
- * creates or reuses one {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)}
+ * creates or reuses one {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonProfileCodec)}
  * and, when a structured output type is declared, one
- * {@link AnnotationJsonSchemaGenerator#forOutputProfile(JsonMapperProfile)} — never
+ * {@link AnnotationJsonSchemaGenerator#forOutputProfile(JsonProfileCodec)} — never
  * {@link AnnotationJsonSchemaGenerator#withVictoolsDefaults()}, and never a directly configured
  * Victools instance. The generated input schema is then hardened at the protocol argument-object
  * boundary by {@link McpSchemaHardener} and re-serialized deterministically by
@@ -102,7 +103,7 @@ public final class McpToolRuntimeFactory {
      */
     @Inject
     McpToolRuntimeFactory(
-            JsonMapperProfileRegistry profiles,
+            JsonProfileRegistry profiles,
             JsonConfig jsonConfig,
             McpServerConfig mcpConfig,
             Optional<Validator> validator) {
@@ -148,7 +149,7 @@ public final class McpToolRuntimeFactory {
                 List.copyOf(Objects.requireNonNull(parameters, "parameters"));
         requireUniqueExternalNames(name, parameterMetadata);
 
-        JsonMapperProfile profile = profileResolver.resolve(declaredJsonProfile);
+        JsonProfileCodec profile = profileResolver.resolve(declaredJsonProfile);
 
         String hardenedInputSchema = McpCanonicalJsonWriter.writeCanonical(McpSchemaHardener.harden(
                 McpCanonicalJsonWriter.read(inputGeneratorFor(profile).generateCanonical(inputCarrierType)),
@@ -160,7 +161,7 @@ public final class McpToolRuntimeFactory {
 
         McpToolDescriptor descriptor =
                 new McpToolDescriptor(name, title, description, annotations, hardenedInputSchema, outputSchema, access);
-        return new McpToolRuntime<>(descriptor, profile.mapper(), inputCarrierType);
+        return new McpToolRuntime<>(descriptor, Jackson2JsonProfileCodec.objectMapper(profile), inputCarrierType);
     }
 
     /**
@@ -170,7 +171,7 @@ public final class McpToolRuntimeFactory {
      * @param profile the resolved effective profile
      * @return the shared generator for this profile's input direction
      */
-    private AnnotationJsonSchemaGenerator inputGeneratorFor(JsonMapperProfile profile) {
+    private AnnotationJsonSchemaGenerator inputGeneratorFor(JsonProfileCodec profile) {
         return inputGeneratorsByProfile.computeIfAbsent(
                 profile.id(),
                 unusedId -> AnnotationJsonSchemaGenerator.forInputProfile(profile, validator.orElse(null)));
@@ -183,7 +184,7 @@ public final class McpToolRuntimeFactory {
      * @param profile the resolved effective profile
      * @return the shared generator for this profile's output direction
      */
-    private AnnotationJsonSchemaGenerator outputGeneratorFor(JsonMapperProfile profile) {
+    private AnnotationJsonSchemaGenerator outputGeneratorFor(JsonProfileCodec profile) {
         return outputGeneratorsByProfile.computeIfAbsent(
                 profile.id(), unusedId -> AnnotationJsonSchemaGenerator.forOutputProfile(profile));
     }

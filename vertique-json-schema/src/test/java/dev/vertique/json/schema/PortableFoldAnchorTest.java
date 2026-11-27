@@ -12,9 +12,9 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
@@ -129,8 +129,8 @@ class PortableFoldAnchorTest {
 
     // ---------------------------------------------------------------- generation helpers
 
-    private static JsonMapperProfile plainProfile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("portable-fold-anchor-test"), new ObjectMapper());
+    private static JsonProfileCodec plainProfile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("portable-fold-anchor-test"), new ObjectMapper());
     }
 
     private static String canonical(Class<?> type) {

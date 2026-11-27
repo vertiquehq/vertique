@@ -9,7 +9,7 @@ import java.util.Objects;
  * One profile-declared JSON Schema override binding an exact raw Java class to a
  * {@link JsonSchemaFragment}.
  *
- * <p>A {@link JsonMapperProfile} declares overrides so that a schema generated for the profile
+ * <p>A {@link JsonProfileCodec} declares overrides so that a schema generated for the profile
  * describes the wire form the profile's mapper actually produces or accepts — for example a
  * {@code BigDecimal} serialized as a constrained string.
  *

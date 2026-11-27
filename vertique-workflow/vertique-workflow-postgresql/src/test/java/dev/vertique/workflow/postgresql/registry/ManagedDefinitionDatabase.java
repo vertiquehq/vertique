@@ -10,7 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -19,7 +19,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.deploy.VerticleDeployment;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.NamedPayloadMapper;
@@ -628,8 +628,8 @@ public final class ManagedDefinitionDatabase {
 
         @Provides
         @Singleton
-        static JsonMapperProfileRegistry profileRegistry() {
-            return new DefaultJsonMapperProfileRegistry(Set.of());
+        static JsonProfileRegistry profileRegistry() {
+            return new DefaultJsonProfileRegistry(Set.of());
         }
 
         @Provides

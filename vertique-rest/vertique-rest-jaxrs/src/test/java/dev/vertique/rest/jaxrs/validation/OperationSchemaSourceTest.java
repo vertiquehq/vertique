@@ -6,9 +6,9 @@ package dev.vertique.rest.jaxrs.validation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.routing.StubOperationDescriptor;
@@ -37,8 +37,8 @@ class OperationSchemaSourceTest {
     }
 
     /** The reserved {@code vertique} floor profile, the effective profile of an unannotated operation. */
-    private static JsonMapperProfile vertiqueProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec vertiqueProfile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     @Test

@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
@@ -352,7 +352,7 @@ public class FormatCheckReuseIT {
                                 .httpMethod("POST")
                                 .body(new BodyDescriptor(dto, null, List.of()))
                                 .build(),
-                        new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")))
+                        new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")))
                 .bodySchema()
                 .orElseThrow();
         JsonObject properties = schema.getJsonObject("properties");

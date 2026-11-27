@@ -6,9 +6,10 @@ package dev.vertique.workflow.schema;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
-import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import io.vertx.core.json.JsonObject;
@@ -36,14 +37,13 @@ class PayloadSchemaGenerator {
     private static final String PROPERTIES = "properties";
     private static final Logger LOG = LoggerFactory.getLogger(PayloadSchemaGenerator.class);
 
-    private final JsonMapperProfileRegistry profileRegistry;
+    private final JsonProfileRegistry profileRegistry;
     private final JsonProfileId profileId;
     private final Validator validator;
     private final ConcurrentHashMap<JsonProfileId, AnnotationJsonSchemaGenerator> generators =
             new ConcurrentHashMap<>();
 
-    PayloadSchemaGenerator(
-            JsonMapperProfileRegistry profileRegistry, JsonConfig jsonConfig, Optional<Validator> validator) {
+    PayloadSchemaGenerator(JsonProfileRegistry profileRegistry, JsonConfig jsonConfig, Optional<Validator> validator) {
         this.profileRegistry = profileRegistry;
         this.profileId = jsonConfig.effectiveSystemProfile();
         this.validator = validator.orElse(null);
@@ -90,7 +90,7 @@ class PayloadSchemaGenerator {
         if (!(document.getValue(PROPERTIES) instanceof JsonObject properties) || properties.isEmpty()) {
             return List.of();
         }
-        ObjectMapper mapper = profileRegistry.profile(profileId).mapper();
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(profileRegistry.profile(profileId));
         BeanDescription description = mapper.getDeserializationConfig().introspect(mapper.constructType(type));
         Set<String> ordered = new LinkedHashSet<>();
         for (BeanPropertyDefinition property : description.findProperties()) {
@@ -103,7 +103,7 @@ class PayloadSchemaGenerator {
     }
 
     private AnnotationJsonSchemaGenerator create(JsonProfileId id) {
-        JsonMapperProfile profile = profileRegistry.profile(id);
+        JsonProfileCodec profile = profileRegistry.profile(id);
         AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.forInputProfile(profile, validator);
         LOG.info("workflow payload schema constraint supplement: {}", validator == null ? "disabled" : "enabled");
         return generator;

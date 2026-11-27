@@ -5,7 +5,7 @@ package dev.vertique.workflow.schema;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Type;
@@ -21,7 +21,7 @@ import java.util.Set;
 final class Documents {
 
     private static final AnnotationJsonSchemaGenerator GENERATOR = AnnotationJsonSchemaGenerator.forInputProfile(
-            new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")));
+            new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")));
 
     private Documents() {}
 

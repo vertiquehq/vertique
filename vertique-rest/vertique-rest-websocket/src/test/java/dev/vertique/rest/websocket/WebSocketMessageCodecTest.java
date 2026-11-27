@@ -12,7 +12,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonDefaults;
 import java.util.Optional;
 import java.util.Set;
@@ -108,7 +109,7 @@ class WebSocketMessageCodecTest {
      * {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}) is installed as the process codec.
      *
      * <p>Given: a message record with an enum component carrying {@code @JsonEnumDefaultValue}; the raw
-     * delegate, then {@code new DefaultJsonMapperProfileRegistry(Set.of()).mapper(JsonProfileId.of("vertique"))}
+     * delegate, then {@code new DefaultJsonProfileRegistry(Set.of()).mapper(JsonProfileId.of("vertique"))}
      * installed under {@code "vertique"}.
      * When: a payload with an unknown enum string is decoded in both states.
      * Then: rejected under the raw delegate; bound to the default under {@code vertique}.
@@ -129,8 +130,10 @@ class WebSocketMessageCodecTest {
                 () -> codec.decode(payload, StatusPayload.class),
                 "the raw delegate has no READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE leniency");
 
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
-        VertiqueJson.install(JsonProfileId.of("vertique"), registry.mapper(JsonProfileId.of("vertique")));
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
+        VertiqueJson.install(
+                JsonProfileId.of("vertique"),
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))));
 
         StatusPayload decoded = codec.decode(payload, StatusPayload.class);
 

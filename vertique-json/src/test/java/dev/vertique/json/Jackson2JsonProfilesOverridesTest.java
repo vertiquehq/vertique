@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
@@ -20,11 +20,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the {@link JsonMapperProfiles#of(JsonProfileId, ObjectMapper, java.util.Collection)}
+ * Unit tests for the {@link Jackson2JsonProfiles#of(JsonProfileId, ObjectMapper, java.util.Collection)}
  * overload, verifying the defensive-copy, null-rejection, and unmodifiable/stable-list contracts,
  * and that the two-argument {@code of(id, mapper)} factory yields empty overrides.
  */
-class JsonMapperProfilesOverridesTest {
+class Jackson2JsonProfilesOverridesTest {
 
     private static final JsonSchemaTypeOverride SAMPLE_OVERRIDE =
             JsonSchemaTypeOverride.both(BigDecimal.class, JsonSchemaFragment.parse("{\"type\":\"string\"}"));
@@ -38,7 +38,7 @@ class JsonMapperProfilesOverridesTest {
         source.add(SAMPLE_OVERRIDE);
 
         // When: a profile is built from it, then the source collection is mutated afterward.
-        JsonMapperProfile profile = JsonMapperProfiles.of(JsonProfileId.of("payments"), new ObjectMapper(), source);
+        JsonProfileCodec profile = Jackson2JsonProfiles.of(JsonProfileId.of("payments"), new ObjectMapper(), source);
         source.add(JsonSchemaTypeOverride.input(String.class, JsonSchemaFragment.parse("{\"type\":\"string\"}")));
 
         // Then: the profile's own list is unaffected by the post-construction mutation.
@@ -63,17 +63,17 @@ class JsonMapperProfilesOverridesTest {
         JsonProfileId id = JsonProfileId.of("payments");
         ObjectMapper mapper = new ObjectMapper();
 
-        assertThrows(NullPointerException.class, () -> JsonMapperProfiles.of(id, mapper, null));
+        assertThrows(NullPointerException.class, () -> Jackson2JsonProfiles.of(id, mapper, null));
 
         List<JsonSchemaTypeOverride> withNullElement = new ArrayList<>();
         withNullElement.add(null);
-        assertThrows(NullPointerException.class, () -> JsonMapperProfiles.of(id, mapper, withNullElement));
+        assertThrows(NullPointerException.class, () -> Jackson2JsonProfiles.of(id, mapper, withNullElement));
     }
 
     @Test
     @DisplayName("of(id, mapper) — the two-arg factory — still yields an empty, unmodifiable override list")
     void ofTwoArgBehaviorUnchangedEmptyOverrides() {
-        JsonMapperProfile profile = JsonMapperProfiles.of(JsonProfileId.of("payments"), new ObjectMapper());
+        JsonProfileCodec profile = Jackson2JsonProfiles.of(JsonProfileId.of("payments"), new ObjectMapper());
 
         List<JsonSchemaTypeOverride> overrides = profile.jsonSchemaTypeOverrides();
 

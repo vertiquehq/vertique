@@ -14,9 +14,10 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
 import java.lang.reflect.Type;
@@ -39,8 +40,8 @@ import org.junit.jupiter.api.Test;
  */
 class UnwrappedAnySetterFoldingTest {
 
-    private static JsonMapperProfile plainProfile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("unwrapped-any-setter-folding-test"), new ObjectMapper());
+    private static JsonProfileCodec plainProfile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("unwrapped-any-setter-folding-test"), new ObjectMapper());
     }
 
     private static JsonNode inputDocument(Type type) {
@@ -147,7 +148,8 @@ class UnwrappedAnySetterFoldingTest {
     @DisplayName("premise: the real binder routes a key spelling an unwrapped child's hidden member straight"
             + " into the constrained field, oversized value included")
     void jacksonBinderRoutesTheHiddenKeyIntoTheConstrainedField() throws Exception {
-        HiddenParent bound = plainProfile().mapper().readValue("{\"token\":\"toolongvalue\"}", HiddenParent.class);
+        HiddenParent bound = Jackson2JsonProfileCodec.objectMapper(plainProfile())
+                .readValue("{\"token\":\"toolongvalue\"}", HiddenParent.class);
 
         assertTrue(
                 bound.child != null && "toolongvalue".equals(bound.child.token),
@@ -293,8 +295,8 @@ class UnwrappedAnySetterFoldingTest {
     @DisplayName("premise: the real binder routes the first sibling's alias key straight into its"
             + " constrained field, oversized value included")
     void jacksonBinderRoutesTheSiblingAliasKeyIntoTheConstrainedField() throws Exception {
-        SiblingOrderedParent bound =
-                plainProfile().mapper().readValue("{\"ak\":\"abcdefgh\"}", SiblingOrderedParent.class);
+        SiblingOrderedParent bound = Jackson2JsonProfileCodec.objectMapper(plainProfile())
+                .readValue("{\"ak\":\"abcdefgh\"}", SiblingOrderedParent.class);
 
         assertTrue(
                 bound.a != null && "abcdefgh".equals(bound.a.aname),
@@ -342,11 +344,11 @@ class UnwrappedAnySetterFoldingTest {
         boolean transformedAliasPublished = document.path("properties").has("p_tok");
 
         // Measured against the real binder: does either spelling actually reach the constrained field?
-        PrefixedAliasParent boundPlain =
-                plainProfile().mapper().readValue("{\"tok\":\"abcdefgh\"}", PrefixedAliasParent.class);
+        PrefixedAliasParent boundPlain = Jackson2JsonProfileCodec.objectMapper(plainProfile())
+                .readValue("{\"tok\":\"abcdefgh\"}", PrefixedAliasParent.class);
         boolean plainSpellingBinds = boundPlain.child != null && "abcdefgh".equals(boundPlain.child.token);
-        PrefixedAliasParent boundTransformed =
-                plainProfile().mapper().readValue("{\"p_tok\":\"abcdefgh\"}", PrefixedAliasParent.class);
+        PrefixedAliasParent boundTransformed = Jackson2JsonProfileCodec.objectMapper(plainProfile())
+                .readValue("{\"p_tok\":\"abcdefgh\"}", PrefixedAliasParent.class);
         boolean transformedSpellingBinds =
                 boundTransformed.child != null && "abcdefgh".equals(boundTransformed.child.token);
 

@@ -15,11 +15,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.core.RestConfigurationException;
@@ -187,8 +188,8 @@ class AnnotationSchemaSourceTest {
      * effective profile. It declares no schema type override, so the documents those proofs assert on
      * are the same under profiled synthesis as before it.
      */
-    private static JsonMapperProfile vertiqueProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec vertiqueProfile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     /** Reflectively reads the declared field's annotations for use in a {@link ParamDescriptor}. */
@@ -431,7 +432,7 @@ class AnnotationSchemaSourceTest {
         // per-call counting this proof has always asserted is unchanged.
         AnnotationSchemaSource source = new AnnotationSchemaSource() {
             @Override
-            protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+            protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
                 generateCalls.incrementAndGet();
                 return super.generateBodySchema(type, profile);
             }
@@ -585,7 +586,7 @@ class AnnotationSchemaSourceTest {
         }
 
         @Override
-        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
             throw failure;
         }
     }
@@ -600,7 +601,7 @@ class AnnotationSchemaSourceTest {
         }
 
         @Override
-        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
             throw failure;
         }
     }
@@ -709,17 +710,17 @@ class AnnotationSchemaSourceTest {
      * built-in id</strong>, which is what makes the per-profile-instance generator count observable:
      * a second registry would hand out different instances and legitimately build more generators.
      */
-    private static DefaultJsonMapperProfileRegistry builtInRegistry() {
-        return new DefaultJsonMapperProfileRegistry(Set.of());
+    private static DefaultJsonProfileRegistry builtInRegistry() {
+        return new DefaultJsonProfileRegistry(Set.of());
     }
 
     /** Resolves one built-in profile instance from a registry. */
-    private static JsonMapperProfile profileOf(DefaultJsonMapperProfileRegistry registry, String id) {
+    private static JsonProfileCodec profileOf(DefaultJsonProfileRegistry registry, String id) {
         return registry.profile(JsonProfileId.of(id));
     }
 
     /** Resolves the three built-in profile instances from one registry, in {@link #BUILT_IN_PROFILE_IDS} order. */
-    private static List<JsonMapperProfile> builtInProfiles(DefaultJsonMapperProfileRegistry registry) {
+    private static List<JsonProfileCodec> builtInProfiles(DefaultJsonProfileRegistry registry) {
         return BUILT_IN_PROFILE_IDS.stream().map(id -> profileOf(registry, id)).toList();
     }
 
@@ -727,9 +728,9 @@ class AnnotationSchemaSourceTest {
      * Builds a profile instance from an explicit id, mapper, and override list — the fresh-instance
      * case that bounds generator retention.
      */
-    private static JsonMapperProfile profileWithId(
+    private static JsonProfileCodec profileWithId(
             String id, ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides) {
-        return JsonMapperProfiles.of(JsonProfileId.of(id), mapper, overrides);
+        return Jackson2JsonProfiles.of(JsonProfileId.of(id), mapper, overrides);
     }
 
     /**
@@ -759,7 +760,7 @@ class AnnotationSchemaSourceTest {
         private JsonNode lastDocument;
 
         @Override
-        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
             CanonicalSchema generated = super.generateBodySchema(type, profile);
             try {
                 lastDocument = DOCUMENT_READER.readTree(generated.json());
@@ -770,7 +771,7 @@ class AnnotationSchemaSourceTest {
         }
 
         /** Synthesizes {@code fixture} under {@code profile} and returns the document the seam produced. */
-        JsonNode documentFor(CorpusFixture fixture, JsonMapperProfile profile) {
+        JsonNode documentFor(CorpusFixture fixture, JsonProfileCodec profile) {
             lastDocument = null;
             schemasFor(corpusOp(fixture), profile);
             assertNotNull(lastDocument, "the seam must have produced a document for " + fixture.name());
@@ -784,7 +785,7 @@ class AnnotationSchemaSourceTest {
         private final AtomicInteger generateCalls = new AtomicInteger();
 
         @Override
-        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
             generateCalls.incrementAndGet();
             return super.generateBodySchema(type, profile);
         }
@@ -810,7 +811,7 @@ class AnnotationSchemaSourceTest {
      * in the corpus's on-disk form, is byte-identical to its golden file, and that its object keys are
      * canonically ordered.
      */
-    private static void assertCorpus(String profileDirectory, CorpusFixture fixture, JsonMapperProfile profile) {
+    private static void assertCorpus(String profileDirectory, CorpusFixture fixture, JsonProfileCodec profile) {
         JsonNode document = new CapturingSource().documentFor(fixture, profile);
 
         assertEquals(
@@ -827,7 +828,7 @@ class AnnotationSchemaSourceTest {
      * {@code dev.vertique.json} that {@code VertiqueStrictProfileOverrideTest} already pins; this
      * module reads them through the public path and never restates them as literals.
      */
-    private static JsonNode strictBigDecimalFragment(JsonMapperProfile strict) {
+    private static JsonNode strictBigDecimalFragment(JsonProfileCodec strict) {
         String canonical = strict.jsonSchemaTypeOverrides().get(0).fragment().canonicalJson();
         try {
             return DOCUMENT_READER.readTree(canonical);
@@ -884,7 +885,7 @@ class AnnotationSchemaSourceTest {
     }
 
     /** Synthesizes the ten operations round-robin across {@code profiles} — one router build's worth of work. */
-    private static void runTenOperations(AnnotationSchemaSource source, List<JsonMapperProfile> profiles) {
+    private static void runTenOperations(AnnotationSchemaSource source, List<JsonProfileCodec> profiles) {
         List<JaxRsOperationDescriptor> operations = tenBodyOperations();
         for (int index = 0; index < operations.size(); index++) {
             source.schemasFor(operations.get(index), profiles.get(index % profiles.size()));
@@ -896,7 +897,7 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("The two-argument seam is invoked exactly once per body synthesis, under every profile")
     void twoArgumentSeamIsInvokedOncePerBodyUnderEveryProfile() {
-        DefaultJsonMapperProfileRegistry registry = builtInRegistry();
+        DefaultJsonProfileRegistry registry = builtInRegistry();
         CountingSource source = new CountingSource();
 
         source.schemasFor(bodyOp("seamSystem", RootDecimalDto.class), profileOf(registry, "system"));
@@ -952,7 +953,7 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("The strict override applies at root, nested, and element positions but not at a map key")
     void strictOverrideAppliesToRootNestedAndElementButNotMapKey() {
-        JsonMapperProfile strict = profileOf(builtInRegistry(), "vertique-strict");
+        JsonProfileCodec strict = profileOf(builtInRegistry(), "vertique-strict");
         JsonNode fragment = strictBigDecimalFragment(strict);
         CapturingSource source = new CapturingSource();
 
@@ -989,7 +990,7 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("The strict value position's bounds are read from the profile's declared fragment")
     void strictFragmentBoundsEqualTheDeserializerConstants() {
-        JsonMapperProfile strict = profileOf(builtInRegistry(), "vertique-strict");
+        JsonProfileCodec strict = profileOf(builtInRegistry(), "vertique-strict");
         JsonNode fragment = strictBigDecimalFragment(strict);
 
         JsonNode amount = new CapturingSource()
@@ -1009,7 +1010,7 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("Three profiles yield three independent documents for one body type")
     void threeProfilesYieldThreeIndependentDocuments() {
-        DefaultJsonMapperProfileRegistry registry = builtInRegistry();
+        DefaultJsonProfileRegistry registry = builtInRegistry();
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         JaxRsOperationDescriptor descriptor = corpusOp(fixture("RootDecimalDto"));
 
@@ -1031,13 +1032,13 @@ class AnnotationSchemaSourceTest {
 
     /** Synthesizes {@code descriptor} under {@code profile} and returns its body schema. */
     private static JsonObject bodySchema(
-            AnnotationSchemaSource source, JaxRsOperationDescriptor descriptor, JsonMapperProfile profile) {
+            AnnotationSchemaSource source, JaxRsOperationDescriptor descriptor, JsonProfileCodec profile) {
         return source.schemasFor(descriptor, profile).bodySchema().orElseThrow();
     }
 
     /** Returns the {@code amount} property schema of {@code descriptor}'s body document under {@code profile}. */
     private static JsonObject decimalProperty(
-            AnnotationSchemaSource source, JaxRsOperationDescriptor descriptor, JsonMapperProfile profile) {
+            AnnotationSchemaSource source, JaxRsOperationDescriptor descriptor, JsonProfileCodec profile) {
         return bodySchema(source, descriptor, profile)
                 .getJsonObject("properties")
                 .getJsonObject("amount");
@@ -1048,7 +1049,7 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("Ten operations across three profiles build exactly three generators")
     void tenOperationsAcrossThreeProfilesBuildThreeGenerators() {
-        DefaultJsonMapperProfileRegistry registry = builtInRegistry();
+        DefaultJsonProfileRegistry registry = builtInRegistry();
         AnnotationSchemaSource source = new AnnotationSchemaSource();
 
         runTenOperations(source, builtInProfiles(registry));
@@ -1063,8 +1064,8 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("A fresh profile instance carrying the same id builds its own generator")
     void freshProfileInstanceWithSameIdBuildsItsOwnGenerator() {
-        DefaultJsonMapperProfileRegistry registry = builtInRegistry();
-        JsonMapperProfile strict = profileOf(registry, "vertique-strict");
+        DefaultJsonProfileRegistry registry = builtInRegistry();
+        JsonProfileCodec strict = profileOf(registry, "vertique-strict");
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         runTenOperations(source, builtInProfiles(registry));
 
@@ -1072,8 +1073,8 @@ class AnnotationSchemaSourceTest {
         // read 3 here. This case does NOT distinguish reference-identity keying from equals keying:
         // the registry's strict profile and this record are unequal under both, which is acceptable
         // because equal records share a mapper and an override list.
-        JsonMapperProfile freshStrict =
-                profileWithId("vertique-strict", strict.mapper(), strict.jsonSchemaTypeOverrides());
+        JsonProfileCodec freshStrict = profileWithId(
+                "vertique-strict", Jackson2JsonProfileCodec.objectMapper(strict), strict.jsonSchemaTypeOverrides());
         OperationSchemas schemas = source.schemasFor(bodyOp("freshInstance", RootDecimalDto.class), freshStrict);
 
         assertTrue(schemas.bodySchema().isPresent(), "the fresh profile instance must synthesize successfully");
@@ -1085,8 +1086,8 @@ class AnnotationSchemaSourceTest {
     @Test
     @DisplayName("Concurrent router builds construct each profile's generator exactly once")
     void concurrentRouterBuildsConstructEachGeneratorOnce() throws Exception {
-        DefaultJsonMapperProfileRegistry registry = builtInRegistry();
-        List<JsonMapperProfile> profiles = builtInProfiles(registry);
+        DefaultJsonProfileRegistry registry = builtInRegistry();
+        List<JsonProfileCodec> profiles = builtInProfiles(registry);
         ExecutorService builders = Executors.newFixedThreadPool(CONCURRENT_BUILDERS);
 
         try {

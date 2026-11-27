@@ -17,7 +17,7 @@ import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import java.lang.reflect.Type;
@@ -574,7 +574,7 @@ class GeneratorPostGenerationWalkTest {
      * @return the configured generator
      */
     private static AnnotationJsonSchemaGenerator generatorFor(JsonSchemaFragment fragment) {
-        JsonMapperProfile profile = HardeningFixtures.profile(
+        JsonProfileCodec profile = HardeningFixtures.profile(
                 "schema-position-fixture", List.of(JsonSchemaTypeOverride.both(BigDecimal.class, fragment)));
         return AnnotationJsonSchemaGenerator.forInputProfile(profile);
     }

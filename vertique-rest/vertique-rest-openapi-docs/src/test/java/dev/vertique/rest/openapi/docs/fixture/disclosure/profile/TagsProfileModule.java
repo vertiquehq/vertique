@@ -6,20 +6,21 @@ package dev.vertique.rest.openapi.docs.fixture.disclosure.profile;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.TagsZx;
 import java.util.List;
 import java.util.Set;
 
 /**
  * Contributes the application profile {@value #TAGS_PROFILE} to the component's {@code
- * Set<JsonMapperProfile>} multibinding (declared by {@code JsonRuntimeModule}, which {@code
- * RestModule} includes), from which {@code DefaultJsonMapperProfileRegistry} collects every
+ * Set<JsonProfileCodec>} multibinding (declared by {@code JsonRuntimeModule}, which {@code
+ * RestModule} includes), from which {@code DefaultJsonProfileRegistry} collects every
  * application profile.
  *
  * <p>The profile's mapper is a copy of the built-in {@code vertique} profile's mapper. It declares
@@ -47,11 +48,10 @@ public final class TagsProfileModule {
     /** The {@code pattern} of the developer-declared {@code propertyNames}. */
     public static final String TAGS_NAME_PATTERN = "^[a-z]+$";
 
-    private static final JsonMapperProfile PROFILE = JsonMapperProfiles.of(
+    private static final JsonProfileCodec PROFILE = Jackson2JsonProfiles.of(
             JsonProfileId.of(TAGS_PROFILE),
-            new DefaultJsonMapperProfileRegistry(Set.of())
-                    .profile(JsonProfileId.of("vertique"))
-                    .mapper()
+            Jackson2JsonProfileCodec.objectMapper(
+                            new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique")))
                     .copy(),
             List.of(JsonSchemaTypeOverride.both(TagsZx.class, JsonSchemaFragment.parse(TAGS_FRAGMENT))));
 
@@ -64,7 +64,7 @@ public final class TagsProfileModule {
      */
     @Provides
     @IntoSet
-    static JsonMapperProfile tagsProfile() {
+    static JsonProfileCodec tagsProfile() {
         return PROFILE;
     }
 
@@ -73,7 +73,7 @@ public final class TagsProfileModule {
      *
      * @return the profile
      */
-    public static JsonMapperProfile profile() {
+    public static JsonProfileCodec profile() {
         return PROFILE;
     }
 
@@ -82,7 +82,7 @@ public final class TagsProfileModule {
      *
      * @return the registry
      */
-    public static DefaultJsonMapperProfileRegistry registry() {
-        return new DefaultJsonMapperProfileRegistry(Set.of(PROFILE));
+    public static DefaultJsonProfileRegistry registry() {
+        return new DefaultJsonProfileRegistry(Set.of(PROFILE));
     }
 }

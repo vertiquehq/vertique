@@ -11,9 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.json.schema.RedactionManifest;
@@ -116,7 +116,7 @@ class AnnotationSchemaSourceManifestTest {
     static final class SentinelReinsertingSource extends AnnotationSchemaSource {
 
         @Override
-        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec profile) {
             CanonicalSchema original = super.generateBodySchema(type, profile);
             JsonObject document = new JsonObject(original.json());
             document.getJsonObject("properties").getJsonObject("name").put("default", "##default");
@@ -155,8 +155,8 @@ class AnnotationSchemaSourceManifestTest {
     }
 
     /** The reserved {@code vertique} floor profile. */
-    private static JsonMapperProfile vertiqueProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec vertiqueProfile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     // --- every body schema carries the manifest ---
@@ -164,7 +164,7 @@ class AnnotationSchemaSourceManifestTest {
     @TestFactory
     @DisplayName("Each body schema carries the generator's manifest")
     Stream<DynamicTest> bodySchemaCarriesTheGeneratorsManifest() {
-        JsonMapperProfile profile = vertiqueProfile();
+        JsonProfileCodec profile = vertiqueProfile();
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         AnnotationJsonSchemaGenerator oracle = AnnotationJsonSchemaGenerator.forInputProfile(profile);
 
@@ -227,7 +227,7 @@ class AnnotationSchemaSourceManifestTest {
      * rendering a later copy or re-encoding could produce.
      */
     private static void assertManifestSurvivesRoundTrips(
-            AnnotationSchemaSource source, JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+            AnnotationSchemaSource source, JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         OperationSchemas schemas = source.schemasFor(op, profile);
         JsonObject body = schemas.bodySchema().orElseThrow(() -> new AssertionError("expected a body schema"));
         RedactionManifest manifest = schemas.bodySchemaProvenance(RedactionManifest.class)
@@ -245,8 +245,8 @@ class AnnotationSchemaSourceManifestTest {
     @TestFactory
     @DisplayName("The manifest survives JsonObject round trips and the sentinel strip")
     Stream<DynamicTest> manifestSurvivesJsonObjectRoundTrips() {
-        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
-        List<JsonMapperProfile> profiles = Stream.of("system", "vertique", "vertique-strict")
+        DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
+        List<JsonProfileCodec> profiles = Stream.of("system", "vertique", "vertique-strict")
                 .map(id -> registry.profile(JsonProfileId.of(id)))
                 .toList();
         AnnotationSchemaSource source = new AnnotationSchemaSource();
@@ -266,7 +266,7 @@ class AnnotationSchemaSourceManifestTest {
                 "a source re-inserting the ##default sentinel keeps the manifest matching after the strip", () -> {
                     AnnotationSchemaSource sentinelSource = new SentinelReinsertingSource();
                     JaxRsOperationDescriptor sentinelOp = bodyOp("sentinelReinsert", PlainBody.class);
-                    JsonMapperProfile sentinelProfile = vertiqueProfile();
+                    JsonProfileCodec sentinelProfile = vertiqueProfile();
 
                     assertManifestSurvivesRoundTrips(sentinelSource, sentinelOp, sentinelProfile);
 
@@ -290,14 +290,14 @@ class AnnotationSchemaSourceManifestTest {
     @TestFactory
     @DisplayName("A replaced, edited, or unbound body no longer matches a manifest")
     Stream<DynamicTest> replacedOrEditedBodyNoLongerMatches() {
-        JsonMapperProfile profile = vertiqueProfile();
+        JsonProfileCodec profile = vertiqueProfile();
         AnnotationJsonSchemaGenerator oracle = AnnotationJsonSchemaGenerator.forInputProfile(profile);
 
         return Stream.of(
                 dynamicTest("a borrowed manifest carries through but no longer matches the substituted JSON", () -> {
                     AnnotationSchemaSource borrowing = new AnnotationSchemaSource() {
                         @Override
-                        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile p) {
+                        protected CanonicalSchema generateBodySchema(Type type, JsonProfileCodec p) {
                             CanonicalSchema substituted = super.generateBodySchema(PlainBody.class, p);
                             CanonicalSchema ownManifest = super.generateBodySchema(type, p);
                             return new CanonicalSchema(substituted.json(), ownManifest.redactionManifest());

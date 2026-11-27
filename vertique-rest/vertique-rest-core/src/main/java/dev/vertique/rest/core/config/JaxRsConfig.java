@@ -193,7 +193,7 @@ public class JaxRsConfig {
      * floor (the zero-config behavior; {@code json.jsonProfile: system} selects the process codec's
      * baseline instead). A non-blank
      * value must match a profile registered in the
-     * {@link dev.vertique.core.json.JsonMapperProfileRegistry}, otherwise startup fails fast.
+     * {@link dev.vertique.core.json.JsonProfileRegistry}, otherwise startup fails fast.
      */
     @Nullable
     private final String jsonProfile;

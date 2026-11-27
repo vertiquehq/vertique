@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.schema;
 
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
@@ -43,7 +43,7 @@ final class DefaultWorkflowPlanSchemaProducer implements WorkflowPlanSchemaProdu
 
     @Inject
     DefaultWorkflowPlanSchemaProducer(
-            JsonMapperProfileRegistry profileRegistry,
+            JsonProfileRegistry profileRegistry,
             JsonConfig jsonConfig,
             Optional<Validator> validator,
             PayloadSchemaCache cache,

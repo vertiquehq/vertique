@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Mirrors {@code JaxRsDefaultProfileValidatorTest} in {@code vertique-rest-jaxrs}: a real Dagger
  * component installs {@link JsonRuntimeModule} (for the
- * {@link dev.vertique.core.json.JsonMapperProfileRegistry}) plus a test module supplying a minimal
+ * {@link dev.vertique.core.json.JsonProfileRegistry}) plus a test module supplying a minimal
  * {@link ConfigParser}, {@code @VertxConfig JsonObject}, the resolved {@link RestClientDefaults}
  * (injected directly into the validator), and the {@link RestClientDefaultProfileValidator}
  * {@code @IntoSet} contribution. Resolving the {@code Set<ComposeValidator>} multibinding forces

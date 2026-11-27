@@ -11,9 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import jakarta.validation.constraints.Size;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -36,8 +36,8 @@ import org.junit.jupiter.api.Test;
  */
 class OptionalExtrasAndMapValueNullTest {
 
-    private static JsonMapperProfile profile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec profile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     /**

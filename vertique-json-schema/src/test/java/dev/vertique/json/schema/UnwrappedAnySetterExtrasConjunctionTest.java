@@ -12,11 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.lang.reflect.Type;
@@ -54,15 +55,15 @@ class UnwrappedAnySetterExtrasConjunctionTest {
 
     // --- Generation helpers (fixture-construction isolation, so Given/When/Then stays visible below) ---
 
-    private static JsonMapperProfile profile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec profile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     private static JsonNode inputDocument(Type type) {
         return inputDocument(type, profile());
     }
 
-    private static JsonNode inputDocument(Type type, JsonMapperProfile profile) {
+    private static JsonNode inputDocument(Type type, JsonProfileCodec profile) {
         return assertCanonicalForm(
                 AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(type));
     }
@@ -83,16 +84,16 @@ class UnwrappedAnySetterExtrasConjunctionTest {
         return document.at(reference.asText().substring(1));
     }
 
-    private static JsonMapperProfile overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
+    private static JsonProfileCodec overrideProfile(Class<?> overriddenClass, JsonSchemaFragment fragment) {
         List<JsonSchemaTypeOverride> overrides = List.of(JsonSchemaTypeOverride.input(overriddenClass, fragment));
-        return new JsonMapperProfile() {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("conjunction-override");
             }
 
             @Override
-            public com.fasterxml.jackson.databind.ObjectMapper mapper() {
+            protected com.fasterxml.jackson.databind.ObjectMapper mapper() {
                 return new com.fasterxml.jackson.databind.ObjectMapper();
             }
 
@@ -343,7 +344,7 @@ class UnwrappedAnySetterExtrasConjunctionTest {
     @DisplayName("a conjunction subschema whose value type carries a profile override stays"
             + " the override fragment's own $ref, never inlined, and survives folding")
     void overriddenValueTypeKeepsItsOverrideFragmentNeverInlinedIntoTheConjunction() {
-        JsonMapperProfile withOverride = overrideProfile(
+        JsonProfileCodec withOverride = overrideProfile(
                 ConjOverriddenRight.class,
                 JsonSchemaFragment.parse(
                         "{\"type\":\"object\",\"properties\":{\"code\":{\"type\":\"string\",\"maxLength\":9}},"

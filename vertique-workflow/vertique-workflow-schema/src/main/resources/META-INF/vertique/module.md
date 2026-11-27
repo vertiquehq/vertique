@@ -54,7 +54,7 @@ modules it builds on:
 |---|---|---|
 | `WorkflowCoreModule` | yes | Owns the registry that collects definition validators |
 | `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry and binds `WorkflowPayloadSchemas` and `WorkflowStateCompatibility` |
-| `JsonRuntimeModule` | yes | Binds `JsonMapperProfileRegistry` and `JsonConfig`, which the validator injects |
+| `JsonRuntimeModule` | yes | Binds `JsonProfileRegistry` and `JsonConfig`, which the validator injects |
 | `ValidationModule` | optional | Binds a `jakarta.validation.Validator` so schemas reflect bean-validation constraints |
 
 ```java
@@ -431,7 +431,7 @@ profile override; the original exception is chained as the cause. The start payl
   recording-only node registration succeeds without any payload check,
   and an unsuitable type surfaces only when a decision is submitted. A scope-owned definition whose state class
   differs from the default scope's is refused, because no state comparison is available.
-- **Installing it without the JSON runtime module.** The validator needs `JsonMapperProfileRegistry`
+- **Installing it without the JSON runtime module.** The validator needs `JsonProfileRegistry`
   and `JsonConfig`; the component fails to build without them.
 - **Reading descriptors without the module in the registry's component.** `describe` and the
   validation methods then throw `IllegalStateException` for any definition that declares a payload

@@ -9,9 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.rest.validation.corpus.CorpusFixture;
 import dev.vertique.rest.validation.corpus.SchemaCorpus;
 import dev.vertique.rest.validation.corpus.SchemaCorpusGenerator;
@@ -56,11 +56,11 @@ class SchemaCorpusMetadataCrossCheckTest {
     /** Reads the seam's canonical document text back into a node. */
     private static final ObjectMapper DOCUMENT_READER = new ObjectMapper();
 
-    private static DefaultJsonMapperProfileRegistry builtInRegistry() {
-        return new DefaultJsonMapperProfileRegistry(Set.of());
+    private static DefaultJsonProfileRegistry builtInRegistry() {
+        return new DefaultJsonProfileRegistry(Set.of());
     }
 
-    private static JsonMapperProfile profileOf(String id) {
+    private static JsonProfileCodec profileOf(String id) {
         return builtInRegistry().profile(JsonProfileId.of(id));
     }
 
@@ -81,13 +81,13 @@ class SchemaCorpusMetadataCrossCheckTest {
         }
     }
 
-    private static JsonNode metadataDocumentFor(CorpusFixture fixture, JsonMapperProfile profile) {
+    private static JsonNode metadataDocumentFor(CorpusFixture fixture, JsonProfileCodec profile) {
         MetadataBackedSource source = new MetadataBackedSource();
         Type type = fixture.genericType() != null ? fixture.genericType() : fixture.rawType();
         return readDocument(source.generateBodySchema(type, profile).json());
     }
 
-    private static JsonNode walkDocumentFor(CorpusFixture fixture, JsonMapperProfile profile) {
+    private static JsonNode walkDocumentFor(CorpusFixture fixture, JsonProfileCodec profile) {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         Type type = fixture.genericType() != null ? fixture.genericType() : fixture.rawType();
         return readDocument(source.generateBodySchema(type, profile).json());
@@ -110,7 +110,7 @@ class SchemaCorpusMetadataCrossCheckTest {
     @MethodSource("corpusFixtures")
     @DisplayName("system: the metadata source's document equals the walk's document and the pinned file")
     void systemMetadataMatchesWalkAndGolden(CorpusFixture fixture) {
-        JsonMapperProfile profile = profileOf("system");
+        JsonProfileCodec profile = profileOf("system");
         assertTripleEquality("system", fixture, profile);
     }
 
@@ -118,7 +118,7 @@ class SchemaCorpusMetadataCrossCheckTest {
     @MethodSource("corpusFixtures")
     @DisplayName("vertique: the metadata source's document equals the walk's document and the pinned file")
     void vertiqueMetadataMatchesWalkAndGolden(CorpusFixture fixture) {
-        JsonMapperProfile profile = profileOf("vertique");
+        JsonProfileCodec profile = profileOf("vertique");
         assertTripleEquality("vertique", fixture, profile);
     }
 
@@ -133,7 +133,7 @@ class SchemaCorpusMetadataCrossCheckTest {
                         + " which has no validator overload, so it must be unaffected by this change");
     }
 
-    private static void assertTripleEquality(String corpusDirectory, CorpusFixture fixture, JsonMapperProfile profile) {
+    private static void assertTripleEquality(String corpusDirectory, CorpusFixture fixture, JsonProfileCodec profile) {
         String golden = goldenDocument(corpusDirectory, fixture);
         String metadataRendered = SchemaCorpusGenerator.render(metadataDocumentFor(fixture, profile));
         String walkRendered = SchemaCorpusGenerator.render(walkDocumentFor(fixture, profile));

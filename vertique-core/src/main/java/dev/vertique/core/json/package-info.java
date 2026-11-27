@@ -4,9 +4,9 @@
 /**
  * JSON mapper profiles and the process JSON codec.
  *
- * <p>A {@link dev.vertique.core.json.JsonMapperProfile} names a code-owned Jackson
+ * <p>A {@link dev.vertique.core.json.JsonProfileCodec} names a code-owned Jackson
  * {@link com.fasterxml.jackson.databind.ObjectMapper} configuration; a
- * {@link dev.vertique.core.json.JsonMapperProfileRegistry} resolves a
+ * {@link dev.vertique.core.json.JsonProfileRegistry} resolves a
  * {@link dev.vertique.core.json.JsonProfileId} to that mapper. Profiles are the only supported way
  * to configure Jackson for a framework JSON boundary.
  *
@@ -16,6 +16,6 @@
  * that codec runs on.
  *
  * @see dev.vertique.core.json.VertiqueJson
- * @see dev.vertique.core.json.JsonMapperProfileRegistry
+ * @see dev.vertique.core.json.JsonProfileRegistry
  */
 package dev.vertique.core.json;

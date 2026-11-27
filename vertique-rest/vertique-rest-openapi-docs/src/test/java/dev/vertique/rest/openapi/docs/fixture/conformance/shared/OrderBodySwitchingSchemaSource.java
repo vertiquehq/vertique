@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.conformance.shared;
 
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
@@ -68,7 +68,7 @@ public final class OrderBodySwitchingSchemaSource implements OperationSchemaSour
     }
 
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonProfileCodec profile) {
         OperationSchemas canonical = delegate.schemasFor(op, profile);
         if (!SWITCHED_OPERATION.equals(op.operationId())) {
             return canonical;

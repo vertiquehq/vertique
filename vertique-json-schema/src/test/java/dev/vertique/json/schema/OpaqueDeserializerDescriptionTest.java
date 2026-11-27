@@ -12,9 +12,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import org.junit.jupiter.api.DisplayName;
@@ -92,12 +92,12 @@ class OpaqueDeserializerDescriptionTest {
         }
     }
 
-    private static JsonMapperProfile profileWithOpaqueWrapper() {
+    private static JsonProfileCodec profileWithOpaqueWrapper() {
         ObjectMapper mapper = new ObjectMapper();
         SimpleModule module = new SimpleModule("opaque-wrapper-test");
         module.addDeserializer(OpaqueWrapper.class, new OpaqueWrapperDeserializer());
         mapper.registerModule(module);
-        return JsonMapperProfiles.of(JsonProfileId.of("opaque-wrapper-test"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("opaque-wrapper-test"), mapper);
     }
 
     /**
@@ -131,19 +131,19 @@ class OpaqueDeserializerDescriptionTest {
         public Money money;
     }
 
-    private static JsonMapperProfile profileWithModuleRegisteredBeanDeserializer() {
+    private static JsonProfileCodec profileWithModuleRegisteredBeanDeserializer() {
         ObjectMapper mapper = new ObjectMapper();
         SimpleModule module = new SimpleModule("module-registered-bean-deserializer-test");
         module.addDeserializer(Money.class, new MoneyDeserializer());
         mapper.registerModule(module);
-        return JsonMapperProfiles.of(JsonProfileId.of("module-registered-bean-deserializer-test"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("module-registered-bean-deserializer-test"), mapper);
     }
 
     @Test
     @DisplayName("a bean-like type with a module-registered (non-annotated) deserializer is refused, not"
             + " described as {} — every constraint on it must not be silently dropped")
     void beanLikeTypeWithModuleRegisteredDeserializerIsRefused() {
-        JsonMapperProfile profile = profileWithModuleRegisteredBeanDeserializer();
+        JsonProfileCodec profile = profileWithModuleRegisteredBeanDeserializer();
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
                 () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(HoldsMoney.class));

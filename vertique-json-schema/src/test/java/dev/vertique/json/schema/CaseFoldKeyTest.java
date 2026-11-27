@@ -20,11 +20,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
@@ -311,17 +311,17 @@ class CaseFoldKeyTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static JsonMapperProfile plainProfile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("case-fold-key-test"), new ObjectMapper());
+    private static JsonProfileCodec plainProfile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("case-fold-key-test"), new ObjectMapper());
     }
 
-    private static JsonMapperProfile mapperWideProfile() {
-        return JsonMapperProfiles.of(
+    private static JsonProfileCodec mapperWideProfile() {
+        return Jackson2JsonProfiles.of(
                 JsonProfileId.of("case-fold-key-test-mapper-wide"),
                 new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true));
     }
 
-    private static AnnotationJsonSchemaGenerator generatorFor(JsonMapperProfile profile) {
+    private static AnnotationJsonSchemaGenerator generatorFor(JsonProfileCodec profile) {
         return AnnotationJsonSchemaGenerator.forInputProfile(profile);
     }
 
@@ -593,7 +593,7 @@ class CaseFoldKeyTest {
                     String keyword = InputPropertyDescriber.FOLDED_COPY_MARKER;
                     String fragment = "{\"additionalProperties\":false,\"properties\":{\"name\":{\"" + keyword
                             + "\":\"name\",\"type\":\"string\"}},\"type\":\"object\"}";
-                    JsonMapperProfile carrying = HardeningFixtures.profile(
+                    JsonProfileCodec carrying = HardeningFixtures.profile(
                             "folded-copy-keyword-fragment",
                             List.of(JsonSchemaTypeOverride.input(
                                     FragmentTarget.class, JsonSchemaFragment.parse(fragment))));
@@ -649,7 +649,7 @@ class CaseFoldKeyTest {
      * One row: every named member of {@code shape} has, under its folded key, a copy equal to its
      * finished {@code properties} value, and the document holds no placeholder keyword.
      */
-    private static Arguments shapeRow(Class<?> shape, JsonMapperProfile profile, String... members) {
+    private static Arguments shapeRow(Class<?> shape, JsonProfileCodec profile, String... members) {
         return Arguments.of(shape.getSimpleName() + " " + String.join(", ", members), (Executable) () -> {
             JsonNode doc = document(generatorFor(profile), shape);
             List<String> keys = new ArrayList<>();

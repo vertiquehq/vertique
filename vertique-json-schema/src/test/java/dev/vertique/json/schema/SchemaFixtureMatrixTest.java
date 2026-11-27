@@ -25,9 +25,9 @@ import com.fasterxml.jackson.core.io.SerializedString;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
 import io.vertx.json.schema.JsonSchema;
@@ -271,12 +271,12 @@ class SchemaFixtureMatrixTest {
     void differentMapperConfigurationsDivergeExplicitly() {
         // Given: two profiles over the same DTO whose only difference is Jackson field visibility —
         // one detects public fields by default, the other has field auto-detection disabled.
-        JsonMapperProfile fieldVisible =
-                JsonMapperProfiles.of(JsonProfileId.of("matrix-field-visible"), new ObjectMapper());
+        JsonProfileCodec fieldVisible =
+                Jackson2JsonProfiles.of(JsonProfileId.of("matrix-field-visible"), new ObjectMapper());
 
         ObjectMapper fieldHidden = new ObjectMapper();
         fieldHidden.setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.NONE);
-        JsonMapperProfile fieldInvisible = JsonMapperProfiles.of(JsonProfileId.of("matrix-field-hidden"), fieldHidden);
+        JsonProfileCodec fieldInvisible = Jackson2JsonProfiles.of(JsonProfileId.of("matrix-field-hidden"), fieldHidden);
 
         // When: each profile generates a schema for the same visibility-sensitive DTO.
         String visibleDocument = AnnotationJsonSchemaGenerator.forInputProfile(fieldVisible)
@@ -300,13 +300,13 @@ class SchemaFixtureMatrixTest {
         // Given: a plain profile mapper, and a "hostile" profile mapper carrying serialization-side
         // settings that would alter emitted bytes if they were ever used to serialize the schema
         // document itself — but leave the Jackson property model (what Victools discovers) unchanged.
-        JsonMapperProfile plain = JsonMapperProfiles.of(JsonProfileId.of("matrix-plain"), new ObjectMapper());
+        JsonProfileCodec plain = Jackson2JsonProfiles.of(JsonProfileId.of("matrix-plain"), new ObjectMapper());
 
         ObjectMapper hostileMapper = new ObjectMapper();
         hostileMapper.getFactory().setCharacterEscapes(escapeLowercaseA());
         hostileMapper.getFactory().configure(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN, true);
         hostileMapper.enable(SerializationFeature.INDENT_OUTPUT);
-        JsonMapperProfile hostile = JsonMapperProfiles.of(JsonProfileId.of("matrix-hostile"), hostileMapper);
+        JsonProfileCodec hostile = Jackson2JsonProfiles.of(JsonProfileId.of("matrix-hostile"), hostileMapper);
 
         // When: both profiles generate a schema whose keywords deliberately contain the letter 'a'
         // (the @Pattern-bearing property emits the "pattern" keyword) for the fixture that would
@@ -356,7 +356,7 @@ class SchemaFixtureMatrixTest {
     void jakartaConstraintInapplicableToWireTypeNotEmitted() {
         // Given: the real vertique-strict profile, whose BigDecimal override declares a string wire
         // type, and a property additionally carrying a Jakarta numeric-domain constraint.
-        JsonMapperProfile strict = HardeningFixtures.strictProfile();
+        JsonProfileCodec strict = HardeningFixtures.strictProfile();
 
         // When: the input-mode generator produces the document.
         String canonical = AnnotationJsonSchemaGenerator.forInputProfile(strict)

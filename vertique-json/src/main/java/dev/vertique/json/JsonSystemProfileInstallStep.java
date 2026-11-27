@@ -8,9 +8,9 @@ import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  * profile's mapper as the mapper of the process JSON codec.
  *
  * <p>It resolves {@code json.systemProfile} (floor: the reserved {@code system} id) through the
- * {@link JsonMapperProfileRegistry} and hands the resulting mapper to
+ * {@link JsonProfileRegistry} and hands the resulting mapper to
  * {@link VertiqueJson#install}. From that moment every Vert.x JSON operation in the process —
  * {@code Json.encode}, {@code Json.decodeValue}, {@code JsonObject} parsing and encoding,
  * {@code mapTo}, {@code mapFrom} — runs on that mapper. Running in {@code CONFIGURE} puts the
@@ -79,7 +79,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
             JsonParser.Feature.ALLOW_YAML_COMMENTS);
 
     private final JsonConfig jsonConfig;
-    private final JsonMapperProfileRegistry registry;
+    private final JsonProfileRegistry registry;
     private final BooleanSupplier ownsCodec;
 
     /**
@@ -89,7 +89,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
      * @param registry the registry resolving the configured profile id to its mapper
      */
     @Inject
-    JsonSystemProfileInstallStep(JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
+    JsonSystemProfileInstallStep(JsonConfig jsonConfig, JsonProfileRegistry registry) {
         this(jsonConfig, registry, VertiqueJson::ownsCodec);
     }
 
@@ -100,7 +100,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
      * @param registry the registry resolving the configured profile id to its mapper
      * @param ownsCodec reports whether the framework owns the process JSON codec
      */
-    JsonSystemProfileInstallStep(JsonConfig jsonConfig, JsonMapperProfileRegistry registry, BooleanSupplier ownsCodec) {
+    JsonSystemProfileInstallStep(JsonConfig jsonConfig, JsonProfileRegistry registry, BooleanSupplier ownsCodec) {
         this.jsonConfig = jsonConfig;
         this.registry = registry;
         this.ownsCodec = ownsCodec;
@@ -151,7 +151,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
         JsonProfileId id = jsonConfig.effectiveSystemProfile();
         requireProcessCodecOwnership(id);
         // Resolving through the registry is also what rejects an unknown or retired profile id.
-        ObjectMapper mapper = registry.mapper(id);
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(registry.profile(id));
         requireVertxModule(id, mapper);
         requireNoDefaultTyping(id, mapper);
         warnAboutLeniency(id, mapper);
@@ -264,7 +264,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
      * @return one entry per weakened limit; empty when none is weakened
      */
     private static List<String> weakerReadLimits(StreamReadConstraints constraints) {
-        StreamReadConstraints raw = SystemJsonMapperProfile.rawStreamReadConstraints();
+        StreamReadConstraints raw = SystemJsonProfileCodec.rawStreamReadConstraints();
         List<String> weakened = new ArrayList<>();
         addWhenWeaker(weakened, "maxNestingDepth", constraints.getMaxNestingDepth(), raw.getMaxNestingDepth());
         addWhenWeaker(weakened, "maxNumberLength", constraints.getMaxNumberLength(), raw.getMaxNumberLength());

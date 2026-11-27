@@ -19,9 +19,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotNull;
 import java.lang.reflect.Type;
@@ -49,19 +50,19 @@ class CreatorAndCaseInsensitivityDescriptionTest {
 
     // --- Generation helpers ---
 
-    private static JsonMapperProfile profile(ObjectMapper mapper) {
+    private static JsonProfileCodec profile(ObjectMapper mapper) {
         return profile(mapper, List.of());
     }
 
-    private static JsonMapperProfile profile(ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides) {
-        return new JsonMapperProfile() {
+    private static JsonProfileCodec profile(ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides) {
+        return new Jackson2JsonProfileCodec() {
             @Override
             public JsonProfileId id() {
                 return JsonProfileId.of("test");
             }
 
             @Override
-            public ObjectMapper mapper() {
+            protected ObjectMapper mapper() {
                 return mapper;
             }
 
@@ -188,7 +189,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @DisplayName("A profile override remedies the delegating-creator refusal")
     void delegatingCreatorGeneratesWithAnOverride() {
         String marker = "delegating-override-marker";
-        JsonMapperProfile overridden = profile(
+        JsonProfileCodec overridden = profile(
                 new ObjectMapper(),
                 List.of(JsonSchemaTypeOverride.input(
                         DelegatingCreatorOnAnySetterType.class, HardeningFixtures.markerFragment(marker))));
@@ -289,7 +290,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
             + " position, not silently ignored by the inline path")
     void memberLevelCaseInsensitiveOverrideIsHonored() {
         String marker = "ci-delegating-override-marker";
-        JsonMapperProfile overridden = profile(
+        JsonProfileCodec overridden = profile(
                 new ObjectMapper(),
                 List.of(JsonSchemaTypeOverride.input(
                         MemberCaseInsensitiveDelegatingChild.class, HardeningFixtures.markerFragment(marker))));
@@ -361,7 +362,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @DisplayName("a profile override remedies the array-delegating-creator refusal")
     void arrayDelegatingCreatorGeneratesWithAnOverride() {
         String marker = "array-delegating-override-marker";
-        JsonMapperProfile overridden = profile(
+        JsonProfileCodec overridden = profile(
                 new ObjectMapper(),
                 List.of(JsonSchemaTypeOverride.input(
                         ArrayDelegatingCreator.class, HardeningFixtures.markerFragment(marker))));

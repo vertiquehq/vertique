@@ -17,9 +17,10 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotNull;
@@ -88,8 +89,8 @@ class AliasDescriptionTest {
      * @param profileId the built-in profile id
      * @return the resolved profile
      */
-    private static JsonMapperProfile profile(String profileId) {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of(profileId));
+    private static JsonProfileCodec profile(String profileId) {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of(profileId));
     }
 
     /**
@@ -135,7 +136,7 @@ class AliasDescriptionTest {
      */
     private static <T> T bind(Class<T> type, String body) {
         try {
-            return profile("vertique").mapper().readValue(body, type);
+            return Jackson2JsonProfileCodec.objectMapper(profile("vertique")).readValue(body, type);
         } catch (JsonProcessingException unbindable) {
             fail("the binder must accept " + body + " for " + type.getSimpleName(), unbindable);
             throw new AssertionError("unreachable");

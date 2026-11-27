@@ -11,9 +11,9 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import jakarta.validation.constraints.Size;
 import java.lang.reflect.Type;
 import java.util.LinkedHashMap;
@@ -59,9 +59,9 @@ class CaseInsensitiveUnicodeFoldingTest {
         public String key;
     }
 
-    private static JsonMapperProfile caseInsensitiveProfile() {
+    private static JsonProfileCodec caseInsensitiveProfile() {
         ObjectMapper mapper = new ObjectMapper();
-        return JsonMapperProfiles.of(JsonProfileId.of("ci-unicode-fold-test"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("ci-unicode-fold-test"), mapper);
     }
 
     private static JsonNode inputDocument(Type type) {

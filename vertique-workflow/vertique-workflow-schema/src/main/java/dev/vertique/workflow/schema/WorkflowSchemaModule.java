@@ -20,7 +20,7 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
  * schema and keeps the result in a cache keyed by payload type and profile. A definition that fails any step is not
  * published, whether it is registered at bootstrap or activated at runtime.
  *
- * <p>The module expects the application to bind {@code JsonMapperProfileRegistry} and {@code JsonConfig}, as the
+ * <p>The module expects the application to bind {@code JsonProfileRegistry} and {@code JsonConfig}, as the
  * JSON runtime module does. A {@code jakarta.validation.Validator} binding is optional: when one is present the
  * generated schemas also reflect the constraints it reports. Install the validation module alongside so that the
  * schema and the engine's payload enforcement agree.

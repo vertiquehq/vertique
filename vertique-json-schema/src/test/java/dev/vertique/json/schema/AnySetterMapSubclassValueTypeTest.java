@@ -11,9 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,8 +40,8 @@ class AnySetterMapSubclassValueTypeTest {
     /** The extras schema of a list-of-integers value under the {@code vertique} profile. */
     private static final String INTEGER_LIST_EXTRAS = "{\"items\":{\"type\":\"integer\"},\"type\":\"array\"}";
 
-    private static JsonMapperProfile profile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    private static JsonProfileCodec profile() {
+        return new DefaultJsonProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
     }
 
     /**
@@ -69,7 +70,7 @@ class AnySetterMapSubclassValueTypeTest {
     @Test
     @DisplayName("A map subclass that reorders its parameters describes the value type, not the key type")
     void reorderedMapSubclassDescribesTheValueType() throws Exception {
-        ObjectMapper mapper = profile().mapper();
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(profile());
         ReversedHolder bound = mapper.readValue("{\"name\":\"n\",\"extra\":5}", ReversedHolder.class);
         assertInstanceOf(Integer.class, bound.extras.get("extra"), "Jackson must bind the extras as integers");
 

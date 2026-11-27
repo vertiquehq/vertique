@@ -9,10 +9,10 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMounts;
@@ -112,13 +112,13 @@ public class ProfiledBodyParseUnderGateIT {
      *
      * @return the {@code strict-test} profile
      */
-    private static JsonMapperProfile strictTestProfile() {
+    private static JsonProfileCodec strictTestProfile() {
         ObjectMapper strictMapper = JsonMapper.builder()
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                 .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 .addModule(VertxJsonSupport.module())
                 .build();
-        return JsonMapperProfiles.of(JsonProfileId.of("strict-test"), strictMapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("strict-test"), strictMapper);
     }
 
     // --- Resource fixtures ---
@@ -287,7 +287,7 @@ public class ProfiledBodyParseUnderGateIT {
     private void deploy(
             Vertx vertx, VertxTestContext ctx, Set<Object> resources, BiConsumer<Integer, WebClient> afterListen) {
         RestTestContributions contributions = RestTestContributions.builder()
-                .addJsonMapperProfile(strictTestProfile())
+                .addJsonProfileCodec(strictTestProfile())
                 .build();
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), resources)
                 .onComplete(ctx.succeeding(s -> {

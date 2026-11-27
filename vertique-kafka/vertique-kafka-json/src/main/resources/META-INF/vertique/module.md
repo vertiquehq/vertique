@@ -36,10 +36,10 @@ Do not use when only non-JSON payloads are needed (e.g. Avro-only), or when a fu
 
 The backing `ObjectMapper` is resolved per endpoint with a two-tier precedence, and profiles resolved through the registry are the only mapper source — no call site reads the shared Vert.x codec mapper directly:
 
-1. **Explicit bag selection** — a **non-blank** `jsonProfile` in the merged serde-config bag (set by the per-binding / `kafka.jsonProfile` resolution in `vertique-kafka-core`) wins outright and stops resolution. Every id, including `"system"`, is looked up in the injected `JsonMapperProfileRegistry` from `vertique-json` (an unknown **bag** id ⇒ `JsonProfileConfigurationException` at deserializer-build time, fail-fast — distinct from the global `json.jsonProfile`, which is pre-resolved and fails fast at provider construction / startup).
-2. **Global `json.jsonProfile`** — when the bag carries no explicit selection, the pre-resolved global default — `registry.mapper(jsonConfig.effectiveProfile())`, the `vertique` floor unless the application configures `json.jsonProfile` otherwise — applies.
+1. **Explicit bag selection** — a **non-blank** `jsonProfile` in the merged serde-config bag (set by the per-binding / `kafka.jsonProfile` resolution in `vertique-kafka-core`) wins outright and stops resolution. Every id, including `"system"`, is looked up in the injected `JsonProfileRegistry` from `vertique-json` (an unknown **bag** id ⇒ `JsonProfileConfigurationException` at deserializer-build time, fail-fast — distinct from the global `json.jsonProfile`, which is pre-resolved and fails fast at provider construction / startup).
+2. **Global `json.jsonProfile`** — when the bag carries no explicit selection, the pre-resolved global default — `Jackson2JsonProfileCodec.objectMapper(registry.profile(jsonConfig.effectiveProfile()))`, the `vertique` floor unless the application configures `json.jsonProfile` otherwise — applies.
 
-`JsonMapperProfileRegistry` and `JsonConfig` are available because `KafkaJsonModule` includes `JsonRuntimeModule`. The global-tier mapper is computed once in the `JsonSerdeProvider` constructor (an unknown `json.jsonProfile` fails fast at startup; the per-binding `kafka.jsonProfile` is additionally validated by a `ComposeValidator`).
+`JsonProfileRegistry` and `JsonConfig` are available because `KafkaJsonModule` includes `JsonRuntimeModule`. The global-tier mapper is computed once in the `JsonSerdeProvider` constructor (an unknown `json.jsonProfile` fails fast at startup; the per-binding `kafka.jsonProfile` is additionally validated by a `ComposeValidator`).
 
 The per-binding profile (tier 1) is selected by placing `@JsonProfile("profile-id")` (`dev.vertique.core.json.JsonProfile`) on the `@KafkaListener` or `@KafkaProducer` **type**. Placing it on a method instead of the type is rejected at build time. When the annotation is absent, resolution falls through to the global default (the `vertique` floor) above.
 
@@ -73,7 +73,7 @@ For Model-3 router consumers that use `matchProperty` routing, `JsonSerdeProvide
 
 ### `JsonSerdeProvider`
 
-`KafkaSerdeProvider` implementation for the `"json"` format. Constructed with an injected `JsonMapperProfileRegistry` (resolves named profiles to `ObjectMapper` instances) and `JsonConfig` (the global `json.jsonProfile` default, pre-resolved once at construction).
+`KafkaSerdeProvider` implementation for the `"json"` format. Constructed with an injected `JsonProfileRegistry` (resolves named profiles to `ObjectMapper` instances) and `JsonConfig` (the global `json.jsonProfile` default, pre-resolved once at construction).
 
 ```java
 public final class JsonSerdeProvider implements KafkaSerdeProvider {
@@ -85,7 +85,7 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
      * floor unless {@code json.jsonProfile} is configured; an explicit bag id, including
      * {@code "system"}, resolves through the registry and stops.
      */
-    public JsonSerdeProvider(JsonMapperProfileRegistry registry, JsonConfig jsonConfig) { ... }
+    public JsonSerdeProvider(JsonProfileRegistry registry, JsonConfig jsonConfig) { ... }
 
     /** Returns {@code "json"}. */
     @Override public String format() { return "json"; }
@@ -195,7 +195,7 @@ topic is used only in the failure message.
 
 ### `KafkaDefaultProfileValidator`
 
-`@Singleton ComposeValidator` contributed by `KafkaJsonModule` to the `VALIDATE`-phase multibinding. Validates the Kafka per-boundary default profile id (`kafka.jsonProfile`) against the `JsonMapperProfileRegistry` at `@Inject` construction time.
+`@Singleton ComposeValidator` contributed by `KafkaJsonModule` to the `VALIDATE`-phase multibinding. Validates the Kafka per-boundary default profile id (`kafka.jsonProfile`) against the `JsonProfileRegistry` at `@Inject` construction time.
 
 A non-blank `kafka.jsonProfile` that names an unknown profile throws `JsonProfileConfigurationException` immediately at the `VALIDATE` phase — before any consumer or producer is started — even when zero bindings are active or when a more-specific per-binding profile would shadow the boundary default at runtime. This closes the lazy-resolution gap for inert or shadowed configured defaults.
 
@@ -203,7 +203,7 @@ A non-blank `kafka.jsonProfile` that names an unknown profile throws `JsonProfil
 
 ### `KafkaJsonModule`
 
-Dagger `@Module` that contributes `JsonSerdeProvider` into the `Set<KafkaSerdeProvider>` multibinding and includes `JsonRuntimeModule` so the `JsonMapperProfileRegistry` binding is available.
+Dagger `@Module` that contributes `JsonSerdeProvider` into the `Set<KafkaSerdeProvider>` multibinding and includes `JsonRuntimeModule` so the `JsonProfileRegistry` binding is available.
 
 ```java
 @Module(includes = JsonRuntimeModule.class)
@@ -212,7 +212,7 @@ public abstract class KafkaJsonModule {
     @Provides
     @Singleton
     @IntoSet
-    static KafkaSerdeProvider jsonSerdeProvider(JsonMapperProfileRegistry registry, JsonConfig jsonConfig) {
+    static KafkaSerdeProvider jsonSerdeProvider(JsonProfileRegistry registry, JsonConfig jsonConfig) {
         return new JsonSerdeProvider(registry, jsonConfig);
     }
 
@@ -269,7 +269,7 @@ This module owns no configuration keys. Format and profile selection are consume
 
 | Key | Owner | Role for this provider |
 |---|---|---|
-| Bag `jsonProfile` (non-blank) | kafka-core serde bag | Resolved through `JsonMapperProfileRegistry`; unknown id ⇒ `JsonProfileConfigurationException` |
+| Bag `jsonProfile` (non-blank) | kafka-core serde bag | Resolved through `JsonProfileRegistry`; unknown id ⇒ `JsonProfileConfigurationException` |
 | `kafka.jsonProfile` | kafka-core | Per-boundary default validated at startup by `KafkaDefaultProfileValidator` |
 | `json.jsonProfile` | json | Global default when the bag carries no explicit id (vertique floor unless configured) |
 
@@ -300,6 +300,6 @@ This module owns no configuration keys. Format and profile selection are consume
 |----------|-------|---------|
 | `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`, `KafkaDeserializer`, `DeserializationException`, `SerializationException` |
 | `dev.vertique:vertique-json` | compile | `JsonRuntimeModule`, `JsonConfig` |
-| `dev.vertique:vertique-core` | compile | `JsonMapperProfileRegistry`, `JsonProfileId`, `VertiqueJson` (package `dev.vertique.core.json`) |
+| `dev.vertique:vertique-core` | compile | `JsonProfileRegistry`, `JsonProfileId`, `VertiqueJson` (package `dev.vertique.core.json`) |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `JsonNode`, `treeToValue` |
 | `io.vertx:vertx-core` | compile | `JsonObject` (the merged serde-config bag) |

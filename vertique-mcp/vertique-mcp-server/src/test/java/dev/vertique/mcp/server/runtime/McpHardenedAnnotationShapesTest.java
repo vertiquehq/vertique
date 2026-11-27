@@ -9,9 +9,9 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.io.IOException;
@@ -189,7 +189,7 @@ class McpHardenedAnnotationShapesTest {
 
     /** Generates one type through {@code forInputProfile} and hardens it, exactly as composition does. */
     static String hardenedDocumentFor(Type type) {
-        JsonMapperProfile profile = new DefaultJsonMapperProfileRegistry(Set.of()).profile(PROFILE_ID);
+        JsonProfileCodec profile = new DefaultJsonProfileRegistry(Set.of()).profile(PROFILE_ID);
         String generated =
                 AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(type);
         return McpCanonicalJsonWriter.writeCanonical(

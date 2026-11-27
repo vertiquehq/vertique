@@ -14,8 +14,8 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.json.JsonRuntimeModule;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * seam for {@code jaxrs.jsonProfile}.
  *
  * <p>Mirrors {@code JsonDefaultProfileValidatorTest}: a real Dagger component installs
- * {@link JsonRuntimeModule} (for the {@link JsonMapperProfileRegistry}) plus a test module supplying
+ * {@link JsonRuntimeModule} (for the {@link JsonProfileRegistry}) plus a test module supplying
  * {@code @VertxConfig JsonObject}, a minimal {@link ConfigParser}, the {@link JaxRsConfig} carrying
  * {@code jaxrs.jsonProfile}, and the {@link JaxRsDefaultProfileValidator} {@code @IntoSet}
  * contribution. Resolving the {@code Set<ComposeValidator>} multibinding forces construction of

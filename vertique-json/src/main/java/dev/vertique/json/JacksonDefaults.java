@@ -153,8 +153,8 @@ public final class JacksonDefaults {
         // Carry the raw Vert.x factory's stream-read limits explicitly. A copy() of Vert.x's mapper
         // already inherits them, but a fresh ObjectMapper does not — and the operator-tuned
         // vertx.jackson.defaultRead* limits must hold for every mapper built from this recipe.
-        // SystemJsonMapperProfile is the single file in this package that reads Vert.x's raw mapper.
-        mapper.getFactory().setStreamReadConstraints(SystemJsonMapperProfile.rawStreamReadConstraints());
+        // SystemJsonProfileCodec is the single file in this package that reads Vert.x's raw mapper.
+        mapper.getFactory().setStreamReadConstraints(SystemJsonProfileCodec.rawStreamReadConstraints());
         // Text after the JSON value is a malformed document, not a document with a tail to ignore.
         mapper.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         // Re-register VertxModule LAST so Vert.x's Instant/JsonObject/Buffer serializers remain

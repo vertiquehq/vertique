@@ -923,8 +923,8 @@ threading the mount's own `MountMeta` (from `JaxRsRouterMount.meta()`) into ever
 a strategy overriding only the 2-arg form is unaffected, while one overriding the 3-arg form (e.g. a
 per-mount OpenAPI contract) receives the registering mount's metadata for every operation.
 
-`OperationSchemaSource.schemasFor` takes the operation's effective `JsonMapperProfile` alongside the
-descriptor — `schemasFor(op, JsonMapperProfile profile)`. `JaxRsRouteRegistrar` resolves that profile
+`OperationSchemaSource.schemasFor` takes the operation's effective `JsonProfileCodec` alongside the
+descriptor — `schemasFor(op, JsonProfileCodec profile)`. `JaxRsRouteRegistrar` resolves that profile
 once per operation at router build and passes it with every call.
 
 `OperationSchemas#toBuilder()` is Beta API: a decorating `OperationSchemaSource` uses it to derive a
@@ -1932,7 +1932,7 @@ The `ObjectMapper` used for a resource method is resolved once at router-build t
 5. `vertique` — the framework's opinionated profile, and the floor every managed edge shares.
 
 Every id resolved above, the reserved `system` included, is resolved to its mapper through the
-`JsonMapperProfileRegistry`. An unknown profile id fails at **startup**, not on the first request.
+`JsonProfileRegistry`. An unknown profile id fails at **startup**, not on the first request.
 `JaxRsDefaultProfileValidator` additionally resolves `jaxrs.jsonProfile` during the `VALIDATE` phase,
 so a bad boundary default fails even when no resource method would have used it.
 
@@ -1955,7 +1955,7 @@ the process codec's, so the route binds through `system` rather than silently th
 
 The comparison is captured **once per route, when the router is built** (the `EDGE` startup phase,
 after `CONFIGURE` installs the process mapper). Two consequences follow. A custom
-`JsonMapperProfileRegistry` that returns a fresh `ObjectMapper` per call never matches, so its routes
+`JsonProfileRegistry` that returns a fresh `ObjectMapper` per call never matches, so its routes
 never take the fast path — the built-in registry hands out one stable instance per profile. And
 swapping the process codec's mapper after routers are built (a second application booting in the same
 JVM with the same system profile id) does not retroactively change routes already decided: routes
@@ -2428,7 +2428,7 @@ These types left this module and have no forwarding type here. Change the import
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
 | `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
-| `dev.vertique:vertique-json` | the `JsonMapperProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.input.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
+| `dev.vertique:vertique-json` | the `JsonProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.input.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 

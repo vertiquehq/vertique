@@ -9,16 +9,19 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
+import io.vertx.core.buffer.Buffer;
+import java.io.OutputStream;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link JsonSchemaTypeOverride} factory validation and component exposure, and for
- * the {@link JsonMapperProfile#jsonSchemaTypeOverrides()} default.
+ * the {@link JsonProfileCodec#jsonSchemaTypeOverrides()} default.
  */
 class JsonSchemaTypeOverrideTest {
 
@@ -51,10 +54,9 @@ class JsonSchemaTypeOverrideTest {
     }
 
     @Test
-    @DisplayName("a profile implementing only id() and mapper() reports a stable empty unmodifiable override list")
+    @DisplayName("a profile implementing only the neutral members reports a stable empty unmodifiable override list")
     void profileDefaultOverridesIsEmptyStableUnmodifiable() {
-        ObjectMapper mapper = new ObjectMapper();
-        JsonMapperProfile profile = new JsonMapperProfile() {
+        JsonProfileCodec profile = new JsonProfileCodec() {
 
             @Override
             public JsonProfileId id() {
@@ -62,8 +64,38 @@ class JsonSchemaTypeOverrideTest {
             }
 
             @Override
-            public ObjectMapper mapper() {
-                return mapper;
+            public Buffer encode(Object value) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public String encodeToString(Object value) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void encodeTo(Object value, OutputStream out) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T decode(Buffer json, Type type) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T decode(String json, Type type) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T convert(Object value, Type type) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> Optional<T> unwrap(Class<T> type) {
+                return Optional.empty();
             }
         };
 

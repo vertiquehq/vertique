@@ -23,9 +23,10 @@ import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
 import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
-import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import jakarta.validation.constraints.Size;
 import java.io.IOException;
 import java.lang.reflect.Type;
@@ -55,15 +56,15 @@ import org.junit.jupiter.api.Test;
  */
 class UnwrappedNestedPropertyPathTest {
 
-    private static JsonMapperProfile plainProfile() {
-        return JsonMapperProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-test"), new ObjectMapper());
+    private static JsonProfileCodec plainProfile() {
+        return Jackson2JsonProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-test"), new ObjectMapper());
     }
 
     private static JsonNode inputDocument(Type type) {
         return inputDocument(type, plainProfile());
     }
 
-    private static JsonNode inputDocument(Type type, JsonMapperProfile profile) {
+    private static JsonNode inputDocument(Type type, JsonProfileCodec profile) {
         return assertCanonicalForm(
                 AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(type));
     }
@@ -95,7 +96,8 @@ class UnwrappedNestedPropertyPathTest {
     @DisplayName("premise: the real binder routes a nested {\"attrs\":{...}} body into the attrs field, not"
             + " flattened onto the parent, proving Map is genuinely left to the nested-property path")
     void jacksonBinderRoutesTheMapBodyIntoTheNestedAttrsField() throws Exception {
-        MapAttrsParent bound = plainProfile().mapper().readValue("{\"attrs\":{\"k\":1}}", MapAttrsParent.class);
+        MapAttrsParent bound = Jackson2JsonProfileCodec.objectMapper(plainProfile())
+                .readValue("{\"attrs\":{\"k\":1}}", MapAttrsParent.class);
 
         assertTrue(
                 bound.attrs != null && Integer.valueOf(1).equals(bound.attrs.get("k")),
@@ -197,17 +199,17 @@ class UnwrappedNestedPropertyPathTest {
      * real {@code OptionalDeserializer} case this block covers. {@code
      * jackson-datatype-jdk8} is available through {@code vertique-json}'s test-scope dependency.
      */
-    private static JsonMapperProfile jdk8Profile() {
+    private static JsonProfileCodec jdk8Profile() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new Jdk8Module());
-        return JsonMapperProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-jdk8-test"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-jdk8-test"), mapper);
     }
 
     @Test
     @DisplayName("an unwrapped Optional<Bean> member is published as an ordinary nested property, not"
             + " refused as an opaque custom deserializer")
     void unwrappedOptionalMemberIsPublishedAsNestedProperty() {
-        JsonMapperProfile profile = jdk8Profile();
+        JsonProfileCodec profile = jdk8Profile();
         JsonNode document = assertDoesNotThrow(
                 () -> inputDocument(OptionalParent.class, profile),
                 "Jackson's OptionalDeserializer does not support unwrapping either, so"
@@ -221,8 +223,9 @@ class UnwrappedNestedPropertyPathTest {
     @DisplayName("premise: the real binder routes a nested {\"maybe\":{...}} body into the maybe field, not"
             + " flattened onto the parent, proving Optional is genuinely left to the nested-property path")
     void jacksonBinderRoutesTheOptionalBodyIntoTheNestedMaybeField() throws Exception {
-        JsonMapperProfile profile = jdk8Profile();
-        OptionalParent bound = profile.mapper().readValue("{\"maybe\":{\"name\":\"Ann\"}}", OptionalParent.class);
+        JsonProfileCodec profile = jdk8Profile();
+        OptionalParent bound = Jackson2JsonProfileCodec.objectMapper(profile)
+                .readValue("{\"maybe\":{\"name\":\"Ann\"}}", OptionalParent.class);
 
         assertTrue(
                 bound.maybe != null && bound.maybe.isPresent() && "Ann".equals(bound.maybe.get().name),
@@ -274,7 +277,7 @@ class UnwrappedNestedPropertyPathTest {
         public WireShapeChild child;
     }
 
-    private static JsonMapperProfile shapeChangingWrapperProfile() {
+    private static JsonProfileCodec shapeChangingWrapperProfile() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new SimpleModule() {
             @Override
@@ -292,14 +295,14 @@ class UnwrappedNestedPropertyPathTest {
                 });
             }
         });
-        return JsonMapperProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-refusal-test"), mapper);
+        return Jackson2JsonProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-refusal-test"), mapper);
     }
 
     @Test
     @DisplayName("refusal branch: an unwrapped member whose type has a non-pure DelegatingDeserializer"
             + " wrapper (changing the wire shape) is refused with the custom-deserializer diagnostic")
     void unwrappedMemberWithShapeChangingDelegatingWrapperIsRefused() {
-        JsonMapperProfile profile = shapeChangingWrapperProfile();
+        JsonProfileCodec profile = shapeChangingWrapperProfile();
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
@@ -316,7 +319,7 @@ class UnwrappedNestedPropertyPathTest {
     @DisplayName("refusal branch: the custom-deserializer diagnostic for an unwrapped member names the"
             + " member, not only the type")
     void refusalDiagnosticNamesTheUnwrappedMember() {
-        JsonMapperProfile profile = shapeChangingWrapperProfile();
+        JsonProfileCodec profile = shapeChangingWrapperProfile();
 
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,

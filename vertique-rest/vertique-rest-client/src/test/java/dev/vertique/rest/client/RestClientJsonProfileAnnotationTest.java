@@ -8,11 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.core.json.JsonProfileRegistry;
+import dev.vertique.json.DefaultJsonProfileRegistry;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.Vertx;
@@ -77,7 +77,7 @@ class RestClientJsonProfileAnnotationTest {
 
     /**
      * Creates a fresh {@link ObjectMapper} with Vert.x JSON-type support so it passes the
-     * {@link DefaultJsonMapperProfileRegistry} round-trip probe.
+     * {@link DefaultJsonProfileRegistry} round-trip probe.
      *
      * @return a new probe-passing mapper instance
      */
@@ -91,8 +91,8 @@ class RestClientJsonProfileAnnotationTest {
      * @return a registry resolving {@code payments-v2} plus the reserved {@code system},
      *     {@code vertique}, and {@code vertique-strict} profiles
      */
-    private static JsonMapperProfileRegistry registry() {
-        return new DefaultJsonMapperProfileRegistry(Set.of(JsonMapperProfiles.of(ID_PAYMENTS_V2, mapperPaymentsV2)));
+    private static JsonProfileRegistry registry() {
+        return new DefaultJsonProfileRegistry(Set.of(Jackson2JsonProfiles.of(ID_PAYMENTS_V2, mapperPaymentsV2)));
     }
 
     // --- Fixture client interfaces ---
@@ -121,7 +121,7 @@ class RestClientJsonProfileAnnotationTest {
     @DisplayName("resolveEffectiveProfileId_readsInterfaceJsonProfile — @JsonProfile(\"payments-v2\") resolves")
     void resolveEffectiveProfileId_readsInterfaceJsonProfile() {
         // GIVEN an interface with only @JsonProfile("payments-v2") and a seeded registry.
-        RestClientBuilder builder = RestClientBuilder.create(vertx).jsonMapperProfileRegistry(registry());
+        RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfileRegistry(registry());
 
         // WHEN the builder resolves the effective mapper (the observable proxy for the resolved id).
         ObjectMapper resolved = builder.resolveEffectiveMapper(null, JsonProfileOnlyClient.class, "payments");
@@ -139,7 +139,7 @@ class RestClientJsonProfileAnnotationTest {
     @DisplayName("methodLevelJsonProfileOnRestClientInterface_failsClientBuild — names method + TYPE-level rule")
     void methodLevelJsonProfileOnRestClientInterface_failsClientBuild() {
         // GIVEN a @RestClient interface with @JsonProfile on a METHOD (not the TYPE).
-        RestClientBuilder builder = RestClientBuilder.create(vertx).jsonMapperProfileRegistry(registry());
+        RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfileRegistry(registry());
 
         // WHEN building, THEN a RestClientConfigurationException naming the method and requiring TYPE placement.
         RestClientConfigurationException ex = assertThrows(

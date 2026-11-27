@@ -19,7 +19,7 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.eventbus.EventBusClient;
-import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.job.cron.CronScheduler;
 import dev.vertique.json.JsonRuntimeModule;
@@ -54,7 +54,7 @@ public abstract class CacheRedisModule {
             RedisClientRegistry clients,
             CacheRedisConfig config,
             CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles) {
+            JsonProfileRegistry profiles) {
         return new RedisCacheStore(clients, config, cacheConfig, profiles);
     }
 
