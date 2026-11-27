@@ -52,9 +52,9 @@ class ApiSurfaceTest {
      * Types published to consumers of this module.
      *
      * <p>{@code InputFieldNameResolver} is deliberately absent: the contract is declared in
-     * {@code dev.vertique.core.input} beside its vocabulary siblings ({@code InputLocation},
-     * {@code Canonicalizer}, {@code Sanitizer}), so its surface is frozen by {@code vertique-core}'s
-     * {@code SanitizationContractsTest} rather than here. This module consumes it — every ledgered
+     * {@code dev.vertique.core.input} beside its siblings ({@code InputLocation},
+     * {@code InputValueContext}), so its surface is frozen by {@code vertique-core}'s
+     * {@code InputContractsTest} rather than here. This module consumes it — every ledgered
      * signature below that names it still pins the parameter type.
      */
     private static final Set<String> PUBLIC_TYPES = Set.of(

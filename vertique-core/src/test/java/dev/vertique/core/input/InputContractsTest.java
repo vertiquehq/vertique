@@ -61,7 +61,7 @@ class InputContractsTest {
      * <p>The contract is a lambda target implemented outside this module (the Jackson-backed
      * projection lives in {@code vertique-json}) and is consumed by the input-processing engine, so
      * its member set is a compatibility commitment. This ledger moved here with the interface when
-     * it was relocated from {@code dev.vertique.sanitization.processing}; the assertions are unchanged.
+     * it was relocated from the input-processing engine; the assertions are unchanged.
      */
     @Nested
     @DisplayName("InputFieldNameResolver contract")
