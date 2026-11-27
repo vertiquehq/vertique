@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.json;
+package dev.vertique.json;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
+import io.vertx.core.json.jackson.VertxModule;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -24,7 +29,7 @@ import org.junit.jupiter.api.Test;
  * runtime, and proves the later {@code System.setProperty} has no effect. That ordering is the whole
  * point — a gate re-read per call would be defeatable by any code on the classpath.
  */
-class VertiqueJsonCodecResetGateTest {
+class ProfileDelegatingJsonCodecResetGateTest {
 
     private static final String ALLOW_RESET = "vertique.json.codec.allowReset";
 
@@ -47,6 +52,16 @@ class VertiqueJsonCodecResetGateTest {
             assertTrue(
                     String.valueOf(refused.getMessage()).contains(ALLOW_RESET),
                     "the refusal must name the flag; got: " + refused.getMessage());
+
+            // With a profile installed, a refused reset must leave the installation in place.
+            JsonProfileId id = JsonProfileId.of("reset-gate-test");
+            VertiqueJson.install(Jackson2JsonProfiles.of(id, new ObjectMapper().registerModule(new VertxModule())));
+            IllegalStateException refusedWithProfile =
+                    assertThrows(IllegalStateException.class, VertiqueJson::resetForTests);
+            assertTrue(
+                    String.valueOf(refusedWithProfile.getMessage()).contains(ALLOW_RESET),
+                    "the refusal must name the property; got: " + refusedWithProfile.getMessage());
+            assertEquals(id, VertiqueJson.profile().orElse(null), "a refused reset must leave the profile installed");
         } finally {
             System.clearProperty(ALLOW_RESET);
         }

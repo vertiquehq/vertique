@@ -12,6 +12,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ParameterViolation;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JakartaPathPointers;
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;
@@ -142,7 +143,7 @@ class PointerOverloadParityTest {
         Method create = Resource.class.getMethod("create", Body.class);
         List<ParameterViolation> violations =
                 beanValidator.checkParameters(RESOURCE, create, new Object[] {violatingBody()});
-        ObjectMapper mapper = VertiqueJson.mapper();
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         JakartaPathPointers.Resolver session = JakartaPathPointers.resolver(mapper, null);
 
         // When: each violation is resolved through the structured path and through the Java path string

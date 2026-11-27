@@ -105,3 +105,4 @@ and observer failures are swallowed.
 |---|---|
 | `vertique-cache-core` | Provider-neutral cache contracts |
 | `vertique-json` | Named JSON mapper profiles used for value isolation |
+| `jackson-databind` | `ObjectMapper`, the type of the profile mappers used for value isolation |

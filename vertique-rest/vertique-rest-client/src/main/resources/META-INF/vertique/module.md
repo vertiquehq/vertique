@@ -1235,6 +1235,7 @@ interface AppComponent {
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `DefaultJsonProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper`, the type of the profile mappers that encode and decode bodies |
 | `dev.vertique:vertique-http-client` | The governed transport: `HttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |

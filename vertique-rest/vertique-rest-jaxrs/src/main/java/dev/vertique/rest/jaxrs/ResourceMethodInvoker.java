@@ -8,6 +8,7 @@ import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ParameterViolation;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.context.RestContextResolution;
@@ -251,7 +252,9 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 paramConversionResolver,
                 bodyNameResolver,
                 descriptor,
-                resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper());
+                resolvedBodyMapper != null
+                        ? resolvedBodyMapper
+                        : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()));
     }
 
     /**

@@ -64,7 +64,7 @@ class ModuleStructureTest {
             List.of("io.vertx.core.json.Json", "dev.vertique.core.json.VertiqueJson");
 
     /** Source text the module must never contain outside comments. */
-    private static final List<String> BANNED_SOURCE_TEXT = List.of("Json.CODEC", "VertiqueJson.mapper(");
+    private static final List<String> BANNED_SOURCE_TEXT = List.of("Json.CODEC", "VertiqueJson.codec(");
 
     @Test
     @DisplayName("pom.xml declares exactly the thirteen expected compile-scope dependencies")

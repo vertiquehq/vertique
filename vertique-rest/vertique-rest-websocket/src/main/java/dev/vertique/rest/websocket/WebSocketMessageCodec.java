@@ -5,10 +5,11 @@ package dev.vertique.rest.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 
 /**
  * JSON serialization/deserialization helper for WebSocket messages. Uses the process JSON codec's
- * {@link com.fasterxml.jackson.databind.ObjectMapper} ({@link VertiqueJson#mapper()}) for
+ * {@link com.fasterxml.jackson.databind.ObjectMapper} ({@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}) for
  * consistency with the rest of the process.
  *
  * <p>Supports two-phase deserialization for pre-materialization processing by
@@ -27,7 +28,7 @@ public class WebSocketMessageCodec {
      * @throws JsonProcessingException if the text is not valid JSON or cannot be mapped to {@code type}
      */
     <T> T decode(String text, Class<T> type) throws JsonProcessingException {
-        return VertiqueJson.mapper().readValue(text, type);
+        return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).readValue(text, type);
     }
 
     /**
@@ -40,7 +41,7 @@ public class WebSocketMessageCodec {
      * @throws JsonProcessingException if the text is not valid JSON
      */
     Object decodeToIntermediate(String text) throws JsonProcessingException {
-        return VertiqueJson.mapper().readValue(text, Object.class);
+        return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).readValue(text, Object.class);
     }
 
     /**
@@ -54,7 +55,7 @@ public class WebSocketMessageCodec {
      * @throws IllegalArgumentException if the intermediate cannot be converted to {@code type}
      */
     <T> T convertFromIntermediate(Object intermediate, Class<T> type) {
-        return VertiqueJson.mapper().convertValue(intermediate, type);
+        return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).convertValue(intermediate, type);
     }
 
     /**
@@ -65,6 +66,6 @@ public class WebSocketMessageCodec {
      * @throws JsonProcessingException if the object cannot be serialized
      */
     String encode(Object message) throws JsonProcessingException {
-        return VertiqueJson.mapper().writeValueAsString(message);
+        return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).writeValueAsString(message);
     }
 }

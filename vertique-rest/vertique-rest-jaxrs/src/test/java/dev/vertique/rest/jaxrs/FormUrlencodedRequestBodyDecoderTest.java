@@ -17,6 +17,8 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.rest.core.request.RequestValue;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
@@ -132,7 +134,7 @@ class FormUrlencodedRequestBodyDecoderTest {
         // Given a process mapper a, and a DTO whose construction swaps the process mapper for b
         ObjectMapper a = processMapper();
         ObjectMapper b = processMapper();
-        VertiqueJson.install(JsonProfileId.SYSTEM, a);
+        VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.SYSTEM, a));
         SwappingDto.swapTo = b;
         RoutingContext ctx = mock(RoutingContext.class);
         var httpRequest = mock(io.vertx.core.http.HttpServerRequest.class);
@@ -146,7 +148,10 @@ class FormUrlencodedRequestBodyDecoderTest {
 
         // Then the body was bound by a, and the process mapper is now b
         assertInstanceOf(SwappingDto.class, result);
-        assertSame(b, VertiqueJson.mapper(), "the swap must have happened during the binding");
+        assertSame(
+                b,
+                Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                "the swap must have happened during the binding");
         // And the mark names a, the mapper that did the binding, never the later b
         org.mockito.ArgumentCaptor<Object> mark = org.mockito.ArgumentCaptor.forClass(Object.class);
         verify(ctx).put(eq(BodyBindingMark.KEY), mark.capture());
@@ -166,7 +171,7 @@ class FormUrlencodedRequestBodyDecoderTest {
         static volatile ObjectMapper swapTo;
 
         SwappingDto {
-            VertiqueJson.install(JsonProfileId.SYSTEM, swapTo);
+            VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.SYSTEM, swapTo));
         }
     }
 

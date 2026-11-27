@@ -10,6 +10,7 @@ import dev.vertique.core.json.JsonProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.ProblemDetail;
@@ -761,11 +762,14 @@ public class JaxRsRouteRegistrar {
             //
             // The cache key is the mapper that actually materializes this route's bodies: the resolved
             // profile mapper, or — when (a-2) returned the "no override" null — the process codec's own
-            // mapper, which is what the Vert.x body path then binds with. Reading VertiqueJson.mapper()
+            // mapper, which is what the Vert.x body path then binds with. Reading
+            // Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
             // here is an EDGE-phase capture, after CONFIGURE installed the process mapper, and the
             // built-in registry hands out one stable instance per profile, so routes sharing a profile
             // share one entry.
-            ObjectMapper projectionMapper = resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper();
+            ObjectMapper projectionMapper = resolvedBodyMapper != null
+                    ? resolvedBodyMapper
+                    : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
             JacksonFieldNameResolver bodyNameResolver =
                     bodyNameResolvers.computeIfAbsent(projectionMapper, JacksonFieldNameResolver::forMapper);
             if (objectProcessor != null) {

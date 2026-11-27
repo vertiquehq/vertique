@@ -164,5 +164,6 @@ Redis integration uses the pinned Testcontainers image
 |---|---|
 | `vertique-cache-core` | Provider-neutral cache contracts |
 | `vertique-json` | JSON mapper profiles and `JsonProfileRegistry` runtime wiring |
+| `jackson-databind` | `ObjectMapper`, the type of the profile mappers that serialize cached values |
 | `vertique-redis-core` | Shared Redis connection and lifecycle boundary |
 | `vertique-job-cron` | Optional cron registration for old-generation cleanup |

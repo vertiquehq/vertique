@@ -8,7 +8,9 @@
 # For each Maven module (a directory with a pom.xml and a src/main tree):
 #
 #   - a src/main import of com.fasterxml.jackson.databind.* requires a
-#     jackson-databind dependency in the module's own POM;
+#     jackson-databind dependency in the module's own POM; so does an import of
+#     Lombok's lombok.extern.jackson.Jacksonized, whose generated code carries
+#     databind's @JsonDeserialize;
 #   - a src/main import of com.fasterxml.jackson.core.* requires jackson-databind
 #     or jackson-core in the module's own POM. Declaring jackson-databind covers
 #     jackson-core imports, because databind's API exposes those types.
@@ -69,6 +71,7 @@ while IFS= read -r relative_pom; do
     imports_databind=false
     imports_core=false
     imports_package "$main_dir" "com.fasterxml.jackson.databind" && imports_databind=true
+    grep -rqsE --include='*.java' '^import lombok\.extern\.jackson\.Jacksonized;' "$main_dir" && imports_databind=true
     imports_package "$main_dir" "com.fasterxml.jackson.core" && imports_core=true
     [[ "$imports_databind" == true || "$imports_core" == true ]] || continue
 
@@ -79,7 +82,7 @@ while IFS= read -r relative_pom; do
     grep -qx 'jackson-core' <<<"$declared" && has_core=true
 
     if [[ "$imports_databind" == true && "$has_databind" == false ]]; then
-        echo "$relative: src/main imports com.fasterxml.jackson.databind but the POM does not declare jackson-databind" >&2
+        echo "$relative: src/main imports com.fasterxml.jackson.databind (or Lombok's @Jacksonized) but the POM does not declare jackson-databind" >&2
         violations=$((violations + 1))
     fi
     if [[ "$imports_core" == true && "$has_databind" == false && "$has_core" == false ]]; then

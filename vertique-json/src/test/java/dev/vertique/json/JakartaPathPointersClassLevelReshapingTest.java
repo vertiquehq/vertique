@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test;
  */
 class JakartaPathPointersClassLevelReshapingTest {
 
-    private static final ObjectMapper MAPPER = VertiqueJson.mapper();
+    private static final ObjectMapper MAPPER = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
 
     /** A plain setter-bound element. */
     public static class Item {

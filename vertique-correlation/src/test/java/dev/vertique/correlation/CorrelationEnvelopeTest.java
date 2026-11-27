@@ -27,6 +27,7 @@ import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.correlation.CorrelationEnvelope.EnvelopeProtocolCorrelation;
 import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JacksonDefaults;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
@@ -46,7 +47,7 @@ import org.junit.jupiter.api.Test;
  * which is the mapper the durable encoder/decoder use at runtime.
  *
  * <p>It additionally proves {@link CorrelationContextDurableDecoder#decode} resolves
- * {@link VertiqueJson#mapper()} at use time rather than the raw, install-blind
+ * {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} at use time rather than the raw, install-blind
  * {@code DatabindCodec#mapper()}, and that the decode is tolerant of which registered profile
  * encoded the bytes. {@code @AfterEach} restores the raw Vert.x delegate so the process-wide
  * install never leaks across tests (the reset seam is opened by this module's {@code <build>}
@@ -148,7 +149,7 @@ class CorrelationEnvelopeTest {
 
     /**
      * Proves {@link CorrelationContextDurableDecoder#decode} resolves
-     * {@link VertiqueJson#mapper()} at use time (not the raw, install-blind
+     * {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} at use time (not the raw, install-blind
      * {@code DatabindCodec#mapper()}), and that once the decoder follows the process mapper it stays
      * tolerant of which registered profile produced the bytes.
      *
@@ -194,7 +195,7 @@ class CorrelationEnvelopeTest {
      */
     @Test
     @DisplayName("durableDecodingFollowsTheProcessMapperAndToleratesProfiles: decoder resolves"
-            + " VertiqueJson.mapper() at decode time (single-quoted envelope binds only after install) and"
+            + " Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()) at decode time (single-quoted envelope binds only after install) and"
             + " stays tolerant of which profile encoded the bytes")
     void durableDecodingFollowsTheProcessMapperAndToleratesProfiles() throws Exception {
         CorrelationContextFactory factory = new CorrelationContextFactory(Optional.empty());
@@ -225,7 +226,7 @@ class CorrelationEnvelopeTest {
 
         ObjectMapper lenientMapper = JacksonDefaults.applySystem(new ObjectMapper());
         lenientMapper.configure(JsonParser.Feature.ALLOW_SINGLE_QUOTES, true);
-        VertiqueJson.install(JsonProfileId.of("correlation-test-lenient"), lenientMapper);
+        VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("correlation-test-lenient"), lenientMapper));
 
         ContextDecodeResult<CorrelationContext> afterInstall = decoder.decode(singleQuotedMetadata, DECODE_CTX);
         assertTrue(
@@ -242,14 +243,14 @@ class CorrelationEnvelopeTest {
         String systemJson = Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM))
                 .writeValueAsString(env);
 
-        VertiqueJson.install(
-                JsonProfileId.SYSTEM, Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
+        VertiqueJson.install(Jackson2JsonProfiles.of(
+                JsonProfileId.SYSTEM, Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM))));
         assertEquals(pinnedSnapshot, decodeToSnapshot(decoder, vertiqueJson));
         VertiqueJson.resetForTests();
 
-        VertiqueJson.install(
+        VertiqueJson.install(Jackson2JsonProfiles.of(
                 JsonProfileId.of("vertique"),
-                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))));
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique")))));
         assertEquals(pinnedSnapshot, decodeToSnapshot(decoder, systemJson));
         VertiqueJson.resetForTests();
 

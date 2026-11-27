@@ -4,6 +4,7 @@
 package dev.vertique.job.delayed;
 
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import java.lang.reflect.Type;
 import java.util.Map;
 
@@ -47,7 +48,7 @@ final class DelayedJobPayloadDecoder {
             return stored;
         }
         try {
-            var mapper = VertiqueJson.mapper();
+            var mapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
             return mapper.convertValue(stored, mapper.constructType(type));
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Job payload cannot be decoded to " + type.getTypeName());

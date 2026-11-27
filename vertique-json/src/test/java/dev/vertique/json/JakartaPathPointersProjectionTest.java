@@ -101,7 +101,7 @@ class JakartaPathPointersProjectionTest {
     void projectionModeNamesThroughTheRoutesProjection() {
         // Given: a SNAKE_CASE route and the process mapper's route, each with its own projection
         ObjectMapper snake = snakeCaseMapper();
-        ObjectMapper process = VertiqueJson.mapper();
+        ObjectMapper process = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         JsonObject declaredKey = new JsonObject().put("zip_code", "");
         JsonObject javaNameKey = new JsonObject().put("zipCode", "");
         JsonObject declaredAndJavaNameKeys =

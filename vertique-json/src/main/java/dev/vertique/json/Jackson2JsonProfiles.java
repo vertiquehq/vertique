@@ -73,14 +73,6 @@ public final class Jackson2JsonProfiles {
     }
 
     /**
-     * Immutable {@link JsonProfileCodec} that returns its id and mapper exactly as supplied, without
-     * any copy or mutation, and exposes the given, already-immutable schema override list as-is.
-     *
-     * @param id the profile id
-     * @param mapper the mapper instance, exposed as-is
-     * @param overrides the declared JSON Schema type overrides; already an unmodifiable list
-     */
-    /**
      * The profile {@link #of} returns: an id, a mapper exposed as-is, and a fixed override list. Two
      * instances are equal when their ids and override lists are equal and they wrap the same mapper
      * instance, so equal contributions still deduplicate in a {@code Set}.

@@ -146,12 +146,12 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
 
 ### `JacksonKafkaSerializer`
 
-Jackson JSON serializer used by `JsonSerdeProvider`. The no-arg constructor does not capture a mapper: it resolves `VertiqueJson.mapper()` — the process JSON codec's mapper — lazily, on every `serialize` call, so a no-arg serde built before the process mapper is installed (e.g. at Dagger graph construction time) still observes the currently-installed mapper at use time. The two-argument constructor accepts a custom `ObjectMapper`, captured eagerly, for testing or specialized use.
+Jackson JSON serializer used by `JsonSerdeProvider`. The no-arg constructor does not capture a mapper: it resolves `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())` — the process JSON codec's mapper — lazily, on every `serialize` call, so a no-arg serde built before the process mapper is installed (e.g. at Dagger graph construction time) still observes the currently-installed mapper at use time. The two-argument constructor accepts a custom `ObjectMapper`, captured eagerly, for testing or specialized use.
 
 ```java
 public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
 
-    /** Creates a serializer that resolves {@code VertiqueJson.mapper()} lazily, per {@code serialize} call. */
+    /** Creates a serializer that resolves {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} lazily, per {@code serialize} call. */
     public JacksonKafkaSerializer() { ... }
 
     /** Creates a serializer with a custom ObjectMapper, captured eagerly. */
@@ -170,12 +170,12 @@ both the topic and the headers.
 
 ### `JacksonKafkaDeserializer`
 
-Jackson JSON deserializer used by `JsonSerdeProvider`. The no-arg constructor mirrors `JacksonKafkaSerializer`: it resolves `VertiqueJson.mapper()` lazily, on every `deserialize` call, rather than capturing it at construction. The two-argument constructor accepts a caller-supplied `ObjectMapper`, captured eagerly.
+Jackson JSON deserializer used by `JsonSerdeProvider`. The no-arg constructor mirrors `JacksonKafkaSerializer`: it resolves `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())` lazily, on every `deserialize` call, rather than capturing it at construction. The two-argument constructor accepts a caller-supplied `ObjectMapper`, captured eagerly.
 
 ```java
 public class JacksonKafkaDeserializer<V> implements KafkaDeserializer<V> {
 
-    /** Creates a deserializer for {@code type} that resolves {@code VertiqueJson.mapper()} lazily, per call. */
+    /** Creates a deserializer for {@code type} that resolves {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} lazily, per call. */
     public JacksonKafkaDeserializer(Class<V> type) { ... }
 
     /** Creates a deserializer for {@code type} with a custom ObjectMapper, captured eagerly. */

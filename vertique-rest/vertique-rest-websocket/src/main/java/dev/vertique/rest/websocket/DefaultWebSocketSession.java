@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.context.ContextSnapshot;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
@@ -155,7 +156,8 @@ class DefaultWebSocketSession implements WebSocketSession {
     @Override
     public Future<Void> send(Object message) {
         try {
-            String json = VertiqueJson.mapper().writeValueAsString(message);
+            String json =
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).writeValueAsString(message);
             return ws.writeTextMessage(json);
         } catch (JsonProcessingException e) {
             return Future.failedFuture(e);

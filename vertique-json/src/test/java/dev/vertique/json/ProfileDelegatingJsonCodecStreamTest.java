@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.json;
+package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -14,6 +14,8 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.jackson.VertxModule;
@@ -35,7 +37,7 @@ import org.junit.jupiter.api.Test;
  * stream or writer is neither closed nor flushed, and an unknown property surfaces Jackson's
  * {@link UnrecognizedPropertyException} as the cause.
  */
-class VertiqueJsonCodecStreamTest {
+class ProfileDelegatingJsonCodecStreamTest {
 
     private static final JsonProfileId PROFILE = JsonProfileId.of("codec-stream-test");
     private static final String REPEATED_KEY = "{\"a\":1,\"a\":2}";
@@ -137,7 +139,7 @@ class VertiqueJsonCodecStreamTest {
     @Test
     @DisplayName("after install all four read forms reject a repeated key and a comment")
     void installedStrictParserRejectsInAllFourReadForms() {
-        VertiqueJson.install(PROFILE, strictMapper());
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, strictMapper()));
         assertAll(
                 () -> assertThrows(
                         DecodeException.class,
@@ -176,7 +178,7 @@ class VertiqueJsonCodecStreamTest {
     @Test
     @DisplayName("a record written with toStream reads back equal and the stream is left open and unflushed")
     void recordRoundTripsThroughStreamLeavingCallerStreamOpen() {
-        VertiqueJson.install(PROFILE, strictMapper());
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, strictMapper()));
         Point original = new Point(7, "seven");
         TrackingOutputStream out = new TrackingOutputStream(new ByteArrayOutputStream());
 
@@ -195,7 +197,7 @@ class VertiqueJsonCodecStreamTest {
     @Test
     @DisplayName("a record written with toWriter reads back equal and the writer is left open and unflushed")
     void recordRoundTripsThroughWriterLeavingCallerWriterOpen() {
-        VertiqueJson.install(PROFILE, strictMapper());
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, strictMapper()));
         Point original = new Point(7, "seven");
         TrackingWriter out = new TrackingWriter();
 
@@ -213,7 +215,7 @@ class VertiqueJsonCodecStreamTest {
     @Test
     @DisplayName("an unknown property on a record target carries Jackson's UnrecognizedPropertyException as cause")
     void unknownPropertyCauseIsUnrecognizedPropertyException() {
-        VertiqueJson.install(PROFILE, strictMapper());
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, strictMapper()));
         String json = "{\"a\":1,\"extra\":2}";
 
         DecodeException fromStream =

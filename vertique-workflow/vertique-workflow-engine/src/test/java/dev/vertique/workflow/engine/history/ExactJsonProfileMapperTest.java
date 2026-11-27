@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfiles;
 import io.vertx.core.json.jackson.VertxModule;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -51,7 +52,7 @@ class ExactJsonProfileMapperTest {
                 .streamReadConstraints(
                         StreamReadConstraints.builder().maxNestingDepth(2000).build())
                 .build();
-        VertiqueJson.install(PROFILE, profileMapper(factory));
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, profileMapper(factory)));
 
         assertThat(ExactJson.read(deep).isArray()).isTrue();
     }
@@ -60,13 +61,13 @@ class ExactJsonProfileMapperTest {
     @DisplayName("a state with a non-numeric number is read when the profile allows it")
     void readsNonNumericNumbersWhenProfileAllows() {
         String state = "{\"x\":NaN}";
-        VertiqueJson.install(PROFILE, profileMapper(new JsonFactory()));
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, profileMapper(new JsonFactory())));
         assertThatThrownBy(() -> ExactJson.read(state)).isInstanceOf(IllegalArgumentException.class);
 
         JsonFactory lenient = JsonFactory.builder()
                 .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)
                 .build();
-        VertiqueJson.install(PROFILE, profileMapper(lenient));
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, profileMapper(lenient)));
 
         JsonNode x = ExactJson.read(state).get("x");
         assertThat(x.isNumber()).isTrue();
@@ -76,7 +77,7 @@ class ExactJsonProfileMapperTest {
     @Test
     @DisplayName("numbers stay exact under the profile mapper")
     void keepsExactNumbersUnderProfileMapper() {
-        VertiqueJson.install(PROFILE, profileMapper(new JsonFactory()));
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE, profileMapper(new JsonFactory())));
 
         assertThat(ExactJson.read("1")).isNotEqualTo(ExactJson.read("1.0"));
         assertThat(ExactJson.read("1.0")).isEqualTo(ExactJson.read("1.00"));

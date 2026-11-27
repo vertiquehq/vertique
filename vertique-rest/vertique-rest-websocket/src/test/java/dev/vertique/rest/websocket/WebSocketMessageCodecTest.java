@@ -14,6 +14,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.json.DefaultJsonProfileRegistry;
 import dev.vertique.json.Jackson2JsonProfileCodec;
+import dev.vertique.json.Jackson2JsonProfiles;
 import dev.vertique.json.JacksonDefaults;
 import java.util.Optional;
 import java.util.Set;
@@ -28,7 +29,7 @@ import org.junit.jupiter.api.Test;
  * and error handling for invalid JSON input.
  *
  * <p>Two tests additionally prove {@link WebSocketMessageCodec#decode} resolves
- * {@link VertiqueJson#mapper()} at use time — not the raw, install-blind
+ * {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} at use time — not the raw, install-blind
  * {@code io.vertx.core.json.jackson.DatabindCodec#mapper()} — by installing a mapper
  * <strong>after</strong> the codec under test is constructed and observing that the install is
  * visible to the very next decode. {@code @AfterEach} restores the raw Vert.x delegate so the
@@ -72,11 +73,11 @@ class WebSocketMessageCodecTest {
      * {@code new WebSocketMessageCodec()} is constructed <strong>before</strong>
      * {@link VertiqueJson#install}. Decoding a payload with an {@link Optional} component
      * <strong>after</strong> the install must succeed — proof that {@link WebSocketMessageCodec#decode}
-     * reads {@link VertiqueJson#mapper()} live, at decode time, rather than a raw mapper resolved
+     * reads {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} live, at decode time, rather than a raw mapper resolved
      * once and cached.
      *
-     * <p>Given: the codec constructed before {@code VertiqueJson.install(JsonProfileId.of("test-jdk8"),
-     * seedMapper)}, where {@code seedMapper} is the sanctioned seed
+     * <p>Given: the codec constructed before {@code VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("test-jdk8"),
+     * seedMapper))}, where {@code seedMapper} is the sanctioned seed
      * ({@code JacksonDefaults.applySystem(new ObjectMapper())}: {@code Jdk8Module} and
      * {@code VertxModule} registered).
      * When: the codec decodes a message record with an {@code Optional<String>} component after the
@@ -84,16 +85,17 @@ class WebSocketMessageCodecTest {
      * Then: decoding succeeds and the optional value binds.
      *
      * <p><strong>Sensitivity proof:</strong> keeping {@code DatabindCodec.mapper()} in the codec fails
-     * this assertion even after the install — only reading {@link VertiqueJson#mapper()} makes it pass.
+     * this assertion even after the install — only reading {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} makes it pass.
      */
     @Test
-    @DisplayName("decodesWithTheInstalledProcessMapper: decode() resolves VertiqueJson.mapper() at use time"
-            + " (Optional component binds only through the installed mapper)")
+    @DisplayName(
+            "decodesWithTheInstalledProcessMapper: decode() resolves Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()) at use time"
+                    + " (Optional component binds only through the installed mapper)")
     void decodesWithTheInstalledProcessMapper() throws JsonProcessingException {
         WebSocketMessageCodec installedCodec = new WebSocketMessageCodec();
 
         ObjectMapper seedMapper = JacksonDefaults.applySystem(new ObjectMapper());
-        VertiqueJson.install(JsonProfileId.of("test-jdk8"), seedMapper);
+        VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.of("test-jdk8"), seedMapper));
 
         OptionalPayload decoded = installedCodec.decode("{\"value\":\"present\"}", OptionalPayload.class);
 
@@ -115,12 +117,12 @@ class WebSocketMessageCodecTest {
      * Then: rejected under the raw delegate; bound to the default under {@code vertique}.
      *
      * <p><strong>Sensitivity proof:</strong> keeping {@code DatabindCodec.mapper()} in the codec leaves
-     * the second decode rejected — only reading {@link VertiqueJson#mapper()} makes it bind to the
+     * the second decode rejected — only reading {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} makes it bind to the
      * default.
      */
     @Test
     @DisplayName("unknownEnumBindsToDefaultOnlyUnderLenientProcessMapper: decode() resolves"
-            + " VertiqueJson.mapper() at use time (unknown enum binds to @JsonEnumDefaultValue only under"
+            + " Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()) at use time (unknown enum binds to @JsonEnumDefaultValue only under"
             + " the installed vertique mapper)")
     void unknownEnumBindsToDefaultOnlyUnderLenientProcessMapper() throws JsonProcessingException {
         String payload = "{\"status\":\"BOGUS\"}";
@@ -131,9 +133,9 @@ class WebSocketMessageCodecTest {
                 "the raw delegate has no READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE leniency");
 
         DefaultJsonProfileRegistry registry = new DefaultJsonProfileRegistry(Set.of());
-        VertiqueJson.install(
+        VertiqueJson.install(Jackson2JsonProfiles.of(
                 JsonProfileId.of("vertique"),
-                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique"))));
+                Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.of("vertique")))));
 
         StatusPayload decoded = codec.decode(payload, StatusPayload.class);
 

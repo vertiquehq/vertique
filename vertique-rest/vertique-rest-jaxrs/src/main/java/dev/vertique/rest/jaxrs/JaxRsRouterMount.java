@@ -611,7 +611,7 @@ public class JaxRsRouterMount implements RouterMount {
      *
      * <p>The result is {@code null} — "no override; the error body serializes through
      * {@code Json.encode}" — <em>iff</em> the resolved mapper is the same instance as
-     * {@link VertiqueJson#mapper()}, exactly the identity rule
+     * {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, exactly the identity rule
      * {@code RequestBodyProfileResolver} applies per route, so a boundary default and a route default
      * that name the same profile behave the same way. The comparison is a router-build ({@code EDGE})
      * capture against the built-in registry's stable per-profile instances: it runs after
@@ -631,7 +631,7 @@ public class JaxRsRouterMount implements RouterMount {
         String boundary = Strings.firstNonBlank(jaxRsConfig.jsonProfile());
         JsonProfileId effectiveId = boundary != null ? JsonProfileId.of(boundary) : jsonConfig.effectiveProfile();
         ObjectMapper resolved = Jackson2JsonProfileCodec.objectMapper(registry.profile(effectiveId));
-        return resolved == VertiqueJson.mapper() ? null : resolved;
+        return resolved == Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()) ? null : resolved;
     }
 
     /**

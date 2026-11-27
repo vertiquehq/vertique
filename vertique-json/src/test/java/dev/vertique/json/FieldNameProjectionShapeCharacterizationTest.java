@@ -297,7 +297,7 @@ class FieldNameProjectionShapeCharacterizationTest {
             String expectedLogicalName,
             Map<String, PromotedField> expectedPromotedFields) {
         // Given: the process mapper's projection and a type with one binding shape (the row)
-        ObjectMapper mapper = VertiqueJson.mapper();
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         JacksonFieldNameResolver projection = JacksonFieldNameResolver.forMapper(mapper);
 
         // When: the projection and the mapper's introspection are asked about the type

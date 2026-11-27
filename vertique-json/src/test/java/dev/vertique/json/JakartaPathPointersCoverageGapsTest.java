@@ -130,8 +130,8 @@ class JakartaPathPointersCoverageGapsTest {
         PropertyPath violated = path(new Property("items", Rows.class), new Index(0), new Property("name", Row.class));
 
         // When: a member of the first element resolves
-        String pointer =
-                JakartaPathPointers.resolver(VertiqueJson.mapper(), null).toPointer(violated, Rows.class, null);
+        String pointer = JakartaPathPointers.resolver(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()), null)
+                .toPointer(violated, Rows.class, null);
 
         // Then: every level is named
         assertEquals("/items/0/name", pointer);
@@ -144,8 +144,8 @@ class JakartaPathPointersCoverageGapsTest {
         PropertyPath violated = path(new Property("items", Converted.class), new Index(0));
 
         // When: its first position resolves
-        String pointer =
-                JakartaPathPointers.resolver(VertiqueJson.mapper(), null).toPointer(violated, Converted.class, null);
+        String pointer = JakartaPathPointers.resolver(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()), null)
+                .toPointer(violated, Converted.class, null);
 
         // Then: the list is named and no position below it
         assertEquals("/items", pointer);
@@ -173,8 +173,8 @@ class JakartaPathPointersCoverageGapsTest {
         PropertyPath violated = path(new Property("name", Built.class));
 
         // When: its property resolves
-        String pointer =
-                JakartaPathPointers.resolver(VertiqueJson.mapper(), null).toPointer(violated, Built.class, null);
+        String pointer = JakartaPathPointers.resolver(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()), null)
+                .toPointer(violated, Built.class, null);
 
         // Then: the builder's own property names are not trusted
         assertEquals("", pointer);

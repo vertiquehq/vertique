@@ -125,4 +125,5 @@ declared on the injectable implementation with `@RegisterIntoSet`; `vertique-cod
 | `vertique-micrometer-core` | Provides the application `MeterRegistry` and metrics configuration when `MicrometerModule` is installed |
 | `vertique-inbox-outbox-core` | Provides `OutboxPublishObserver`, `OutboxPublishCompletedEvent` and `OutboxQueueProbe` |
 | `vertique-core` | Lifecycle steps, config parsing and `ConfigurationException` |
+| `jackson-databind` | `@JsonDeserialize`, which Lombok's `@Jacksonized` generates on the config builders |
 | `micrometer-core` | Supplies counters, gauges, tags and registry APIs |

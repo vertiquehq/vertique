@@ -504,7 +504,7 @@ class VertiqueStrictProfileTest {
                         + " Json.* at all");
         Buffer repeated = Buffer.buffer(REPEATED_NOTE);
         try {
-            VertiqueJson.install(VERTIQUE_STRICT_ID, strictMapper());
+            VertiqueJson.install(Jackson2JsonProfiles.of(VERTIQUE_STRICT_ID, strictMapper()));
             JacksonCodec codec = (JacksonCodec) Json.CODEC;
 
             // assertAll, so the nine delegated rejections and the three documented exclusions are all

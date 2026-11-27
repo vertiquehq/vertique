@@ -56,6 +56,11 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-core</artifactId>
         </dependency>
         <dependency>
+            <!-- Reads the process JSON codec's mapper through Jackson2JsonProfileCodec. -->
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json</artifactId>
+        </dependency>
+        <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-resilience</artifactId>
         </dependency>

@@ -9,6 +9,7 @@ import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.json.JakartaPathPointers;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
@@ -309,7 +310,7 @@ final class ConstraintViolationMapper {
             if (effectiveMapper == null) {
                 effectiveMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER) instanceof ObjectMapper stashed
                         ? stashed
-                        : VertiqueJson.mapper();
+                        : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
             }
             return effectiveMapper;
         }

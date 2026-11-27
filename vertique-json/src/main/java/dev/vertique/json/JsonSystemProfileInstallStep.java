@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.JsonProfileCodec;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonProfileRegistry;
@@ -151,13 +152,14 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
         JsonProfileId id = jsonConfig.effectiveSystemProfile();
         requireProcessCodecOwnership(id);
         // Resolving through the registry is also what rejects an unknown or retired profile id.
-        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(registry.profile(id));
+        JsonProfileCodec profile = registry.profile(id);
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(profile);
         requireVertxModule(id, mapper);
         requireNoDefaultTyping(id, mapper);
         warnAboutLeniency(id, mapper);
         warnAboutResetSeam();
         try {
-            VertiqueJson.install(id, mapper);
+            VertiqueJson.install(profile);
         } catch (IllegalArgumentException | IllegalStateException rejected) {
             throw new JsonProfileConfigurationException(
                     "the JSON profile '" + id.value() + "' configured as 'json.systemProfile' could not be installed"

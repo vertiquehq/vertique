@@ -562,9 +562,9 @@ public class BodyViolationPointerIT {
         RecordingProcessor processor = new RecordingProcessor();
         VertiqueJson.resetForTests();
         try {
-            VertiqueJson.install(
+            VertiqueJson.install(Jackson2JsonProfiles.of(
                     JsonProfileId.of("vertique"),
-                    Jackson2JsonProfileCodec.objectMapper(profiles.profile(JsonProfileId.of("vertique"))));
+                    Jackson2JsonProfileCodec.objectMapper(profiles.profile(JsonProfileId.of("vertique")))));
             int port = deploy(b -> b.objectProcessor(Optional.of(processor)), new PointerResources.ShapeResource());
 
             // When a JSON array body with an invalid element is posted to the @Valid List<Item> route

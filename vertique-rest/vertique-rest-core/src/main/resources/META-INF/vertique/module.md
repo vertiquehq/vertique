@@ -1880,6 +1880,7 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
 | Dependency | Why |
 |---|---|
 | `dev.vertique:vertique-core` | `OrderedExtension` ordering contract, exception hierarchy, `ConfigParser`, `ContextHolder`, JSON mapper profiles |
+| `com.fasterxml.jackson.core:jackson-databind` | `@JsonDeserialize`, which Lombok's `@Jacksonized` generates on the config builders |
 | `dev.vertique:vertique-context` | `ContextValues` — the substrate the built-in `@Context` resolver reads |
 | `dev.vertique:vertique-correlation` | correlation context, header validation, and the MDC key vocabulary used by ingress |
 | `dev.vertique:vertique-logging` | `MDCContexts` scopes bound through `RequestContextLifecycle.Handle.bindMdc` |

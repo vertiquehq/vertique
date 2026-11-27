@@ -21,6 +21,11 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Micrometer metrics adapter for the transactional outbox: publish-attempt counters and queue gauges</description>
 
     <dependencies>
+        <dependency>
+            <!-- Lombok @Jacksonized generates databind's @JsonDeserialize. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
         <!-- RegisterIntoSet has SOURCE retention: needed to compile, not at run time. -->
         <dependency>
             <groupId>dev.vertique</groupId>

@@ -106,7 +106,7 @@ class JsonSystemProfileInstallStepTest {
                         + "so the very same step installs the system profile");
         assertSame(
                 Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
-                VertiqueJson.mapper(),
+                Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
                 "the step installs the registry's mapper instance for the effective system profile");
     }
 
@@ -168,7 +168,10 @@ class JsonSystemProfileInstallStepTest {
                     JsonProfileId.of("lenient"),
                     VertiqueJson.profile().orElse(null),
                     "a lenient but structurally safe profile installs");
-            assertSame(lenient, VertiqueJson.mapper(), "the installed delegate is the profile's mapper instance");
+            assertSame(
+                    lenient,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "the installed delegate is the profile's mapper instance");
             String warning = logContaining(appender, Level.WARN, "FAIL_ON_UNKNOWN_PROPERTIES");
             assertNotNull(
                     warning,
@@ -179,18 +182,21 @@ class JsonSystemProfileInstallStepTest {
             VertiqueJson.resetForTests();
             JsonProfileRegistry real = new DefaultJsonProfileRegistry(Set.of());
             succeed(new JsonSystemProfileInstallStep(JsonConfig.defaults(), real));
-            ObjectMapper installed = VertiqueJson.mapper();
+            ObjectMapper installed = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
 
             assertThrows(
                     IllegalArgumentException.class,
-                    () -> VertiqueJson.install(JsonProfileId.SYSTEM, typed),
+                    () -> VertiqueJson.install(Jackson2JsonProfiles.of(JsonProfileId.SYSTEM, typed)),
                     "VertiqueJson.install enforces the no-default-typing invariant on every call, "
                             + "including a same-id swap by in-process code");
             assertEquals(
                     JsonProfileId.SYSTEM,
                     VertiqueJson.profile().orElse(null),
                     "a rejected direct install must not change the installed id");
-            assertSame(installed, VertiqueJson.mapper(), "a rejected direct install must not change the delegate");
+            assertSame(
+                    installed,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "a rejected direct install must not change the delegate");
         } finally {
             root.detachAppender(appender);
         }

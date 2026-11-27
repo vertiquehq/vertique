@@ -136,6 +136,8 @@ TraceReferenceResolver otelTraceReferenceResolver(OpenTelemetry otel) {
 - **`vertique-core`** — public correlation API (`CorrelationContext` interface, value records, SPIs) and the substrate `ContextValueAdapter` interface.
 - **`vertique-context`** — substrate runtime: `ContextHolder` binding, `ContextValues` static accessor, `ServiceDispatchCodecs`, `CompositeContextScope`, `InboundExecutionContextScope`, etc.
 - **`vertique-logging`** — `MDCContexts` for inline MDC mirroring from the mutator.
+- **`vertique-json`** — `VertiqueJson.codec()`; the durable encoder and decoder read the process JSON codec's mapper through `Jackson2JsonProfileCodec.objectMapper(...)`.
+- **`jackson-databind`** — `JsonNode`, the tree the durable decoder reads.
 
 Consumed by:
 
@@ -158,7 +160,7 @@ For cross-boundary propagation the runtime ships:
   single JSON envelope under the `correlation` durable namespace (projected to the `vertique-correlation` Kafka header) (Context contribution model
   level 4 — bespoke is justified by `durableSafe` filtering, schemaVersion enforcement, and
   header re-validation on decode). Both sides run on the process JSON codec's mapper
-  (`VertiqueJson.mapper()`), so `json.systemProfile` governs the durable format; the decoder has no
+  (`Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`), so `json.systemProfile` governs the durable format; the decoder has no
   request-validation gate in front of it, so the installed mapper's parser leniency (comments,
   quoting) is what it accepts — enum values, however, are parsed strictly by the decoder itself
   (`Enum.valueOf` over the header tree), so an enum-lenient system profile does not widen them.

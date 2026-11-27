@@ -5,6 +5,7 @@ package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import io.vertx.core.buffer.Buffer;
@@ -74,7 +75,7 @@ class FormUrlencodedRequestBodyDecoder implements RequestBodyDecoder {
             return null;
         }
         // Read once: the mapper that binds the body is the one the mark names
-        ObjectMapper mapper = VertiqueJson.mapper();
+        ObjectMapper mapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         Object bound = ProfileBodyMaterialization.convertValue(mapper, json.getMap(), targetType);
         BodyBindingMark.record(ctx, BodyBindingMark.Kind.FORM, mapper);
         return bound;

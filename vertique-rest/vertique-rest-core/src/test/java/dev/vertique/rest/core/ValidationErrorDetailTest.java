@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
@@ -34,11 +35,12 @@ import org.junit.jupiter.api.Test;
 class ValidationErrorDetailTest {
 
     private static JsonObject json(ValidationErrorDetail detail) throws JsonProcessingException {
-        return new JsonObject(VertiqueJson.mapper().writeValueAsString(detail));
+        return new JsonObject(
+                Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).writeValueAsString(detail));
     }
 
     private static ValidationErrorDetail read(String json) throws JsonProcessingException {
-        return VertiqueJson.mapper().readValue(json, ValidationErrorDetail.class);
+        return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).readValue(json, ValidationErrorDetail.class);
     }
 
     @Test
@@ -65,7 +67,8 @@ class ValidationErrorDetailTest {
     @Test
     @DisplayName("an empty pointer is serialized as an empty string")
     void serializesTheEmptyPointer() throws JsonProcessingException {
-        String serialized = VertiqueJson.mapper().writeValueAsString(ValidationErrorDetail.ofPointer("", "d"));
+        String serialized = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                .writeValueAsString(ValidationErrorDetail.ofPointer("", "d"));
 
         assertTrue(serialized.contains("\"pointer\":\"\""), serialized);
     }

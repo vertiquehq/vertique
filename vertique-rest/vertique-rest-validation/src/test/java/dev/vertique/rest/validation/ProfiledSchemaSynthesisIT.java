@@ -4458,7 +4458,7 @@ public class ProfiledSchemaSynthesisIT {
      * a {@code vertique-strict} route's profile <em>is</em> the installed codec.
      *
      * <p>The install happens before the router is built: the REST body resolver captures its "no
-     * override" sentinel by identity against {@code VertiqueJson.mapper()} at router-build time, so an
+     * override" sentinel by identity against {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} at router-build time, so an
      * install afterwards would no longer match the routes already decided. The codec is restored in
      * {@link #tearDown()}.
      *
@@ -4469,10 +4469,10 @@ public class ProfiledSchemaSynthesisIT {
         ValidationMountComponent component =
                 MountFixtures.component(vertx, new JsonObject(), RestTestContributions.none());
         JsonProfileId strictId = JsonProfileId.of("vertique-strict");
-        VertiqueJson.install(
+        VertiqueJson.install(Jackson2JsonProfiles.of(
                 strictId,
                 Jackson2JsonProfileCodec.objectMapper(
-                        component.jsonProfileRegistry().profile(strictId)));
+                        component.jsonProfileRegistry().profile(strictId))));
         processCodecInstalled = true;
         return start(component.testMount(), resources);
     }

@@ -61,11 +61,10 @@ SPDX-License-Identifier: EUPL-1.2
 
         <!-- Test -->
         <dependency>
-            <!-- CorrelationEnvelopeTest: DefaultJsonProfileRegistry + JacksonDefaults for
-                 the cross-profile decode proof. Acyclic: vertique-json depends only on vertique-core. -->
+            <!-- The durable decoder reads the process JSON codec's mapper through
+                 Jackson2JsonProfileCodec. Acyclic: vertique-json depends only on vertique-core. -->
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

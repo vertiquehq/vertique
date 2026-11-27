@@ -59,7 +59,7 @@ interface ValidationMountComponent {
      *
      * <p>Exposed so a test can install one of the graph's <em>own</em> profile mappers as the process
      * JSON codec before the router is built. The REST body resolver's "no override" sentinel is an
-     * identity comparison against {@link dev.vertique.core.json.VertiqueJson#mapper()}, and every
+     * identity comparison against {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, and every
      * registry instance owns its own mapper instances, so a mapper taken from a separately built
      * registry could never match.
      *

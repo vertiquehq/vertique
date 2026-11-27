@@ -39,7 +39,7 @@ import java.util.Map;
  *
  * <p>The single key {@link CorrelationDurableKeys#CORRELATION} carries the whole envelope as a
  * JSON document. Serialisation goes through {@code JsonObject.mapFrom}, which runs on the process
- * JSON codec's mapper ({@link dev.vertique.core.json.VertiqueJson#mapper()}) — so the encoder
+ * JSON codec's mapper ({@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}) — so the encoder
  * picks up the process-wide JSON configuration without taking on its own {@code ObjectMapper}
  * binding.
  *
@@ -67,7 +67,8 @@ public final class CorrelationContextDurableEncoder implements DurableContextMet
         // Snapshot first so concurrent mutation on the live context cannot mid-serialise.
         CorrelationContextSnapshot snap = value.snapshot();
         CorrelationEnvelope envelope = toEnvelope(snap);
-        // JsonObject.mapFrom runs on the process JSON codec's mapper (VertiqueJson.mapper()).
+        // JsonObject.mapFrom runs on the process JSON codec's mapper
+        // (Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())).
         return DurableMetadata.of(CorrelationDurableKeys.CORRELATION, JsonObject.mapFrom(envelope));
     }
 

@@ -136,7 +136,8 @@ class KafkaSourceRecordingOnlyNodeIT {
 
             // And E applied the signal: the history holds it and the stored state holds the date that was sent
             assertThat(rows.historyTypes()).contains("SIGNAL_RECEIVED");
-            assertThat(fixture.deliveredAt(VertiqueJson.mapper(), rows.state())).isEqualTo(DELIVERED_AT);
+            assertThat(fixture.deliveredAt(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()), rows.state()))
+                    .isEqualTo(DELIVERED_AT);
 
             // And R wrote the date in the profile's own encoding, microseconds since the epoch, which the default's
             // text form and any millisecond or second form would not match

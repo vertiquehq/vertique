@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * {@code jaxrs.jsonProfile} &rarr; {@code json.jsonProfile} &rarr; the {@code vertique} floor. Every
  * effective id resolves to its mapper from the registry, and an unknown id fails fast with
  * {@link JsonProfileConfigurationException}; the resolver returns {@code null} ("no override") only
- * when that mapper is the same instance as {@link VertiqueJson#mapper()}, which in this unbooted
+ * when that mapper is the same instance as {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, which in this unbooted
  * harness is nothing but an explicitly installed mapper.
  */
 class RequestBodyProfileResolverTest {
@@ -439,7 +439,7 @@ class RequestBodyProfileResolverTest {
     /**
      * The tail of the precedence is {@code jsonConfig.effectiveProfile()} — the {@code vertique} floor —
      * and the {@code null} "no override" sentinel fires <em>iff</em> the resolved mapper is the same
-     * instance as {@link VertiqueJson#mapper()}, never because the resolved id happens to be
+     * instance as {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, never because the resolved id happens to be
      * {@code system}.
      *
      * <p>Row (c) is what distinguishes the identity rule from an id comparison: the effective id is
@@ -481,9 +481,9 @@ class RequestBodyProfileResolverTest {
                 // process codec's mapper: the resolved instance is the process mapper, so the sentinel
                 // returns null.
                 () -> {
-                    VertiqueJson.install(
+                    VertiqueJson.install(Jackson2JsonProfiles.of(
                             JsonProfileId.SYSTEM,
-                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
+                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM))));
                     assertNull(
                             RequestBodyProfileResolver.resolveRequestBodyProfile(
                                             meta, configWith(null), new JsonConfig("system", null), registry)
@@ -496,7 +496,8 @@ class RequestBodyProfileResolverTest {
                 // process mapper, so it is returned.
                 () -> {
                     VertiqueJson.resetForTests();
-                    VertiqueJson.install(vertique, Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique)));
+                    VertiqueJson.install(Jackson2JsonProfiles.of(
+                            vertique, Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique))));
                     assertSame(
                             Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)),
                             RequestBodyProfileResolver.resolveRequestBodyProfile(
@@ -511,7 +512,7 @@ class RequestBodyProfileResolverTest {
 
     /**
      * The resolver's result carries both the registry profile it selected and the process-codec verdict
-     * — {@code objectMapper(profile) == VertiqueJson.mapper()} — which the registrar turns into the nullable
+     * — {@code objectMapper(profile) == Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} — which the registrar turns into the nullable
      * stash mapper.
      *
      * <p>The verdict is an identity read, not an id comparison, so the same two routes invert their
@@ -550,9 +551,9 @@ class RequestBodyProfileResolverTest {
         assertAll(
                 // (a) the registry's system mapper IS the process codec's mapper.
                 () -> {
-                    VertiqueJson.install(
+                    VertiqueJson.install(Jackson2JsonProfiles.of(
                             JsonProfileId.SYSTEM,
-                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM)));
+                            Jackson2JsonProfileCodec.objectMapper(registry.profile(JsonProfileId.SYSTEM))));
                     var system = RequestBodyProfileResolver.resolveRequestBodyProfile(
                             explicitSystem, configWith(null), JsonConfig.defaults(), registry);
                     var floor = RequestBodyProfileResolver.resolveRequestBodyProfile(
@@ -578,7 +579,8 @@ class RequestBodyProfileResolverTest {
                 // invert while both selected profiles stay exactly as they were.
                 () -> {
                     VertiqueJson.resetForTests();
-                    VertiqueJson.install(vertique, Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique)));
+                    VertiqueJson.install(Jackson2JsonProfiles.of(
+                            vertique, Jackson2JsonProfileCodec.objectMapper(registry.profile(vertique))));
                     var system = RequestBodyProfileResolver.resolveRequestBodyProfile(
                             explicitSystem, configWith(null), JsonConfig.defaults(), registry);
                     var floor = RequestBodyProfileResolver.resolveRequestBodyProfile(

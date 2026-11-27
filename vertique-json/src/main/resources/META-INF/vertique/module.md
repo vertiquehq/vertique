@@ -121,13 +121,14 @@ bindings at all. Each boundary validates its own default key (`jaxrs.jsonProfile
 ## The Process JSON Codec
 
 Vert.x routes every `Json.encode`, `Json.decodeValue`, `new JsonObject(String|Buffer)`,
-`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. `vertique-core`
-owns that codec and exposes it as `VertiqueJson`; this module owns the startup step that decides
-which profile it runs.
+`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. This module provides
+that codec and registers it through `META-INF/services/io.vertx.core.spi.JsonFactory`; `vertique-core`
+exposes it as `VertiqueJson`. This module also owns the startup step that decides which profile it runs.
+An application without this module keeps Vert.x's own codec.
 
 `JsonRuntimeModule` contributes a `CONFIGURE`-phase `ApplicationStartupStep` that resolves
-`json.systemProfile` (floor: `system`) through the registry and installs that profile's mapper with
-`VertiqueJson.install(id, mapper)`. `CONFIGURE` is the first startup phase, so every later step,
+`json.systemProfile` (floor: `system`) through the registry and installs that profile with
+`VertiqueJson.install(profile)`. `CONFIGURE` is the first startup phase, so every later step,
 validator and verticle already sees the installed codec. An application graph that does not include
 `JsonRuntimeModule` never installs anything and keeps Vert.x's raw JSON behavior — where
 `Json.encode(LocalDate.now())` still fails.
@@ -189,7 +190,7 @@ below stops accepting a value followed by junk (`{"a":1} junk`, or two values in
 | REST client response bodies | the client's resolved profile |
 | Kafka JSON serde (`JacksonKafkaDeserializer`) | the Kafka profile |
 | Cache values (Caffeine and Redis stores) | the cache store's profile |
-| WebSocket messages, the correlation context decoded from durable message metadata, delayed-job payloads, workflow state read for history | `VertiqueJson.mapper()`, the process codec's installed profile |
+| WebSocket messages, the correlation context decoded from durable message metadata, delayed-job payloads, workflow state read for history | `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`, the process codec's installed profile |
 
 MCP is unaffected: its envelope codec already enabled the feature, and tool arguments bind from a parsed
 tree. A payload that was accepted only because its tail was ignored is now rejected with the surface's
@@ -411,6 +412,23 @@ mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
 ObjectMapper opinionated = JacksonDefaults.apply(new ObjectMapper());
 ```
 
+### Jackson2JsonProfileCodec
+
+The Jackson 2 implementation of `JsonProfileCodec` and the only one the registry and the process codec
+accept. Subclass it and implement `protected ObjectMapper mapper()`, or use `Jackson2JsonProfiles.of`.
+
+- The base calls `mapper()` once, on first use, and runs every operation and `unwrap` on that instance, so
+  a subclass whose `mapper()` builds a new mapper per call still behaves as one profile.
+- `encode`, `encodeToString`, `encodeTo`, `decode`, `convert` and `unwrap` are `final`. `decode` rejects
+  content after the value whatever the mapper's own setting, and for an `Object` target returns a
+  top-level `JsonObject` or `JsonArray`. `encodeTo` never closes or flushes the caller's stream.
+- Failures throw `JsonCodecException` with a fixed message (`JSON encoding failed`, `JSON decoding
+  failed`, `JSON conversion failed`) and the Jackson exception as the cause; the cause may quote the
+  input, so never return it to a client.
+- `Jackson2JsonProfileCodec.objectMapper(profile)` returns any profile's Jackson 2 mapper (the same
+  instance on every call), or throws `JsonProfileConfigurationException` naming the id when it has none.
+  Code that needs the process codec's mapper calls `objectMapper(VertiqueJson.codec())`.
+
 ### Jackson2JsonProfiles
 
 Factory pairing an id with a mapper: `Jackson2JsonProfiles.of(JsonProfileId, ObjectMapper)`. Both
@@ -503,7 +521,7 @@ this module never sees the processing engine.
 // The mapper that materializes the body decides the projection.
 JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
 
-// forRoute(null) means "no profile selected": the process codec's mapper, VertiqueJson.mapper().
+// forRoute(null) means "no profile selected": the process codec's mapper, Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).
 JacksonFieldNameResolver unprofiledRoute = JacksonFieldNameResolver.forRoute(null);
 
 // Compose one owner type's projection at registration, never on the request path.
@@ -574,8 +592,9 @@ abstract class PaymentsModule {
 }
 ```
 
-The profile id must not be `system`, `vertique`, `vertique-strict`, or the retired `vertx`, and the
-mapper must not have Jackson default typing active — the registry rejects both at construction.
+The profile must be a `Jackson2JsonProfileCodec` (built by `Jackson2JsonProfiles.of` or a subclass), its
+id must not be `system`, `vertique`, `vertique-strict`, or the retired `vertx`, and its mapper must not
+have Jackson default typing active — the registry rejects each of these at construction, naming the id.
 
 Select it anywhere a profile id is accepted — `@JsonProfile("strict-payments")`, a per-binding config
 value, or `json.jsonProfile`.
@@ -644,8 +663,10 @@ A validation failure then propagates out of `start()` and the verticle never bec
 
 ### Framework seams
 
-Two public types are named nowhere above because no application uses one:
-`DefaultJsonProfileRegistry` and `JsonDefaultProfileValidator`. They are public because
+Three public types are named nowhere above because no application uses one:
+`DefaultJsonProfileRegistry`, `JsonDefaultProfileValidator` and `VertiqueJsonFactory`. The factory is
+public only because the `ServiceLoader` requires it; it hands Vert.x the module's package-private
+process codec. They are public because
 sibling framework modules reference them across package boundaries — the REST client and the two
 cache stores resolve mappers through the registry, and the JAX-RS module composes its own
 default-profile validator on top of the validator here. Their Javadoc marks them INTERNAL and they
@@ -671,7 +692,7 @@ point.
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonProfileCodec`, `JsonProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `ApplicationStartupStep`, `LifecyclePhase`, `VertiqueJson`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
+| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonProfileCodec`, `JsonProfileRegistry`, `JsonCodecException`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `ApplicationStartupStep`, `LifecyclePhase`, `VertiqueJson`, `ProcessJsonCodec`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()`, the Vert.x Jackson module, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — ISO-8601 `java.time` support in the `vertique` defaults |

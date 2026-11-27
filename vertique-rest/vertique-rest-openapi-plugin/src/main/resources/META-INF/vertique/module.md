@@ -279,6 +279,7 @@ This module has deliberately minimal dependencies:
 - `swagger-jaxrs2-jakarta` (for `OpenAPIExtension`, `AbstractOpenAPIExtension`, `ResolvedParameter`)
 - `jakarta.ws.rs-api` (for the `@QueryParam`/`@PathParam`/`@HeaderParam`/`@CookieParam`/`@DefaultValue`/`@Consumes` annotations inspected by `RequestParamsExtension`)
 - `vertx-core` (for the `Future` class reference in `FutureModelConverter`)
+- `jackson-databind` (for `JavaType`, read by the model converters)
 
 It is not a runtime dependency of applications. It is only used as a `<dependency>` of the swagger-maven-plugin during the build.
 

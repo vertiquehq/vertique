@@ -18,6 +18,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JavaType;
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.request.DefaultBoundRequest;
@@ -482,8 +483,11 @@ class JsonRequestBodyDecoderTest {
 
         // Expected value comes from the same mapper the decoder binds with — the process codec's,
         // which in this unbooted unit test is still Vert.x's raw delegate.
-        JavaType listOfObjectType = VertiqueJson.mapper().getTypeFactory().constructType(listOfObject);
-        Object expected = VertiqueJson.mapper().convertValue(jsonArray.getList(), listOfObjectType);
+        JavaType listOfObjectType = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                .getTypeFactory()
+                .constructType(listOfObject);
+        Object expected = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                .convertValue(jsonArray.getList(), listOfObjectType);
 
         assertEquals(
                 expected,

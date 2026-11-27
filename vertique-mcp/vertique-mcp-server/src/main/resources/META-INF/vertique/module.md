@@ -1701,6 +1701,7 @@ An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeou
 | `vertique-core` | Correlation, JSON profiles, compose validation, extension ordering |
 | `vertique-sanitization` | Required `InputObjectProcessor` for tool argument pipelines |
 | `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
+| `jackson-databind` | `ObjectMapper`, `JsonNode` and the `node` tree types, `ObjectWriter`, and `DeserializationFeature` for tool arguments and results |
 | `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
 | `vertique-rest-security` | Identity resolution middleware for optional schemes |
 | `vertique-rate-limit-core` | Shared limiter runtime and subject resolution for configured admission |

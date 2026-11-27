@@ -704,47 +704,61 @@ class. The generator that consumes these values ships in `dev.vertique:vertique-
 ### The process JSON codec
 
 Vert.x routes every `Json.encode`, `Json.decodeValue`, `new JsonObject(String|Buffer)`,
-`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. `vertique-core`
-registers its own codec for that role and points it at a swappable `ObjectMapper`; `VertiqueJson` is
-how framework and application code reach that mapper.
+`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec.
+`dev.vertique:vertique-json` registers the framework's codec for that role; `VertiqueJson`, here in core,
+is how framework and application code reach the profile it runs and how the startup path installs one.
 
 ```java
 public final class VertiqueJson {
-    public static ObjectMapper mapper();                        // live read
+    public static JsonProfileCodec codec();                     // live read
     public static boolean ownsCodec();
     public static Optional<JsonProfileId> profile();
-    public static void install(JsonProfileId id, ObjectMapper mapper);
+    public static void install(JsonProfileCodec profile);
     public static void resetForTests();                         // gated, see below
 }
 ```
 
-Before installation the codec delegates to Vert.x's own mapper, so a process that never installs
-behaves exactly like stock Vert.x. `dev.vertique:vertique-json` contributes the `CONFIGURE`-phase
-step that installs the profile named by `json.systemProfile`; from that point the whole process
-encodes and decodes through that profile's mapper. Mappers are swapped, never reconfigured — Jackson
-forbids reconfiguring a mapper after first use — and Vert.x's own mapper is never mutated.
+Before installation `codec()` returns the raw profile (id `vertx`) over Vert.x's own mapper, so a
+process that never installs behaves exactly like stock Vert.x. `vertique-json` contributes the
+`CONFIGURE`-phase step that installs the profile named by `json.systemProfile`; from that point the whole
+process encodes and decodes through that profile's mapper. Mappers are swapped, never reconfigured —
+Jackson forbids reconfiguring a mapper after first use — and Vert.x's own mapper is never mutated. Code
+that needs the Jackson mapper calls `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`.
 
-`mapper()` is a **live read**: call it at use time, or capture it only in an object constructed
-during or after `CONFIGURE`. A static initializer or a Dagger provider runs earlier and would
-capture the pre-install mapper.
+**Without `vertique-json`** Vert.x keeps its own codec: `ownsCodec()` is `false`, `codec()`, `install`
+and `resetForTests()` throw `IllegalStateException` naming `vertique-json` and its `JsonFactory` service
+entry, `profile()` is empty, and the startup "no profile installed" warning does not apply. Every
+starter except the PostgreSQL starter on its own includes `vertique-json`. Object mapping through Vert.x
+(`JsonObject.mapFrom`, `Json.encode` on a plain object) needs `jackson-databind` on the application
+classpath.
 
-`install` is keyed by profile id and enforces three rules on every call, whoever the caller is — the
-rules bind the act of installing, not the installed instance's future state (a live `ObjectMapper`
-can still be reconfigured by any in-process code; the JSON runtime re-checks default typing at
-`VALIDATE`, and a graph without it logs a `WARN` there when nothing was installed):
+`codec()` is a **live read**: call it at use time, or capture it only in an object constructed during or
+after `CONFIGURE`. A static initializer or a Dagger provider runs earlier and would capture the
+pre-install profile.
 
-- A different id than the one already installed is refused with an `IllegalStateException` naming
-  both ids and both installing classes — one process has one JSON codec. The same id installs the
-  new, equivalent instance and logs the swap at `INFO`, so a second application booted in the same
-  JVM under the same system profile starts normally. When the incoming mapper reads more leniently
-  than the one it replaces — a read-strictness feature turned off, a lenient parser feature turned
-  on, or a weaker stream-read limit — the swap also logs a `WARN` naming each difference.
+`install` is keyed by profile id and enforces these rules on every call, whoever the caller is — the
+rules bind the act of installing, not the installed instance's future state (a live `ObjectMapper` can
+still be reconfigured by any in-process code; the JSON runtime re-checks default typing at `VALIDATE`,
+and a graph without it logs a `WARN` there when nothing was installed). The codec's guards run before
+the id check, and a refused install changes nothing:
+
+- The profile must be a `Jackson2JsonProfileCodec`; any other implementation is refused with an
+  `IllegalArgumentException` naming its id.
 - The mapper must register Vert.x's Jackson module (`VertxJsonSupport.module()` in
   `dev.vertique:vertique-json`), otherwise `JsonObject`, `JsonArray` and `Buffer` values would be
   bean-serialized instead of round-tripping — `IllegalArgumentException`.
-- The mapper must not activate Jackson default typing, which would let any decoded payload choose
-  the type it instantiates — `IllegalArgumentException`. Annotation-driven polymorphism with
-  `@JsonTypeInfo` stays available.
+- The mapper must not activate Jackson default typing, which would let any decoded payload choose the
+  type it instantiates — `IllegalArgumentException`. Annotation-driven polymorphism with `@JsonTypeInfo`
+  stays available.
+- A different id than the one already installed is refused with an `IllegalStateException` naming both
+  ids and both installing classes — one process has one JSON codec. The same id installs the new,
+  equivalent instance and logs the swap at `INFO`, so a second application booted in the same JVM under
+  the same system profile starts normally. When the incoming mapper reads more leniently than the one it
+  replaces — a read-strictness feature turned off, a lenient parser feature turned on, or a weaker
+  stream-read limit — the swap also logs a `WARN` naming each difference.
+
+`ProcessJsonCodec` is an **INTERNAL** seam: the interface through which `VertiqueJson` drives the codec
+`vertique-json` provides. Applications never call it.
 
 **Registration is a packaging concern.** The codec reaches Vert.x through
 `META-INF/services/io.vertx.core.spi.JsonFactory`, loaded from the thread-context classloader when
@@ -763,14 +777,14 @@ writer, and the writing forms do not flush it.
 **Outside the installed-mapper claim.** Vert.x's `DatabindCodec.createParser`/`fromParser` static
 helpers, and the `JacksonCodec.fromString(String)`/`fromBuffer(Buffer)` streaming overloads that
 return `Object`, are bound to Vert.x's own raw mapper and factory. Code that must use the installed
-mapper calls `VertiqueJson.mapper()`.
+mapper calls `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())`.
 
 **Buffer decodes copy.** To keep a buffer decode as strict as a string decode, the codec builds its
 parser from the installed mapper's factory over a byte copy of the buffer, so `JsonObject(Buffer)`
 and `Json.decodeValue(Buffer, …)` transiently hold twice the payload. Bound the input: set
 `vertx.jackson.defaultReadMaxDocumentLength` and a `BodyHandler` body limit on network edges.
 
-**`resetForTests()` is a gated test seam.** It restores the pre-install delegate, and it throws
+**`resetForTests()` is a gated test seam.** It restores the raw profile, and it throws
 `IllegalStateException` unless the JVM was *started* with
 `-Dvertique.json.codec.allowReset=true`. The flag is read once when `VertiqueJson` is initialized, so
 setting the property at runtime cannot open the seam. Set it only in a build's surefire/failsafe
@@ -1507,7 +1521,7 @@ runtime or annotation vocabulary.
   non-`Buffer` backings.
 - **A `VerticleDeployment` requires a verticle phase.** Constructing one with `CONFIGURE`,
   `VALIDATE`, `MIGRATE`, or `AFTER_START` is rejected at construction time.
-- **Do not capture `VertiqueJson.mapper()` in a Dagger provider or a static initializer.** Both run
+- **Do not capture `Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())` in a Dagger provider or a static initializer.** Both run
   before the `CONFIGURE` phase installs the system profile, so the captured instance is Vert.x's raw
   mapper. Read it at use time, or capture it in an object built at `CONFIGURE` or later.
 - **Do not configure Jackson by mutating a shared mapper.** Contribute a `JsonProfileCodec` and
@@ -1536,8 +1550,12 @@ every compile-scope dependency it declares lands on every consumer's classpath.
 | `com.google.dagger:dagger` | `@Module`, `@Provides`, `@Multibinds` for `VertxModule`, `HealthCheckModule`, `CoreLifecycleStepsModule` |
 | `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton`, `@Qualifier`, `Provider` on the injectable types and qualifiers |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on nullable record components, SPI parameters, and return values |
-| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper` on the profile contracts and the process codec, and the serialization annotations on result records |
+| `com.fasterxml.jackson.core:jackson-annotations` | The serialization annotations on result records (`ViolationDetail`); Jackson 2 and 3 share this artifact |
 | `org.slf4j:slf4j-api` | Logging in `VertiqueJson` and the other core collaborators |
+
+Core does not bring `jackson-databind` or `jackson-core`, and a build rule keeps them out. A module that
+imports Jackson data-binding or streaming types declares them itself; JSON profiles, the registry and
+the process codec's implementation live in `dev.vertique:vertique-json`.
 
 Core does not bring the JAX-RS API (`jakarta.ws.rs:jakarta.ws.rs-api`). A module that uses JAX-RS
 types gets them from `vertique-rest-core` or `vertique-rest-jaxrs`, or declares the API itself.

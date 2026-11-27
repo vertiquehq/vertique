@@ -810,7 +810,7 @@ public class ProfiledErrorResponseIT {
      *
      * <p>This is what a booted application's {@code CONFIGURE} phase does, and it is what makes an
      * explicit {@code @JsonProfile("system")} route take the "no override" fast path: the resolver's
-     * sentinel compares the resolved mapper against {@code VertiqueJson.mapper()} by identity, so the
+     * sentinel compares the resolved mapper against {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} by identity, so the
      * mapper must come from the graph's own registry — every registry instance owns its own instances.
      *
      * @param vertx the Vert.x instance
@@ -874,10 +874,10 @@ public class ProfiledErrorResponseIT {
         if (installSystemAsProcessCodec) {
             // Before the router is built: the resolver captures its sentinel comparison at router-build
             // time, so an install afterwards would no longer match the routes already decided.
-            VertiqueJson.install(
+            VertiqueJson.install(Jackson2JsonProfiles.of(
                     JsonProfileId.SYSTEM,
                     Jackson2JsonProfileCodec.objectMapper(
-                            component.jsonProfileRegistry().profile(JsonProfileId.SYSTEM)));
+                            component.jsonProfileRegistry().profile(JsonProfileId.SYSTEM))));
         }
         RestTestMounts.startServer(vertx, component.testMount(), resources).onComplete(ctx.succeeding(s -> {
             server = s;

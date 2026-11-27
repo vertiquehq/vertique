@@ -648,7 +648,7 @@ class JakartaPathPointersBindingGuardsTest {
     // --- Mappers ---
 
     /** The process mapper, which a module without a projection names with. */
-    private static final ObjectMapper PROCESS = VertiqueJson.mapper();
+    private static final ObjectMapper PROCESS = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
 
     /** Reads {@link Pair} from a JSON array through a config override instead of an annotation. */
     private static final ObjectMapper PAIR_AS_ARRAY = JsonMapper.builder()

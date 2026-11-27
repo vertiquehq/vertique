@@ -340,6 +340,7 @@ With hierarchical property expansion, `management.port=9090` in a `.properties` 
 | Dependency | Why |
 |------------|-----|
 | `dev.vertique:vertique-core` | `HealthCheck`, `HealthCheckResult`, `HealthStatus`, `HealthCheckAggregator`, `HealthReport`, `@Liveness`, `@Readiness`, `HealthCheckModule`, `OrderedExtension`, `ConfigParser`, `@VertxConfig` |
+| `com.fasterxml.jackson.core:jackson-databind` | `@JsonDeserialize`, which Lombok's `@Jacksonized` generates on the config builders |
 | `io.vertx:vertx-web` | `Router` and `RoutingContext` for the management server |
 | `com.google.dagger:dagger` | `ManagementModule` bindings and multibinding declarations |
 | `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton` |

@@ -8,6 +8,7 @@ import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.core.input.InputLocation;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionException;
@@ -1167,7 +1168,8 @@ final class ParameterExtractor {
             // resolved for this method, is stashed on the routing context under
             // KEY_RESOLVED_BODY_MAPPER. When present it owns the two-phase MATERIALIZATION of the
             // processed body; when absent the calls below run the process codec (JsonObject.mapTo /
-            // VertiqueJson.mapper()), which is exactly the mapper that route resolved to.
+            // Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())), which is exactly the mapper that route
+            // resolved to.
             // Resolved ABOVE the content-type branch: the form-urlencoded body is bound by the same
             // mapper the JSON body is, and its bodyNameResolver projection was built from that mapper —
             // binding it through the process codec instead would make the projection and the binder
@@ -1232,7 +1234,9 @@ final class ParameterExtractor {
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
                         // Both paths run through the same rejection translation, so a body the binder
                         // rejects is the frozen value-free 400 whether or not a profile was stashed.
-                        ObjectMapper mapper = profileMapper != null ? profileMapper : VertiqueJson.mapper();
+                        ObjectMapper mapper = profileMapper != null
+                                ? profileMapper
+                                : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
                         Object bound = ProfileBodyMaterialization.convertValue(mapper, typedMap, targetType);
                         BodyBindingMark.record(ctx, BodyBindingMark.Kind.JSON, mapper);
                         return bound;
@@ -1246,7 +1250,7 @@ final class ParameterExtractor {
                         Object processed = objectProcessor.processInput(
                                 jsonArray.getList(), resolvedType, policies, InputLocation.BODY, bodyNameResolver);
                         if (processed instanceof List<?> processedList) {
-                            ObjectMapper processMapper = VertiqueJson.mapper();
+                            ObjectMapper processMapper = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
                             com.fasterxml.jackson.databind.JavaType javaType =
                                     processMapper.getTypeFactory().constructType(resolvedType);
                             if (profileMapper != null) {
@@ -1292,7 +1296,9 @@ final class ParameterExtractor {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
                         // Same rejection translation as the JSON path: a value-free 400 on both mappers.
-                        ObjectMapper mapper = profileMapper != null ? profileMapper : VertiqueJson.mapper();
+                        ObjectMapper mapper = profileMapper != null
+                                ? profileMapper
+                                : Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
                         Object bound = ProfileBodyMaterialization.convertValue(mapper, typedMap, targetType);
                         BodyBindingMark.record(ctx, BodyBindingMark.Kind.FORM, mapper);
                         return bound;
@@ -1725,7 +1731,7 @@ final class ParameterExtractor {
         // Policies already applied once per field before conversion (parameter baseline + type +
         // field metadata). Do not walk the intermediate map again — that would replay field
         // sanitizers on already-processed strings.
-        return VertiqueJson.mapper().convertValue(values, beanType);
+        return Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()).convertValue(values, beanType);
     }
 
     /**

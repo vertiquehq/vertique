@@ -122,6 +122,16 @@ fixture_pom m </dev/null
 fixture_java m "$main_file" "static com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT"
 expect "databind static import without a declaration" fail
 
+fixture_reset jacksonized-undeclared
+fixture_pom m </dev/null
+fixture_java m "$main_file" "lombok.extern.jackson.Jacksonized"
+expect "a Lombok @Jacksonized import without a databind declaration" fail
+
+fixture_reset jacksonized-declared
+dependency jackson-databind | fixture_pom m
+fixture_java m "$main_file" "lombok.extern.jackson.Jacksonized"
+expect "a Lombok @Jacksonized import with a databind declaration" pass
+
 fixture_reset core-covered-by-databind
 dependency jackson-databind | fixture_pom m
 fixture_java m "$main_file" "$core_import"

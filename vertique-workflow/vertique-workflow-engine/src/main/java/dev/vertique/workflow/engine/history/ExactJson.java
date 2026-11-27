@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 
 /**
  * INTERNAL: reads persisted state as a Jackson tree that keeps every number exactly.
@@ -37,7 +38,7 @@ final class ExactJson {
 
     /** Returns the exact-number mapper for the live process mapper, deriving it again when that mapper was swapped. */
     private static ObjectMapper mapper() {
-        ObjectMapper live = VertiqueJson.mapper();
+        ObjectMapper live = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec());
         Derived current = derived;
         if (current != null && current.source() == live) {
             return current.exact();

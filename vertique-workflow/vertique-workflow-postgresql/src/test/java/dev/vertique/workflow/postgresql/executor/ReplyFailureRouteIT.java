@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.json.Jackson2JsonProfileCodec;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt.Outcome;
 import dev.vertique.workflow.ops.ServiceFailure;
 import dev.vertique.workflow.ops.ServiceFailure.Reason;
@@ -46,12 +47,14 @@ class ReplyFailureRouteIT {
                 node.awaitIdle(id);
                 var instance = f.fixture.instanceOf(id);
                 assertThat(instance.currentStepId()).isEqualTo("failure-route");
-                var state = VertiqueJson.mapper()
+                var state = Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
                         .readValue(String.valueOf(instance.stateJson()), ReplyStepFixture.State.class);
                 if (mode == Mode.REDUCER) {
                     assertThat(state.reserved()).isEqualTo("RETRIES_EXHAUSTED:3");
                 } else {
-                    assertThat(state).isEqualTo(VertiqueJson.mapper().readValue(before, ReplyStepFixture.State.class));
+                    assertThat(state)
+                            .isEqualTo(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())
+                                    .readValue(before, ReplyStepFixture.State.class));
                 }
                 assertThat(f.waitRecords(id)).isEmpty();
                 assertThat(receivedNames(f, id)).containsExactly("vertique.reply.failed.reserve");

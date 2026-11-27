@@ -210,7 +210,8 @@ class JakartaPathPointersTest {
         // Given: a type tree and a Jakarta property path (the row)
 
         // When: the path is converted against the root type
-        String pointer = JakartaPathPointers.toPointer(path, rootType, VertiqueJson.mapper());
+        String pointer = JakartaPathPointers.toPointer(
+                path, rootType, Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()));
 
         // Then: the pointer is exactly the expected wire-name pointer, and no sentinel key leaked
         assertEquals(expected, pointer, "pointer for row '" + row + "'");
@@ -225,7 +226,8 @@ class JakartaPathPointersTest {
         String path = "byKey[" + key + "].name";
 
         // When: the path is converted
-        String pointer = JakartaPathPointers.toPointer(path, Root.class, VertiqueJson.mapper());
+        String pointer = JakartaPathPointers.toPointer(
+                path, Root.class, Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()));
 
         // Then: the pointer ends at the map property and holds no part of the key
         assertEquals("/byKey", pointer);
@@ -390,7 +392,8 @@ class JakartaPathPointersTest {
     @DisplayName("structured property paths convert to wire-name pointers")
     void structuredPathsConvertToWireNamePointers(String row, Type rootType, PropertyPath path, String expected) {
         // Given: a type tree, a structured path relative to its root (the row) and a mapper-only session
-        JakartaPathPointers.Resolver session = JakartaPathPointers.resolver(VertiqueJson.mapper(), null);
+        JakartaPathPointers.Resolver session =
+                JakartaPathPointers.resolver(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()), null);
 
         // When: the path is resolved without a document
         String pointer = session.toPointer(path, rootType, null);
@@ -403,7 +406,8 @@ class JakartaPathPointersTest {
     @DisplayName("one session resolves every structured row exactly like a fresh session")
     void oneSessionResolvesEveryRowLikeAFreshSession() {
         // Given: a single mapper-only session shared by every row, so per-class lookups are reused
-        JakartaPathPointers.Resolver session = JakartaPathPointers.resolver(VertiqueJson.mapper(), null);
+        JakartaPathPointers.Resolver session =
+                JakartaPathPointers.resolver(Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()), null);
         List<Arguments> rows = structuredRows().toList();
 
         // When: every row is resolved through it, twice

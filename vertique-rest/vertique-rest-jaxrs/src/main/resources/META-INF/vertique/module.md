@@ -2429,7 +2429,8 @@ These types left this module and have no forwarding type here. Change the import
 | `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
 | `dev.vertique:vertique-json` | the `JsonProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.input.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
+| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper`, `JavaType` and `TypeFactory` for body decoding and encoding with the profile mappers |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 
-Vert.x, Dagger, the JAX-RS API, and Jackson arrive transitively through `vertique-rest-core`.
+Vert.x, Dagger, and the JAX-RS API arrive transitively through `vertique-rest-core`.

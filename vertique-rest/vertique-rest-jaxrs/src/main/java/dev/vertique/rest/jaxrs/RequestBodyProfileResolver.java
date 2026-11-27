@@ -41,7 +41,7 @@ import java.util.List;
  * <p><strong>The {@code null} sentinel is an identity rule.</strong> The resolver returns
  * {@code null} — "no override: the Vert.x fast paths through the process JSON codec are already
  * correct for this route" — <em>iff</em> the resolved mapper is the same instance as
- * {@link VertiqueJson#mapper()}, the mapper the process codec runs on. It is never keyed on the
+ * {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())}, the mapper the process codec runs on. It is never keyed on the
  * profile id: an explicit {@code system} selection collapses to {@code null} only while the
  * registry's {@code system} mapper is what is installed as the process codec. Under a
  * {@code json.systemProfile} that selects another profile the resolved {@code system} mapper is a
@@ -60,7 +60,7 @@ import java.util.List;
  * runs Vert.x's raw mapper, and no registry mapper equals it: an explicit {@code system} selection
  * then resolves to the registry's {@code system} mapper instead of {@code null}. Such a harness that
  * needs the fast path installs {@code objectMapper(registry.profile(SYSTEM))} through
- * {@link VertiqueJson#install(dev.vertique.core.json.JsonProfileId, ObjectMapper)} in setup.
+ * {@link VertiqueJson#install(dev.vertique.core.json.JsonProfileCodec)} in setup.
  *
  * <p>This is a stateless helper; it is not instantiated.
  */
@@ -79,7 +79,7 @@ final class RequestBodyProfileResolver {
      *
      * @param profile the registry-resolved profile for the route; never {@code null}
      * @param processCodec whether {@code objectMapper(profile)} is the same instance as
-     *     {@link VertiqueJson#mapper()} — the mapper the process JSON codec runs on
+     *     {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} — the mapper the process JSON codec runs on
      */
     record ResolvedRequestBodyProfile(JsonProfileCodec profile, boolean processCodec) {
 
@@ -116,7 +116,9 @@ final class RequestBodyProfileResolver {
         // mapper", so the Vert.x fast paths already produce the profile's bytes. Read at use time —
         // router build runs in the EDGE phase, after CONFIGURE installed the process mapper.
         return new ResolvedRequestBodyProfile(
-                profile, Jackson2JsonProfileCodec.objectMapper(profile) == VertiqueJson.mapper());
+                profile,
+                Jackson2JsonProfileCodec.objectMapper(profile)
+                        == Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()));
     }
 
     /**

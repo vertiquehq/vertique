@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.json;
+package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -19,11 +19,18 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import dev.vertique.core.json.JsonProfileCodec;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.json.jackson.VertxModule;
+import java.io.OutputStream;
+import java.lang.reflect.Type;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,11 +43,11 @@ import org.slf4j.LoggerFactory;
  * <p>Verified here:
  *
  * <ul>
- *   <li><b>SPI selection</b> — {@code Json.CODEC} <em>is</em> {@link VertiqueJsonCodec#INSTANCE}
+ *   <li><b>SPI selection</b> — {@code Json.CODEC} <em>is</em> {@link ProfileDelegatingJsonCodec#INSTANCE}
  *       (the {@code META-INF/services/io.vertx.core.spi.JsonFactory} registration was loaded), and
  *       {@link VertiqueJsonFactory#order()} is the frozen {@code -1000} so any competing factory
  *       registered by an application loses.</li>
- *   <li><b>Pre-install delegate</b> — {@link VertiqueJson#mapper()} is {@code DatabindCodec.mapper()}
+ *   <li><b>Pre-install delegate</b> — {@code Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec())} is {@code DatabindCodec.mapper()}
  *       and {@code Json.encode} is byte-identical to that mapper's output, so a JVM that never runs
  *       the install step behaves exactly like stock Vert.x.</li>
  *   <li><b>Delegation</b> — {@code Json.encode}, {@code Json.decodeValue}, {@code JsonObject.mapTo}
@@ -55,7 +62,7 @@ import org.slf4j.LoggerFactory;
  *       current installation untouched.</li>
  *   <li><b>Reset</b> — {@link VertiqueJson#resetForTests()} restores the raw delegate (this module's
  *       surefire {@code argLine} sets {@code -Dvertique.json.codec.allowReset=true}; the flagless
- *       half of the contract is {@code VertiqueJsonCodecResetGateTest}).</li>
+ *       half of the contract is {@code ProfileDelegatingJsonCodecResetGateTest}).</li>
  *   <li><b>Retired mechanism</b> — {@code ObjectMapperCustomizer}, {@code JsonModule},
  *       {@code JacksonConfigurer} and {@code JacksonConfigureStep} are not on the classpath.</li>
  * </ul>
@@ -63,7 +70,7 @@ import org.slf4j.LoggerFactory;
  * <p>Log assertions attach a {@link ListAppender} to the <em>root</em> logger rather than to a
  * named one, so the proof pins the emitted text and level, not the implementation's logger name.
  */
-class VertiqueJsonCodecTest {
+class ProfileDelegatingJsonCodecTest {
 
     /** Fixture with one always-present and one null property — the inclusion probe. */
     record Fixture(String present, String absent) {}
@@ -87,7 +94,7 @@ class VertiqueJsonCodecTest {
         try {
             // --- Given: the SPI selected the Vertique codec, at the frozen order ---
             assertSame(
-                    VertiqueJsonCodec.INSTANCE,
+                    ProfileDelegatingJsonCodec.INSTANCE,
                     Json.CODEC,
                     "Vert.x must have loaded VertiqueJsonFactory through META-INF/services; "
                             + "without it every delegation assertion below is vacuous");
@@ -101,7 +108,7 @@ class VertiqueJsonCodecTest {
             JsonObject sample = new JsonObject().put("a", 1).put("b", "two").putNull("c");
             assertSame(
                     DatabindCodec.mapper(),
-                    VertiqueJson.mapper(),
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
                     "before installation the delegate must be the raw Vert.x mapper");
             assertEquals(
                     DatabindCodec.mapper().writeValueAsString(sample),
@@ -115,9 +122,12 @@ class VertiqueJsonCodecTest {
 
             // --- When: install profile A (NON_NULL, strict about unknown properties) ---
             ObjectMapper a1 = nonNullMapper();
-            VertiqueJson.install(PROFILE_A, a1);
+            VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_A, a1));
 
-            assertSame(a1, VertiqueJson.mapper(), "the delegate must be the installed instance");
+            assertSame(
+                    a1,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "the delegate must be the installed instance");
             assertEquals(PROFILE_A, VertiqueJson.profile().orElse(null), "profile() must report the installed id");
             assertEquals(
                     "{\"present\":\"x\"}",
@@ -143,9 +153,12 @@ class VertiqueJsonCodecTest {
             // --- When: install the same id with a different, lenient instance (same-id swap) ---
             appender.list.clear();
             ObjectMapper a2 = nonNullMapper().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-            VertiqueJson.install(PROFILE_A, a2);
+            VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_A, a2));
 
-            assertSame(a2, VertiqueJson.mapper(), "a same-id install must swap the delegate to the new instance");
+            assertSame(
+                    a2,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "a same-id install must swap the delegate to the new instance");
             assertEquals(PROFILE_A, VertiqueJson.profile().orElse(null), "the installed id is unchanged by a swap");
             assertEquals(
                     "{\"present\":\"x\"}",
@@ -168,8 +181,8 @@ class VertiqueJsonCodecTest {
 
             // --- When: install a different id ---
             ObjectMapper b = vertxAwareMapper();
-            IllegalStateException conflict =
-                    assertThrows(IllegalStateException.class, () -> VertiqueJson.install(PROFILE_B, b));
+            IllegalStateException conflict = assertThrows(
+                    IllegalStateException.class, () -> VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_B, b)));
             String conflictMessage = String.valueOf(conflict.getMessage());
             assertTrue(
                     conflictMessage.contains(PROFILE_A.value()) && conflictMessage.contains(PROFILE_B.value()),
@@ -177,25 +190,34 @@ class VertiqueJsonCodecTest {
             assertTrue(
                     conflictMessage.contains(getClass().getSimpleName()),
                     "the refusal must name both installing classes; got: " + conflictMessage);
-            assertSame(a2, VertiqueJson.mapper(), "a refused install must not change the delegate");
+            assertSame(
+                    a2,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "a refused install must not change the delegate");
 
             // --- When: install an unsafe mapper under the current id ---
             ObjectMapper typed = vertxAwareMapper().activateDefaultTyping(LaissezFaireSubTypeValidator.instance);
             assertThrows(
                     IllegalArgumentException.class,
-                    () -> VertiqueJson.install(PROFILE_A, typed),
+                    () -> VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_A, typed)),
                     "the install seam must reject a mapper with Jackson default typing active");
             ObjectMapper noModule = new ObjectMapper();
             assertThrows(
                     IllegalArgumentException.class,
-                    () -> VertiqueJson.install(PROFILE_A, noModule),
+                    () -> VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_A, noModule)),
                     "the install seam must reject a mapper without VertxModule registered");
-            assertSame(a2, VertiqueJson.mapper(), "a rejected install must leave the current delegate in place");
+            assertSame(
+                    a2,
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "a rejected install must leave the current delegate in place");
 
             // --- Then: reset restores the raw Vert.x delegate ---
             VertiqueJson.resetForTests();
 
-            assertSame(DatabindCodec.mapper(), VertiqueJson.mapper(), "reset must restore the raw Vert.x mapper");
+            assertSame(
+                    DatabindCodec.mapper(),
+                    Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                    "reset must restore the raw Vert.x mapper");
             assertTrue(VertiqueJson.profile().isEmpty(), "reset must clear the installation");
             assertEquals(
                     "{\"present\":\"x\",\"absent\":null}",
@@ -219,12 +241,12 @@ class VertiqueJsonCodecTest {
 
             // --- Given: a strict mapper installed under the profile id ---
             ObjectMapper strict = vertxAwareMapper();
-            VertiqueJson.install(profile, strict);
+            VertiqueJson.install(Jackson2JsonProfiles.of(profile, strict));
 
             // --- When: the same id swaps to an equally strict mapper ---
             appender.list.clear();
             ObjectMapper equallyStrict = vertxAwareMapper();
-            VertiqueJson.install(profile, equallyStrict);
+            VertiqueJson.install(Jackson2JsonProfiles.of(profile, equallyStrict));
 
             assertNotNull(
                     infoLogContaining(appender, profile.value()),
@@ -238,7 +260,7 @@ class VertiqueJsonCodecTest {
             ObjectMapper lenient = vertxAwareMapper()
                     .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                     .configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
-            VertiqueJson.install(profile, lenient);
+            VertiqueJson.install(Jackson2JsonProfiles.of(profile, lenient));
 
             String warnLog = warnLogContaining(appender, profile.value());
             assertNotNull(warnLog, "a same-id swap to a lenient mapper must log a WARN naming the deltas");
@@ -253,6 +275,135 @@ class VertiqueJsonCodecTest {
                     "the WARN must name ACCEPT_CASE_INSENSITIVE_PROPERTIES; got: " + warnLog);
         } finally {
             root.detachAppender(appender);
+        }
+    }
+
+    // --- install(JsonProfileCodec) ---
+
+    @Test
+    @DisplayName("installing a direct profile codec that is not a Jackson 2 codec is refused naming the profile id")
+    void installingADirectProfileCodecIsRefused() {
+        // Given: nothing installed, and a direct codec whose unwrap yields a valid Vert.x-aware mapper
+        assertTrue(VertiqueJson.profile().isEmpty(), "precondition: nothing installed");
+        DirectCodec direct = new DirectCodec(PROFILE_A, vertxAwareMapper());
+
+        // When / Then: the install is refused with the profile id, and nothing is installed
+        IllegalArgumentException refused =
+                assertThrows(IllegalArgumentException.class, () -> VertiqueJson.install(direct));
+        assertTrue(
+                String.valueOf(refused.getMessage()).contains(PROFILE_A.value()),
+                "the refusal must name the profile id; got: " + refused.getMessage());
+        assertTrue(VertiqueJson.profile().isEmpty(), "a refused install must leave nothing installed");
+    }
+
+    @Test
+    @DisplayName("a failed install leaves profile() reporting the previously installed id")
+    void aFailedInstallKeepsThePreviousProfile() {
+        // Given: profile A installed through the mapper seam
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_A, vertxAwareMapper()));
+
+        // When: a guard failure (same id) and an id conflict (other id) are attempted
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> VertiqueJson.install(new DirectCodec(PROFILE_A, vertxAwareMapper())));
+        IllegalStateException conflict = assertThrows(
+                IllegalStateException.class,
+                () -> VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_B, vertxAwareMapper())));
+
+        // Then: both are refused for a contract reason, the conflict names both ids, and A stays installed
+        assertTrue(
+                String.valueOf(conflict.getMessage()).contains(PROFILE_A.value())
+                        && String.valueOf(conflict.getMessage()).contains(PROFILE_B.value()),
+                "the conflict must name both profile ids; got: " + conflict.getMessage());
+        assertEquals(PROFILE_A, VertiqueJson.profile().orElse(null), "profile() must still report the earlier id");
+    }
+
+    @Test
+    @DisplayName("the guards run before the id-conflict check: an unsafe mapper under another id fails its guard")
+    void guardsRunBeforeTheConflictCheck() {
+        VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_A, vertxAwareMapper()));
+        ObjectMapper noVertxModule = new ObjectMapper();
+        IllegalArgumentException refused = assertThrows(
+                IllegalArgumentException.class,
+                () -> VertiqueJson.install(Jackson2JsonProfiles.of(PROFILE_B, noVertxModule)),
+                "a guard failure must be reported before the id conflict, so the remedy names the real problem");
+        assertTrue(refused.getMessage().contains(PROFILE_B.value()), refused.getMessage());
+        assertEquals(Optional.of(PROFILE_A), VertiqueJson.profile(), "a refused install must change nothing");
+    }
+
+    @Test
+    @DisplayName(
+            "a profile whose mapper() differs per call is served from the first instance as soon as install returns")
+    void installServesTheInstanceTheGuardsSaw() {
+        // Given: a Jackson 2 profile whose mapper() hands out a new instance per call; only the first is NON_NULL
+        List<ObjectMapper> handedOut = new java.util.ArrayList<>();
+        Jackson2JsonProfileCodec profile = new Jackson2JsonProfileCodec() {
+            @Override
+            public JsonProfileId id() {
+                return PROFILE_A;
+            }
+
+            @Override
+            protected ObjectMapper mapper() {
+                ObjectMapper next = handedOut.isEmpty() ? nonNullMapper() : vertxAwareMapper();
+                handedOut.add(next);
+                return next;
+            }
+        };
+
+        // When: it is installed
+        VertiqueJson.install(profile);
+
+        // Then: every observation is the first instance, and the codec serves the profile immediately
+        ObjectMapper first = handedOut.get(0);
+        assertSame(profile, VertiqueJson.codec(), "codec() must return the installed profile right after install");
+        assertSame(first, profile.unwrap(ObjectMapper.class).orElseThrow(), "unwrap must return the guarded instance");
+        assertSame(
+                first,
+                Jackson2JsonProfileCodec.objectMapper(VertiqueJson.codec()),
+                "objectMapper(codec()) must return the guarded instance");
+        assertEquals(
+                "{\"present\":\"x\"}",
+                Json.encode(new Fixture("x", null)),
+                "Json.encode must run on the guarded (NON_NULL) first instance, not a later one");
+    }
+
+    /** A {@link JsonProfileCodec} implemented directly, so it is not a Jackson 2 profile codec. */
+    private record DirectCodec(JsonProfileId id, ObjectMapper mapper) implements JsonProfileCodec {
+
+        @Override
+        public Buffer encode(Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String encodeToString(Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void encodeTo(Object value, OutputStream out) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T decode(Buffer json, Type type) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T decode(String json, Type type) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T convert(Object value, Type type) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> Optional<T> unwrap(Class<T> type) {
+            return type == ObjectMapper.class ? Optional.of(type.cast(mapper)) : Optional.empty();
         }
     }
 
