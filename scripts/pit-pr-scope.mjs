@@ -38,10 +38,10 @@ import { fileURLToPath } from 'node:url';
 
 /** Modules whose changed classes are mutated. Measured in the 2026-09-28 spike. */
 export const PILOT_MODULES = Object.freeze([
-  'vertique-input-processing',
   'vertique-json-schema',
   'vertique-resilience',
   'vertique-rest/vertique-rest-security',
+  'vertique-sanitization',
 ]);
 
 /** Mutants PIT could not run in a meaningful form; they count neither way. */

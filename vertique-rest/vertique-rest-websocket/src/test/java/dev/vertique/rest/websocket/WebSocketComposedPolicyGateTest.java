@@ -12,7 +12,7 @@ import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipSanitization;
-import dev.vertique.input.processing.InvocationPolicyConflictException;
+import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import java.lang.annotation.ElementType;

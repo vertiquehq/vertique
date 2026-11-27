@@ -1,0 +1,684 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.sanitization.processing;
+
+import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
+import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
+import jakarta.annotation.Nullable;
+import java.lang.reflect.Type;
+import java.util.ArrayDeque;
+import java.util.Collection;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Computes the set of classes {@link DefaultInputObjectProcessor} may pass to
+ * {@link InputTraversalContext#logicalFieldName(Class, String)} while processing a declared type,
+ * and hands each one to an {@link InputFieldNameResolver} so no projection is composed on the
+ * request path.
+ *
+ * <p>The set is derived from the engine's <em>own</em> descent rules rather than re-derived by a
+ * projection implementation. A projection that guesses the rules diverges in both directions: it
+ * warms types the engine never reaches (turning a name collision in an unreachable type into a
+ * startup failure) and misses types the engine does reach (leaving the projection to introspect on
+ * an event loop, per request, forever).
+ *
+ * <p>A class is prepared — handed to {@link InputFieldNameResolver#precompute} — only when it is a
+ * <strong>field-name owner</strong>: a class whose <em>own</em> resolved {@link InputPolicyMetadata}
+ * declares at least one field. That is the exact condition under which
+ * {@link DefaultInputObjectProcessor#processMap} ever calls
+ * {@link InputTraversalContext#logicalFieldName(Class, String)} against it — its {@code schemaFree}
+ * branch skips the projection whenever {@code metadata.fields()} is empty, so a class whose own
+ * metadata declares no fields can provably never reach that call. Precomputing it anyway would only
+ * ever cost, never help: a Jackson projection collision on such a class would fail startup for a
+ * wire-key lookup no execution path can perform. A raw collection reached only because no element
+ * schema is determinable, a field's raw declared class reached only because the wire shape disagrees
+ * with the declared shape (the {@code String} field mismatch family), a non-container generic whose
+ * own field erases to {@code Object}, and any other class whose declared shape carries no
+ * annotation-eligible or descendable field of its own are all instances of this same
+ * <strong>schema-free dispatch target</strong> rule — not a family of special cases. Every class is
+ * still <em>walked</em> (its metadata is resolved and, for a descendable non-platform type, its own
+ * fields are followed) regardless of this gate, so genuine conflict detection and reachability are
+ * unaffected; only the resolver warm-up is conditional.
+ *
+ * <p>The rule, in full:
+ *
+ * <ul>
+ *   <li><strong>Seed</strong> — {@link TypeClassifier#classify} of the declared type, unless it is
+ *       itself a raw container (a {@link Collection} or an array) with no determinable
+ *       {@link TypeClassifier#elementType} — that combination is the entry-point shape of a
+ *       schema-free dispatch target and is not even enqueued. {@link TypeClassifier#elementType} of
+ *       the declared type is always enqueued when non-{@code null}. Whether either is ultimately
+ *       <em>prepared</em> is still decided by the fields()-emptiness rule above once it is dequeued.</li>
+ *   <li><strong>Every enqueued class is walked; whether it is prepared follows the rule above.</strong>
+ *       A field's raw declared type ({@link FieldPolicyMetadata#fieldType()}) is enqueued unless the
+ *       field is {@linkplain FieldPolicyMetadata#isStringType() string-typed} — a {@code String}
+ *       field's raw class is dispatched against only on a wire/declared shape mismatch, never in the
+ *       field's own normal path, so it would resolve schema-free even if enqueued; skipping the
+ *       enqueue keeps it out of the reachable graph entirely instead of relying on that gate a second
+ *       time. {@code Map}, an enum and {@code Object} are enqueued the same way as any other declared
+ *       field type; whether each is then prepared depends on whether its own metadata declares
+ *       fields — an enum's inherited {@code java.lang.Enum#name} makes every enum type prepared in
+ *       practice, while {@code Map} and {@code Object} declare no fields of their own and are not.</li>
+ *   <li><strong>Descent</strong> follows only a class that {@link InputPolicyMetadataResolver#isDescendableObject}
+ *       accepts and that is not a platform type. Contributions are <em>both</em>
+ *       {@link FieldPolicyMetadata#fieldType()} (subject to the string-type exclusion above) and
+ *       {@link FieldPolicyMetadata#collectionElementType()} of every recorded field — both, never one
+ *       or the other, because the engine can dispatch against either depending on the wire shape it
+ *       meets.</li>
+ *   <li><strong>A generated processor answers for its own type.</strong> When one exists for the
+ *       frontier class and its {@link GeneratedInputProcessor#fieldNameOwnerTypes()} is non-empty,
+ *       that set <em>replaces</em> the reflective contributions — the generated path dispatches
+ *       against what it was emitted to dispatch against, not against what reflection infers. An
+ *       empty set is the documented sentinel for "declares no owner set" and falls back to the
+ *       reflective contributions, which is how a hand-written or previously-generated processor
+ *       keeps working; that fallback is logged at debug, naming the processor class, so a stale
+ *       generated class on the classpath is diagnosable rather than silent. The declared set is
+ *       flat — the engine closes it transitively and bounds it with the same descent rule as any
+ *       other contribution.</li>
+ *   <li>A visited set terminates cycles, so a self-referential or mutually recursive graph closes.</li>
+ * </ul>
+ *
+ * <p><strong>The platform bound is a cost bound, not a correctness bound.</strong> A JDK class is
+ * prepared but never descended into, because its generic containers erase to {@code Object} or to
+ * platform interfaces and so cannot yield an application class through a declared field. The stated
+ * residual: an owner reachable <em>only</em> through a platform class's declared fields — say
+ * {@code HashMap.Node} beneath a field declared {@code HashMap<K, V>} — is not prepared. Descending
+ * would introspect JDK internals for no reachable application type.
+ *
+ * <p>Unlike {@link InputPolicyMetadataResolver#declaresPolicies}, which uses a throw-away resolver
+ * because it answers a one-shot startup question, this walk deliberately populates the engine's own
+ * long-lived metadata cache: every class it resolves is a class the engine will resolve again on the
+ * request path, and the engine is component-scoped.
+ */
+final class OwnerTypeWalk {
+
+    private static final Logger log = LoggerFactory.getLogger(OwnerTypeWalk.class);
+
+    private OwnerTypeWalk() {}
+
+    /**
+     * Prepares {@code resolver} for every statically knowable owner reachable from
+     * {@code declaredType}.
+     *
+     * @param declaredType     the body or message type; {@code null} prepares nothing
+     * @param resolver         the resolver the same traversal will use at runtime; must not be
+     *                         {@code null}
+     * @param metadataResolver the engine's own metadata resolver, so the walk warms the cache the
+     *                         request path reads; must not be {@code null}
+     * @param dispatcher       the engine's own dispatcher, consulted so a generated processor can
+     *                         answer for its own type instead of having reflection infer it; must
+     *                         not be {@code null}
+     * @throws ConfigurationException if a reachable owner strands a declared policy: a type held as a
+     *                                {@code Map} value, a polymorphic subtype the base does not cover,
+     *                                or one of the unroutable shapes {@link #checkPromotedFields}
+     *                                documents
+     * @throws ConfigurationException if a reachable type declares conflicting policy annotations
+     * @throws RuntimeException      if a reachable type has a generated processor that exists but
+     *                               cannot be instantiated — a build defect, and failing at
+     *                               registration is the point
+     */
+    static void prepare(
+            @Nullable Type declaredType,
+            InputFieldNameResolver resolver,
+            InputPolicyMetadataResolver metadataResolver,
+            GeneratedInputProcessorDispatcher dispatcher) {
+        if (declaredType == null) {
+            return;
+        }
+
+        Deque<Class<?>> pending = new ArrayDeque<>();
+        Set<Class<?>> visited = new HashSet<>();
+        Class<?> classified = TypeClassifier.classify(declaredType);
+        Class<?> elementClassified = TypeClassifier.elementType(declaredType);
+        // A collection or array entry point is dispatched against its element class when one is
+        // determinable. When it is not, the engine falls back to the raw container class classify()
+        // yielded — but that fallback owner's own metadata carries no declared fields (Collection/
+        // array types declare none the resolver records), so the fallback dispatch is provably a
+        // schema-free no-op and the raw container class is not prepared. A raw container WITH a
+        // determinable element schema is unaffected: outside this fallback, its raw class is still a
+        // genuine mismatch-dispatch target (a top-level Map received where the collection was
+        // declared), so it is prepared like any other frontier class below.
+        if (classified != null && !(elementClassified == null && isCollectionOrArray(classified))) {
+            enqueue(pending, classified);
+        }
+        enqueue(pending, elementClassified);
+        // A Map entry point has no owner of its own to carry the check below.
+        rejectStrandedMapValues(
+                "The declared type " + declaredType.getTypeName(),
+                InputPolicyMetadataResolver.mapValueClasses(declaredType));
+
+        while (!pending.isEmpty()) {
+            Class<?> owner = pending.poll();
+            if (!visited.add(owner)) {
+                continue;
+            }
+            // Metadata is resolved for every reachable class regardless of what follows below — that
+            // is what keeps genuine startup conflict detection (two Java properties of THIS class
+            // claiming one wire name) intact for the whole graph. Only the resolver warm-up is
+            // conditional: a class whose own metadata declares no fields can never be the target of
+            // InputTraversalContext#logicalFieldName (DefaultInputObjectProcessor.processMap's
+            // schemaFree branch skips the projection whenever metadata.fields() is empty — see the
+            // class javadoc), so precomputing its Jackson projection is pure dead weight that can only
+            // ever fail, never help: a projection collision on a class that is never dispatched against
+            // would reject a valid application at startup for a wire-key lookup no execution path can
+            // ever perform.
+            InputPolicyMetadata metadata = metadataResolver.resolve(owner);
+            if (!isPlatformType(owner)) {
+                // Both shapes strand a declared policy without any schema-free dispatch the gates
+                // below would notice, so they run for every walked owner, whatever its field count.
+                checkMapValues(owner, resolver);
+                checkPolymorphicSubtypes(owner, metadata, resolver, metadataResolver, pending);
+            }
+            if (!metadata.fields().isEmpty()) {
+                resolver.precompute(owner);
+                checkGovernedFieldsAreBound(owner, metadata, resolver);
+                checkPromotedFields(owner, metadata, resolver, metadataResolver, dispatcher);
+            }
+            if (!InputPolicyMetadataResolver.isDescendableObject(owner) || isPlatformType(owner)) {
+                continue;
+            }
+            Set<Class<?>> declared = declaredOwnerTypes(owner, dispatcher);
+            if (!declared.isEmpty()) {
+                // The generated path answers for itself: it dispatches against what it was emitted to
+                // dispatch against, so its set replaces — never supplements — the reflective one. Each
+                // entry still goes through the frontier, so the descent rule bounds it like any other.
+                for (Class<?> declaredOwner : declared) {
+                    enqueue(pending, declaredOwner);
+                }
+                continue;
+            }
+            for (FieldPolicyMetadata field : metadata.fields().values()) {
+                // Both, never one or the other: the engine dispatches a nested fragment against the
+                // field's raw declared type and each element of a collection fragment against the
+                // element type, and the two are independently reachable from the same field. The raw
+                // declared type is skipped for a string-typed field alone: DefaultInputObjectProcessor
+                // dispatches String.class only on a wire/declared shape mismatch (never in the field's
+                // own normal path, which handles the value directly). Recording it anyway would still
+                // resolve harmlessly under the fields()-emptiness gate above — String's own metadata
+                // carries no declared fields either — but skipping the enqueue keeps the mismatch
+                // family out of the reachable graph entirely rather than relying on that gate a second
+                // time.
+                if (!field.isStringType()) {
+                    enqueue(pending, field.fieldType());
+                }
+                enqueue(pending, field.collectionElementType());
+            }
+        }
+    }
+
+    /**
+     * Fails startup for a {@code Map}-typed property whose statically known value type declares an
+     * input policy.
+     *
+     * <p>A map has no statically known property set, so the engine processes its entries against
+     * empty metadata: the value type's own {@code @Canonicalize} and {@code @Sanitize}, on the type
+     * or on its fields, never run. Only the chains the entries inherit reach them, which is
+     * indistinguishable from a working policy until the value that mattered gets through. A map
+     * whose value type declares nothing — {@code Map<String, String>}, {@code Map<String, Object>},
+     * a raw {@code Map}, or a typed value that declares no chain — loses nothing and is accepted.
+     *
+     * <p>The only property skipped is a {@code transient} field the codec provably does not bind (see
+     * {@link #isNeverBound}); any other unbound property is refused, like an unbound governed field in
+     * {@link #checkGovernedFieldsAreBound}, because the codec may still fill it through an accessor of
+     * another name.
+     *
+     * @param owner    the walked class whose declared properties are inspected
+     * @param resolver the codec projection, consulted for which properties it binds
+     * @throws ConfigurationException when a property binds a policy-declaring class behind a
+     *                                {@code Map}
+     */
+    private static void checkMapValues(Class<?> owner, InputFieldNameResolver resolver) {
+        for (Map.Entry<String, Set<Class<?>>> property :
+                InputPolicyMetadataResolver.mapValueClassesByProperty(owner).entrySet()) {
+            boolean governed = false;
+            for (Class<?> value : property.getValue()) {
+                governed |= InputObjectProcessor.declaresPolicies(value);
+            }
+            // Asked only once a policy is actually at stake: enumerating what the codec binds composes
+            // its projection, which a walked class that is never projected against must not be made to.
+            if (governed && !isNeverBound(owner, property.getKey(), resolver)) {
+                rejectStrandedMapValues(
+                        "Property '" + property.getKey() + "' of " + owner.getName(), property.getValue());
+            }
+        }
+    }
+
+    /**
+     * Reports whether {@code property} is provably never written by the codec: a {@code transient}
+     * field that no property of that name binds. Anything weaker is not proof — a field the codec
+     * binds through an accessor of another name is absent from the bound names yet still filled — so
+     * an unbound property that is not {@code transient} is treated as bound, as the engine treats a
+     * resolver that cannot enumerate.
+     *
+     * @param owner    the walked class
+     * @param property the Java property name
+     * @param resolver the codec projection
+     * @return {@code true} only when the property is {@code transient} and not among the bound names
+     */
+    private static boolean isNeverBound(Class<?> owner, String property, InputFieldNameResolver resolver) {
+        if (!isTransientField(owner, property)) {
+            return false;
+        }
+        Set<String> bound = resolver.boundJavaNames(owner);
+        return bound != null && !bound.contains(property);
+    }
+
+    private static boolean isTransientField(Class<?> owner, String name) {
+        for (Class<?> cls = owner; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+            for (java.lang.reflect.Field field : cls.getDeclaredFields()) {
+                if (field.getName().equals(name) && !field.isSynthetic()) {
+                    return java.lang.reflect.Modifier.isTransient(field.getModifiers());
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Throws when any of {@code values} declares an input policy somewhere in its type graph.
+     *
+     * @param site   how to name the offending declaration in the message
+     * @param values the descendable classes bound as {@code Map} values at {@code site}
+     * @throws ConfigurationException when one of {@code values} declares a canonicalizer or sanitizer
+     */
+    private static void rejectStrandedMapValues(String site, Set<Class<?>> values) {
+        for (Class<?> value : values) {
+            if (InputObjectProcessor.declaresPolicies(value)) {
+                throw new ConfigurationException(site + " holds " + value.getName() + " as a Map value, and that type"
+                        + " declares input policies. A Map has no statically known property set, so its entries"
+                        + " are processed without them and the declared canonicalizers and sanitizers would"
+                        + " silently never run. Replace the Map with a typed object (or a list of typed"
+                        + " objects), or move the policies onto the Map-typed property itself, where they reach"
+                        + " every string inside it.");
+            }
+        }
+    }
+
+    /**
+     * Fails startup for a polymorphic base whose subtype declares an input policy the base does not.
+     *
+     * <p>The engine resolves metadata from the declared type and never inspects the runtime subtype
+     * the codec selects, so a chain or skip that only a subtype carries is never applied to that
+     * subtype's data. Whether the codec can bind a subtype is the codec's knowledge and arrives
+     * through {@link InputFieldNameResolver#polymorphicSubtypes}. A subtype that merely inherits the
+     * base's own declarations loses nothing and is accepted; only a declaration the base's metadata
+     * does not already carry is stranded.
+     *
+     * @param owner            the walked class, possibly a polymorphic base
+     * @param base             {@code owner}'s resolved metadata
+     * @param resolver         the codec projection that knows the subtypes
+     * @param metadataResolver the engine's metadata resolver
+     * @param pending          the walk's frontier, to which each accepted subtype is added
+     * @throws ConfigurationException when a subtype declares policy the base does not
+     */
+    private static void checkPolymorphicSubtypes(
+            Class<?> owner,
+            InputPolicyMetadata base,
+            InputFieldNameResolver resolver,
+            InputPolicyMetadataResolver metadataResolver,
+            Deque<Class<?>> pending) {
+        for (Class<?> subtype : resolver.polymorphicSubtypes(owner)) {
+            if (subtype == owner || !owner.isAssignableFrom(subtype)) {
+                continue;
+            }
+            String stranded = strandedDeclaration(base, metadataResolver.resolve(subtype), metadataResolver);
+            if (stranded != null) {
+                throw new ConfigurationException("Type " + owner.getName() + " is a polymorphic base the codec can bind"
+                        + " as " + subtype.getName() + ", which declares " + stranded + " that "
+                        + owner.getName() + " does not. Policy metadata is resolved from the declared type, so"
+                        + " those canonicalizers and sanitizers would silently never run on a "
+                        + subtype.getSimpleName() + " value. Declare the policy on " + owner.getName()
+                        + ", or declare the field with the concrete subtype.");
+            }
+            // The subtype is a real owner the codec binds: walk it so a polymorphic base or a Map
+            // reachable only through it is checked like any other.
+            enqueue(pending, subtype);
+        }
+    }
+
+    /**
+     * Describes the first policy {@code subtype} declares that {@code base}'s metadata does not
+     * carry, or returns {@code null} when the base already covers everything the subtype declares.
+     *
+     * <p>Compared per declaration: type-level chains and skips, then a {@code Map} property only the
+     * subtype declares, then each field the subtype records. A field the base records identically is covered; a field with a different chain or
+     * skip, or one the base lacks, is stranded when it declares policy itself or holds a type whose
+     * graph does.
+     *
+     * @param base             the declared type's metadata
+     * @param subtype          the subtype's metadata
+     * @param metadataResolver the engine's metadata resolver
+     * @return a short description of the stranded declaration, or {@code null} when none
+     */
+    @Nullable
+    private static String strandedDeclaration(
+            InputPolicyMetadata base, InputPolicyMetadata subtype, InputPolicyMetadataResolver metadataResolver) {
+        if (!subtype.objectCanonicalizerChain().isEmpty()
+                && !subtype.objectCanonicalizerChain().equals(base.objectCanonicalizerChain())) {
+            return "a type-level @Canonicalize";
+        }
+        if (!subtype.objectSanitizerChain().isEmpty()
+                && !subtype.objectSanitizerChain().equals(base.objectSanitizerChain())) {
+            return "a type-level @Sanitize";
+        }
+        if (subtype.skipCanonicalization() && !base.skipCanonicalization()) {
+            return "a type-level @SkipCanonicalization";
+        }
+        if (subtype.skipSanitization() && !base.skipSanitization()) {
+            return "a type-level @SkipSanitization";
+        }
+        Set<String> baseMaps = InputPolicyMetadataResolver.mapValueClassesByProperty(
+                        Objects.requireNonNull(base.ownerType()))
+                .keySet();
+        for (Map.Entry<String, Set<Class<?>>> property : InputPolicyMetadataResolver.mapValueClassesByProperty(
+                        Objects.requireNonNull(subtype.ownerType()))
+                .entrySet()) {
+            if (baseMaps.contains(property.getKey())) {
+                continue;
+            }
+            for (Class<?> value : property.getValue()) {
+                if (InputObjectProcessor.declaresPolicies(value)) {
+                    return "policies on " + value.getName() + ", held as a Map value by '" + property.getKey() + "',";
+                }
+            }
+        }
+        for (FieldPolicyMetadata field : subtype.fields().values()) {
+            FieldPolicyMetadata inherited = base.fields().get(field.fieldName());
+            if (inherited != null && sameDeclaration(field, inherited)) {
+                continue;
+            }
+            if (carriesChains(field) || field.skipCanonicalization() || field.skipSanitization()) {
+                return "a policy on the field '" + field.fieldName() + "'";
+            }
+            Class<?> nested = field.collectionElementType() != null ? field.collectionElementType() : field.fieldType();
+            if (!field.isStringType()
+                    && InputPolicyMetadataResolver.isDescendableObject(nested)
+                    && InputObjectProcessor.declaresPolicies(nested)) {
+                return "policies on " + nested.getName() + ", held by the field '" + field.fieldName() + "',";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reports whether two field records declare the same policy and bind the same type.
+     *
+     * @param a one field's metadata
+     * @param b the other field's metadata
+     * @return {@code true} when chains, skips and the bound type agree
+     */
+    private static boolean sameDeclaration(FieldPolicyMetadata a, FieldPolicyMetadata b) {
+        return a.canonicalizerChain().equals(b.canonicalizerChain())
+                && a.sanitizerChain().equals(b.sanitizerChain())
+                && a.skipCanonicalization() == b.skipCanonicalization()
+                && a.skipSanitization() == b.skipSanitization()
+                && a.fieldType() == b.fieldType()
+                && Objects.equals(a.collectionElementType(), b.collectionElementType());
+    }
+
+    /**
+     * Fails startup for a field carrying a declared chain that the codec binds no wire key into.
+     *
+     * <p>This engine keys per-field metadata on the Java field name; a codec keys its binding on the
+     * property name it derives from the members it finds. The two agree for a field, a record
+     * component, or the accessor pair a field's name implies, and diverge for an accessor or creator
+     * parameter whose implicit name differs from the field it writes — {@code setStreet} writing
+     * {@code streetName}. Neither side can derive that mapping, so the projection would resolve the
+     * wire key to a name this metadata has no entry for, and the field's declared chain would
+     * silently never run. An ignored or transient field the codec never binds is the same shape.
+     * The projection enumerates what its codec binds; a field with a chain outside that set is
+     * refused here, naming the type, the field, and what the codec does bind.
+     *
+     * <p>A resolver that cannot enumerate — {@link InputFieldNameResolver#IDENTITY}, whose keys are
+     * already Java names — returns {@code null} and is trusted. Only fields carrying a chain are
+     * checked: a skip flag on an unbound field suppresses nothing that would otherwise run.
+     *
+     * @throws ConfigurationException when a field carrying a chain is not among the names the codec
+     *                                binds into
+     */
+    private static void checkGovernedFieldsAreBound(
+            Class<?> owner, InputPolicyMetadata metadata, InputFieldNameResolver resolver) {
+        Set<String> bound = resolver.boundJavaNames(owner);
+        if (bound == null) {
+            return;
+        }
+        Set<String> unroutable = resolver.unroutableWireNames(owner);
+        boolean governed = false;
+        for (FieldPolicyMetadata field : metadata.fields().values()) {
+            if (!carriesChains(field)) {
+                continue;
+            }
+            governed = true;
+            if (bound.contains(field.fieldName())) {
+                continue;
+            }
+            throw new ConfigurationException("Type " + owner.getName() + " declares input policies on the Java"
+                    + " property '" + field.fieldName() + "', but the codec binds no wire key into a property of"
+                    + " that name — it binds " + new TreeSet<>(bound) + ". The declared canonicalizers"
+                    + " and sanitizers would silently never run. Name the field after the property the codec"
+                    + " binds (an accessor setStreet binds 'street'), or declare the field so the codec binds"
+                    + " it directly.");
+        }
+        if (governed && !unroutable.isEmpty()) {
+            // A creator parameter the codec cannot tie to a field may write ANY field, including a
+            // governed one, and nothing here can tell which. Undecidable is refused, not trusted.
+            throw new ConfigurationException("Type " + owner.getName() + " binds the wire key(s) "
+                    + new TreeSet<>(unroutable) + " through a creator parameter the codec cannot tie to a Java"
+                    + " field, and declares input policies on its fields. Whether a policy governs the field the"
+                    + " parameter writes cannot be decided, so the declared canonicalizers and sanitizers could"
+                    + " silently never run. Name the parameter after the field it writes (with an explicit"
+                    + " @JsonProperty naming the field, or parameter-name support), or give the field the same"
+                    + " @JsonProperty name as the parameter so the codec links them.");
+        }
+    }
+
+    /**
+     * Resolves {@code owner}'s promoted keys and fails startup for any the engine cannot route
+     * where routing would change what runs.
+     *
+     * <p>A codec can promote a nested member's fields into the enclosing object — Jackson's
+     * {@code @JsonUnwrapped} — so they arrive as keys of {@code owner} while their declared policies
+     * live on the inner type. Routing such a key means descending each enclosing member on its
+     * {@link PromotedField#enclosingPath() path} and then applying the declaring type's policies.
+     * Whether that changes anything is decidable here: it does when the declaring type or anything
+     * reachable from it declares a chain, when the declaring type or the promoted field carries a
+     * skip, or when an enclosing member carries a chain or a skip.
+     * A promoted key for which nothing would change is accepted as is — the default treatment
+     * applies exactly the chains routing would.
+     *
+     * <p>Where routing matters, two things can make it impossible, and both fail startup rather
+     * than pass silently. A <strong>generated</strong> processor cannot route at all: its
+     * field-name {@code switch} is emitted from the owner's declared fields, so a promoted key falls
+     * to the {@code default} branch and receives only the inherited chains. And the reflective
+     * walker can route only a path it can descend: every enclosing member must be a field this
+     * metadata tracks, and the type the path lands on must be the type the projection promotes
+     * from — a generic member the projection resolved but this metadata sees erased is the shape
+     * that fails the second condition.
+     *
+     * <p>Resolving each declaring type here also warms its metadata, so the reflective path's
+     * promoted lookup never resolves a type for the first time on the request path.
+     *
+     * @throws ConfigurationException when a promoted key whose routing would apply a policy is
+     *                                served by a generated processor, or has a path the reflective
+     *                                walker cannot descend
+     */
+    private static void checkPromotedFields(
+            Class<?> owner,
+            InputPolicyMetadata metadata,
+            InputFieldNameResolver resolver,
+            InputPolicyMetadataResolver metadataResolver,
+            GeneratedInputProcessorDispatcher dispatcher) {
+        Map<String, PromotedField> promoted = resolver.promotedFields(owner);
+        if (promoted.isEmpty()) {
+            return;
+        }
+        boolean generated = dispatcher.resolve(owner).isPresent();
+        for (Map.Entry<String, PromotedField> entry : promoted.entrySet()) {
+            PromotedField field = entry.getValue();
+            String site = field.declaringType().getName() + "." + field.fieldName();
+            // Descend the path exactly as the request path will, collecting whether any enclosing
+            // member would contribute a chain or a skip on the way down.
+            InputPolicyMetadata level = metadata;
+            boolean pathContributes = false;
+            boolean reachable = true;
+            for (String enclosing : field.enclosingPath()) {
+                FieldPolicyMetadata enclosingMeta = level.fields().get(enclosing);
+                if (enclosingMeta == null) {
+                    reachable = false;
+                    break;
+                }
+                pathContributes |= carriesChains(enclosingMeta)
+                        || enclosingMeta.skipCanonicalization()
+                        || enclosingMeta.skipSanitization();
+                level = metadataResolver.resolve(enclosingMeta.fieldType());
+            }
+            // Skips are not policies, so declaresPolicies does not see them — but routing honors a
+            // skip on the declaring type or the promoted field where the default treatment would
+            // apply the owner's inherited chain, so a skip changes what runs just as a chain does.
+            InputPolicyMetadata declaring = metadataResolver.resolve(field.declaringType());
+            FieldPolicyMetadata own = declaring.fields().get(field.fieldName());
+            boolean declaringSkips = declaring.skipCanonicalization()
+                    || declaring.skipSanitization()
+                    || (own != null && (own.skipCanonicalization() || own.skipSanitization()));
+            boolean matters =
+                    pathContributes || declaringSkips || InputObjectProcessor.declaresPolicies(field.declaringType());
+            if (!matters) {
+                continue;
+            }
+            if (generated) {
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '" + entry.getKey()
+                        + "' out of " + site + ", whose routing would apply declared input policies, but "
+                        + owner.getName() + " is processed by a generated input processor whose field-name"
+                        + " switch is emitted from its own declared fields. The policies would silently never"
+                        + " run. Declare the member as a named nested property instead of promoting it, or"
+                        + " move the policies onto " + owner.getName() + ".");
+            }
+            if (!reachable) {
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '" + entry.getKey()
+                        + "' out of " + site + " through the members " + field.enclosingPath()
+                        + ", but this engine tracks no field on that path, so the policies routing the key"
+                        + " would apply could silently never run. Declare each member on the path as a field"
+                        + " this engine can descend, or declare the member as a named nested property instead"
+                        + " of promoting it.");
+            }
+            if (level.ownerType() != field.declaringType()) {
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '" + entry.getKey()
+                        + "' out of " + site + ", but descending " + field.enclosingPath() + " lands this"
+                        + " engine on " + level.ownerType().getName() + " rather than "
+                        + field.declaringType().getName() + " — a generic member the codec resolved but the"
+                        + " declared field type erases. The policies declared on "
+                        + field.declaringType().getName()
+                        + " would silently never run. Declare the member with its concrete type.");
+            }
+        }
+    }
+
+    /**
+     * Reports whether a field's metadata carries any declared chain of its own.
+     *
+     * @param meta the field metadata to test
+     * @return {@code true} when the field declares a canonicalizer or sanitizer chain
+     */
+    private static boolean carriesChains(FieldPolicyMetadata meta) {
+        return !meta.canonicalizerChain().isEmpty() || !meta.sanitizerChain().isEmpty();
+    }
+
+    /**
+     * Returns the owner set a generated processor declares for {@code owner}, or an empty set when
+     * the reflective contributions apply — either because no generated processor exists, or because
+     * the one that does declares no owner set.
+     *
+     * <p>The two empty outcomes are deliberately reported differently. No processor at all is the
+     * ordinary reflective case and is silent; a processor that returns an empty set is a
+     * hand-written or previously-generated class predating the owner-set contract, and is logged at
+     * debug naming the class, so a stale generated processor on the classpath is diagnosable rather
+     * than silent.
+     *
+     * @param owner      the frontier class
+     * @param dispatcher the engine's own dispatcher
+     * @return the declared owner types, or an empty set to fall back to the reflective walk
+     */
+    private static Set<Class<?>> declaredOwnerTypes(Class<?> owner, GeneratedInputProcessorDispatcher dispatcher) {
+        // A Broken lookup — a generated class that exists but cannot be instantiated — propagates
+        // deliberately: that is a build defect, and failing at registration is correct.
+        Optional<? extends GeneratedInputProcessor<?>> generated = dispatcher.resolve(owner);
+        if (generated.isEmpty()) {
+            return Set.of();
+        }
+        Set<Class<?>> declared = generated.get().fieldNameOwnerTypes();
+        if (declared.isEmpty()) {
+            log.debug(
+                    "Generated input processor {} declares no field-name owner types for {}; "
+                            + "falling back to the reflective owner walk for this type",
+                    generated.get().getClass().getName(),
+                    owner.getName());
+        }
+        return declared;
+    }
+
+    /**
+     * Adds {@code type} to the frontier when it is a class at all. The caller decides whether
+     * {@code type} is a legitimate field-name owner before calling this — see the seed and per-field
+     * exclusions in {@link #prepare}.
+     *
+     * @param pending the traversal queue
+     * @param type    the candidate owner; may be {@code null}
+     */
+    private static void enqueue(Deque<Class<?>> pending, @Nullable Class<?> type) {
+        if (type != null) {
+            pending.add(type);
+        }
+    }
+
+    /**
+     * Returns whether {@code type} is the wire-array shape — a {@link Collection} or an array —
+     * the same test {@code InputPolicyMetadataResolver.buildFieldMeta} applies before deciding
+     * whether a field carries an element schema.
+     *
+     * @param type the candidate class
+     * @return {@code true} for a {@link Collection} implementation or an array class
+     */
+    private static boolean isCollectionOrArray(Class<?> type) {
+        return Collection.class.isAssignableFrom(type) || type.isArray();
+    }
+
+    /**
+     * Returns whether {@code type} belongs to the Java platform, whose declared fields the walk does
+     * not descend into.
+     *
+     * @param type the candidate owner
+     * @return {@code true} for a {@code java.*} class
+     */
+    private static boolean isPlatformType(Class<?> type) {
+        return isPlatformType(type.getName());
+    }
+
+    /**
+     * Returns whether {@code binaryName} belongs to the Java platform (the JDK itself, not the wider
+     * {@code javax.*}/{@code jakarta.*} namespaces, which carry ordinary third-party and
+     * application-owned types).
+     *
+     * <p>The bound is {@code java.*} only, and only because a JDK class's generic containers erase to
+     * {@code Object} or to platform interfaces, so a JDK class cannot yield an application type
+     * through a declared field. That argument does not extend to {@code javax.*} or {@code
+     * jakarta.*}: both namespaces hold ordinary classes with ordinary declared fields, including
+     * application DTOs, so skipping their descent would leave a reachable owner unprepared.
+     *
+     * @param binaryName the candidate owner's binary name, as returned by {@link Class#getName()}
+     * @return {@code true} for a {@code java.*} binary name
+     */
+    static boolean isPlatformType(String binaryName) {
+        return binaryName.startsWith("java.");
+    }
+}

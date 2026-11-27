@@ -238,7 +238,7 @@ class AnnotationCollectorTest {
      * makes argument 0 accidentally right; {@code Fixed<T> extends ArrayList<String>} makes it wrong
      * even at arity one — the element Jackson binds is {@code String}, never the declared argument;
      * {@code Weird<A, B> extends ArrayList<B>} makes it outright wrong. The reflective
-     * {@code TypeClassifier.elementType} in {@code vertique-input-processing} resolves the same
+     * {@code TypeClassifier.elementType} in {@code vertique-sanitization} resolves the same
      * three shapes the same way, so the generated and reflective paths classify them identically.
      */
     @Nested

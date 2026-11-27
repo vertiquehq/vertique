@@ -14,12 +14,6 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputObjectProcessor;
-import dev.vertique.input.processing.InvocationPolicyResolver;
-import dev.vertique.input.processing.InvocationPolicySource;
-import dev.vertique.input.processing.PolicyAxis;
-import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionException;
@@ -34,6 +28,12 @@ import dev.vertique.rest.jaxrs.runtime.FormFieldEntityPart;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsBeanParamModel;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsBeanParamRegistry;
 import dev.vertique.rest.jaxrs.runtime.VertxFileUploadEntityPart;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.InvocationPolicyResolver;
+import dev.vertique.sanitization.processing.InvocationPolicySource;
+import dev.vertique.sanitization.processing.PolicyAxis;
+import dev.vertique.sanitization.processing.ReflectiveInvocationPolicies;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
@@ -1602,7 +1602,7 @@ final class ParameterExtractor {
      * @param fields        the bean's fields in declaration order
      * @param routePolicies the route-level baseline each field's chains fall back to
      * @return policies indexed by field position
-     * @throws dev.vertique.input.processing.InvocationPolicyConflictException if a field declares an
+     * @throws dev.vertique.sanitization.processing.InvocationPolicyConflictException if a field declares an
      *     additive and a skip annotation on the same axis
      */
     private static EffectiveInputPolicies[] resolveBeanFieldPolicies(

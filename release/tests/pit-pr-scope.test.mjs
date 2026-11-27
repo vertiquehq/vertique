@@ -151,10 +151,10 @@ describe('selectTargets', () => {
 
   it('pins the pilot allowlist', () => {
     assert.deepEqual(PILOT_MODULES, [
-      'vertique-input-processing',
       'vertique-json-schema',
       'vertique-resilience',
       'vertique-rest/vertique-rest-security',
+      'vertique-sanitization',
     ]);
   });
 

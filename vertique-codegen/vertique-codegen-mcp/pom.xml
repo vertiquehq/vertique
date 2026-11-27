@@ -50,11 +50,12 @@ SPDX-License-Identifier: EUPL-1.2
 
         <!-- McpInputPolicyResolver derives route/parameter input-policy chains
              through apt.ElementInvocationPolicies, the shared compile-time adapter this module
-             publishes; no cycle (input-processing depends only on core/jakarta.annotation/slf4j),
+             publishes; no cycle (vertique-sanitization depends only on core, Dagger, jakarta.inject,
+             jakarta.annotation and slf4j),
              mirrors vertique-codegen-jaxrs/pom.xml's identical dependency. -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
         </dependency>
 
         <!-- JavaPoet for code generation -->
@@ -96,13 +97,13 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Test: input-policy matrix stubs (A/B/C/K, ComposedSanitize) provided in-reactor (not
-             published) by vertique-input-processing's own test-jar (dev.vertique.input.processing.testkit) — shape
+             published) by vertique-sanitization's own test-jar (dev.vertique.sanitization.processing.testkit) — shape
              mirrors vertique-codegen-jaxrs/pom.xml's identical dependency (the main-artifact dependency
              above stays compile-scope non-test-jar; this is a distinct test-jar artifact of the same
              module). -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>

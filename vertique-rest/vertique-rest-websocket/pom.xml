@@ -39,7 +39,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
@@ -84,11 +84,6 @@ SPDX-License-Identifier: EUPL-1.2
 
         <!-- Test -->
         <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-sanitization</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
             <!-- Test-scope only: the service-gate integration test registers a policy-protected service
                  behind an endpoint. The edge is acyclic: vertique-services depends on neither
                  vertique-rest nor vertique-rest-websocket. -->
@@ -98,7 +93,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>

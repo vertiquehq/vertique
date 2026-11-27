@@ -3,10 +3,10 @@
 
 package dev.vertique.rest.jaxrs.runtime;
 
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.context.RestContextUnavailableException;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 

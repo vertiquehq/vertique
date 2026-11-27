@@ -42,7 +42,7 @@ import java.util.Set;
  * is no object whose fields could be renamed.
  *
  * <p>The projection has two consumers. The input-processing engine's traversal context
- * ({@code dev.vertique.input.processing.InputTraversalContext#logicalFieldName(Class, String)})
+ * ({@code dev.vertique.sanitization.processing.InputTraversalContext#logicalFieldName(Class, String)})
  * resolves each intermediate key before looking its policies up. The JSON pointer resolver
  * ({@code dev.vertique.json.JakartaPathPointers}) may read {@link #logicalName},
  * {@link #boundJavaNames}, {@link #promotedFields} and {@link #polymorphicSubtypes} on the error path,

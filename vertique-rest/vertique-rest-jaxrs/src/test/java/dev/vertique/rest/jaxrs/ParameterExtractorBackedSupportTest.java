@@ -15,13 +15,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.context.RestContextResolver;
 import dev.vertique.rest.core.context.RestContextUnavailableException;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;

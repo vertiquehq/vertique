@@ -20,13 +20,13 @@ import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.ChainResolver;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.GeneratedInputProcessor;
-import dev.vertique.input.processing.GeneratedInputProcessorDispatcher;
-import dev.vertique.input.processing.InputObjectProcessor;
-import dev.vertique.input.processing.InputTraversalContext;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+import dev.vertique.sanitization.processing.ChainResolver;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.GeneratedInputProcessor;
+import dev.vertique.sanitization.processing.GeneratedInputProcessorDispatcher;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.InputTraversalContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -668,7 +668,7 @@ class SanitizationProcessorRoundtripTest {
                         public Object continueAt(
                                 Object inter,
                                 Class<?> type,
-                                dev.vertique.input.processing.InputTraversalContext ctx,
+                                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                                 InputLocation location,
                                 String fieldPath,
                                 Class<?> ownerType) {
@@ -678,7 +678,7 @@ class SanitizationProcessorRoundtripTest {
                         @Override
                         public Object walkUnknown(
                                 Object inter,
-                                dev.vertique.input.processing.InputTraversalContext ctx,
+                                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                                 InputLocation location,
                                 String fieldPath,
                                 Class<?> ownerType) {
@@ -1158,7 +1158,7 @@ class SanitizationProcessorRoundtripTest {
         public Object continueAt(
                 Object intermediate,
                 Class<?> targetType,
-                dev.vertique.input.processing.InputTraversalContext ctx,
+                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                 InputLocation location,
                 String fieldPath,
                 Class<?> ownerType) {
@@ -1168,7 +1168,7 @@ class SanitizationProcessorRoundtripTest {
         @Override
         public Object walkUnknown(
                 Object intermediate,
-                dev.vertique.input.processing.InputTraversalContext ctx,
+                dev.vertique.sanitization.processing.InputTraversalContext ctx,
                 InputLocation location,
                 String fieldPath,
                 Class<?> ownerType) {

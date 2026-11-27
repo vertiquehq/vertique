@@ -100,7 +100,8 @@ the same fatal value.
 ## Input Sanitization
 
 [`vertique-sanitization`](vertique-sanitization/src/main/resources/META-INF/vertique/module.md)
-provides the built-in canonicalizers, the control-character sanitizer and `SanitizationModule`.
+provides the input-processing engine, the built-in canonicalizers, the control-character sanitizer
+and `SanitizationModule`.
 The four HTML sanitizers ship separately in
 [`vertique-sanitization-html`](vertique-sanitization-html/src/main/resources/META-INF/vertique/module.md),
 so applications that sanitize no HTML do not carry the OWASP library.

@@ -5,8 +5,8 @@ package dev.vertique.codegen.mcp;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.input.processing.PolicyAxis;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios;
+import dev.vertique.sanitization.processing.PolicyAxis;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -86,7 +86,7 @@ class McpInvocationPolicyMatrixTest {
 
                 import dev.vertique.core.sanitization.Sanitize;
                 import dev.vertique.core.sanitization.SkipSanitization;
-                import dev.vertique.input.processing.testkit.B;
+                import dev.vertique.sanitization.processing.testkit.B;
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
                 import jakarta.inject.Inject;
@@ -122,7 +122,7 @@ class McpInvocationPolicyMatrixTest {
 
                 import dev.vertique.core.sanitization.Sanitize;
                 import dev.vertique.core.sanitization.SkipSanitization;
-                import dev.vertique.input.processing.testkit.C;
+                import dev.vertique.sanitization.processing.testkit.C;
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
                 import jakarta.inject.Inject;
@@ -155,7 +155,7 @@ class McpInvocationPolicyMatrixTest {
                         package dev.vertique.test.mcp.overrideskipconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.B;
 
                         public interface IFoo {
                             @Sanitize(B.class)
@@ -208,7 +208,7 @@ class McpInvocationPolicyMatrixTest {
                         package dev.vertique.test.mcp.supertypeskipconflict;
 
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -272,7 +272,7 @@ class McpInvocationPolicyMatrixTest {
                         package dev.vertique.test.mcp.typechain;
 
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -293,7 +293,7 @@ class McpInvocationPolicyMatrixTest {
                         package dev.vertique.test.mcp.methodchain;
 
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -314,8 +314,8 @@ class McpInvocationPolicyMatrixTest {
                         package dev.vertique.test.mcp.methodoverridestype;
 
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -338,7 +338,7 @@ class McpInvocationPolicyMatrixTest {
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -380,8 +380,8 @@ class McpInvocationPolicyMatrixTest {
                         package dev.vertique.test.mcp.parameteroverridestype;
 
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.A;
-                        import dev.vertique.input.processing.testkit.C;
+                        import dev.vertique.sanitization.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.C;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -405,7 +405,7 @@ class McpInvocationPolicyMatrixTest {
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.A;
+                        import dev.vertique.sanitization.processing.testkit.A;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -432,7 +432,7 @@ class McpInvocationPolicyMatrixTest {
                                         package dev.vertique.test.mcp.interfacemethodchain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.B;
+                                        import dev.vertique.sanitization.processing.testkit.B;
 
                                         public interface InterfaceMethodChainIface {
                                             @Sanitize(B.class)
@@ -471,7 +471,7 @@ class McpInvocationPolicyMatrixTest {
                                         package dev.vertique.test.mcp.superclasstypechain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.A;
+                                        import dev.vertique.sanitization.processing.testkit.A;
 
                                         @Sanitize(A.class)
                                         public class SuperclassTypeChainBase {
@@ -504,7 +504,7 @@ class McpInvocationPolicyMatrixTest {
                 row("composed-annotation", List.of(), List.of("B"), """
                         package dev.vertique.test.mcp.composedannotation;
 
-                        import dev.vertique.input.processing.testkit.ComposedSanitize;
+                        import dev.vertique.sanitization.processing.testkit.ComposedSanitize;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -530,7 +530,7 @@ class McpInvocationPolicyMatrixTest {
                                         package dev.vertique.test.mcp.interfaceparameterchain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.C;
+                                        import dev.vertique.sanitization.processing.testkit.C;
 
                                         public interface InterfaceParameterChainIface {
                                             String bar(@Sanitize(C.class) String p);
@@ -565,8 +565,8 @@ class McpInvocationPolicyMatrixTest {
 
                         import dev.vertique.core.sanitization.Canonicalize;
                         import dev.vertique.core.sanitization.Sanitize;
-                        import dev.vertique.input.processing.testkit.B;
-                        import dev.vertique.input.processing.testkit.K;
+                        import dev.vertique.sanitization.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.K;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.annotation.McpToolParam;
                         import jakarta.inject.Inject;
@@ -603,7 +603,7 @@ class McpInvocationPolicyMatrixTest {
                                         package dev.vertique.test.mcp.interfacemethodskip;
 
                                         import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.A;
+                                        import dev.vertique.sanitization.processing.testkit.A;
                                         import dev.vertique.mcp.annotation.McpTool;
                                         import dev.vertique.mcp.annotation.McpToolParam;
                                         import jakarta.inject.Inject;
@@ -634,7 +634,7 @@ class McpInvocationPolicyMatrixTest {
                                         package dev.vertique.test.mcp.overridereplaceschain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.B;
+                                        import dev.vertique.sanitization.processing.testkit.B;
 
                                         public class OverrideReplacesChainBase {
                                             public OverrideReplacesChainBase() {}
@@ -650,7 +650,7 @@ class McpInvocationPolicyMatrixTest {
                                         package dev.vertique.test.mcp.overridereplaceschain;
 
                                         import dev.vertique.core.sanitization.Sanitize;
-                                        import dev.vertique.input.processing.testkit.A;
+                                        import dev.vertique.sanitization.processing.testkit.A;
                                         import dev.vertique.mcp.annotation.McpTool;
                                         import dev.vertique.mcp.annotation.McpToolParam;
                                         import jakarta.inject.Inject;
@@ -744,7 +744,7 @@ class McpInvocationPolicyMatrixTest {
      * #mcpToolParameterMetadataStub()}, {@link #mcpToolRuntimeFactoryStub()}, {@link
      * #mcpToolRuntimeStub()}). Unlike {@code McpToolProcessorCompileTest}'s equivalent helper, no
      * {@code InputObjectProcessor}/{@code EffectiveInputPolicies} stub is needed:
-     * {@code vertique-input-processing} is a real compile-scope dependency of this module, so both
+     * {@code vertique-sanitization} is a real compile-scope dependency of this module, so both
      * types are already on the classpath.
      *
      * @param sources the fixture sources; must not be empty

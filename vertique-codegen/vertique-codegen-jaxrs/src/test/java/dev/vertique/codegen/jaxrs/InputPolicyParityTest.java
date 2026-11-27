@@ -18,8 +18,8 @@ import org.junit.jupiter.api.Test;
  * are present on resource classes and methods.
  *
  * <p>The compile-time algorithm in {@link dev.vertique.codegen.jaxrs.EffectiveJaxRsContractResolver}
- * (via {@link dev.vertique.input.processing.apt.ElementInvocationPolicies}) must produce the same
- * chain as the runtime resolver, {@link dev.vertique.input.processing.ReflectiveInvocationPolicies}.
+ * (via {@link dev.vertique.sanitization.processing.apt.ElementInvocationPolicies}) must produce the same
+ * chain as the runtime resolver, {@link dev.vertique.sanitization.processing.ReflectiveInvocationPolicies}.
  * The runtime-side verification is performed by {@code InputPolicyRuntimeParityTest} in the
  * {@code vertique-rest-jaxrs} module.
  *

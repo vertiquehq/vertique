@@ -14,9 +14,9 @@
  * types only when their subtree carries sanitization annotations.
  *
  * <p>Generated processors implement
- * {@link dev.vertique.input.processing.GeneratedInputProcessor} and live in the same package
+ * {@link dev.vertique.sanitization.processing.GeneratedInputProcessor} and live in the same package
  * as the source DTO. The runtime
- * {@link dev.vertique.input.processing.GeneratedInputProcessorDispatcher} resolves them via
+ * {@link dev.vertique.sanitization.processing.GeneratedInputProcessorDispatcher} resolves them via
  * {@link Class#forName} on the consuming type's classloader, with
  * {@link ClassNotFoundException} as the only cached miss; broken generated classes propagate.
  *

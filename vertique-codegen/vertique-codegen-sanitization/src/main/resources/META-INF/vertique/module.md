@@ -8,9 +8,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.sanitization.processor`
 > **Artifact:** `vertique-codegen-sanitization`
-> **Depends on:** `vertique-codegen-core`, `vertique-input-processing`, `vertique-rest-core` (compile)
+> **Depends on:** `vertique-codegen-core`, `vertique-sanitization`, `vertique-rest-core` (compile)
 
-`vertique-codegen-sanitization` is an annotation processor that generates `{DTO}_InputProcessor` walker classes for REST request body DTOs whose type tree carries `@Sanitize` or `@Canonicalize` annotations. The generated walkers replace the reflective `Map`/`List` traversal of the neutral input processing engine in `vertique-input-processing` with a direct field-name `switch` and pre-composed per-field chain constants, eliminating per-call metadata lookup and `descend()` allocation on the hot path.
+`vertique-codegen-sanitization` is an annotation processor that generates `{DTO}_InputProcessor` walker classes for REST request body DTOs whose type tree carries `@Sanitize` or `@Canonicalize` annotations. The generated walkers replace the reflective `Map`/`List` traversal of the neutral input processing engine in `vertique-sanitization` with a direct field-name `switch` and pre-composed per-field chain constants, eliminating per-call metadata lookup and `descend()` allocation on the hot path.
 
 Discovery is anchored on HTTP-verb methods (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`, `@HEAD`, `@OPTIONS`) of `@Path`-annotated resource classes in the current compilation unit. The emitted set is the **transitive closure** of participating DTO types reachable from those roots, down to a nesting depth of ten levels below a root; a nested type at or beyond that depth is reported with a compiler warning and its subtree is handled by the reflective path. No Dagger module is emitted — runtime registration self-populates via classloader lookup (`Class.forName`), mirroring `BeanParamAccessorRegistry`. The `@BindsOptionalOf InputObjectProcessor` wiring and the `SanitizationModule` binding are unchanged.
 
@@ -98,9 +98,9 @@ Without this normalization `Optional` would classify as a nested DTO and emit `d
 
 ---
 
-## Runtime SPI Types (in `vertique-input-processing`)
+## Runtime SPI Types (in `vertique-sanitization`)
 
-The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`). All of them except `GeneratedInputProcessorDispatcher`, which is INTERNAL (see its section), are the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
+The following types live in `dev.vertique.sanitization.processing` (artifact `vertique-sanitization`). All of them except `GeneratedInputProcessorDispatcher`, which is INTERNAL (see its section), are the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
 
 One type the emitted source references is **not** in that package: `InputFieldNameResolver` — the wire → Java property-name projection — is declared in `dev.vertique.core.sanitization` (artifact `vertique-core`) beside `InputLocation`, `Canonicalizer` and `Sanitizer`, and the emitter imports it from there.
 
@@ -217,7 +217,7 @@ Lookup checks explicit `register(...)` entries first, then a `ClassValue` cache.
 
 ### `GeneratedSupport`
 
-Public class with public static helpers imported via `import static` in generated code. Public visibility is required because generated processors live in application DTO packages (e.g., `com.example.dto`), not `dev.vertique.input.processing`.
+Public class with public static helpers imported via `import static` in generated code. Public visibility is required because generated processors live in application DTO packages (e.g., `com.example.dto`), not `dev.vertique.sanitization.processing`.
 
 | Method | Description |
 |--------|-------------|
@@ -227,7 +227,7 @@ Public class with public static helpers imported via `import static` in generate
 | `applyDefault(...)` | Default-arm handler for unknown keys and annotated `OTHER`-kind fields: composes inherited + object + field chains for strings, resumes the reflective walker (`walkUnknown`) for nested maps/lists, passes other scalars through |
 | `childPath(String, String)` | Build `parent.field` dotted path string for `InputValueContext` |
 
-`GeneratedSupport` is documented as a **stable SPI**: its helper signatures must not change in a way that breaks already-emitted `_InputProcessor` bytecode without a major version bump of `vertique-input-processing`.
+`GeneratedSupport` is documented as a **stable SPI**: its helper signatures must not change in a way that breaks already-emitted `_InputProcessor` bytecode without a major version bump of `vertique-sanitization`.
 
 ---
 
@@ -297,12 +297,12 @@ None. `vertique-codegen-sanitization` is a compile-time annotation processor wit
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers` |
-| `vertique-input-processing` | compile | Runtime types the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher` (INTERNAL), `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
+| `vertique-sanitization` | compile | Runtime types the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher` (INTERNAL), `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
 | `vertique-core` | compile (transitive) | `InputLocation`, `Canonicalizer`, `Sanitizer`, and `InputFieldNameResolver` — the sanitization vocabulary the emitted source imports |
 | `vertique-rest-core` | compile | REST-rooted discovery: `RestBodyDiscovery` uses `RestContextTypes` and the `RequestPreconditions`/`RequestParams` FQNs to classify resource-method parameters |
 | `com.palantir.javapoet:javapoet` | compile | Source generation (not on runtime classpath) |
 
-Test-only dependencies: `vertique-codegen-test` (compilation harness), `vertique-sanitization` (built-in canonicalizers/sanitizers for fixtures), `jakarta.ws.rs-api` (resource fixtures).
+Test-only dependencies: `vertique-codegen-test` (compilation harness), `jakarta.ws.rs-api` (resource fixtures).
 
 ---
 

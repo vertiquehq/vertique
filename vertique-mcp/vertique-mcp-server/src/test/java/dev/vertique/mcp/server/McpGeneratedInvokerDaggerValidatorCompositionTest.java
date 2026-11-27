@@ -338,7 +338,7 @@ class McpGeneratedInvokerDaggerValidatorCompositionTest {
                 import dagger.Module;
                 import dagger.Provides;
                 import dev.vertique.core.json.JsonMapperProfileRegistry;
-                import dev.vertique.input.processing.InputObjectProcessor;
+                import dev.vertique.sanitization.processing.InputObjectProcessor;
                 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
                 import dev.vertique.json.JsonConfig;
                 import dev.vertique.mcp.server.McpServerConfig;

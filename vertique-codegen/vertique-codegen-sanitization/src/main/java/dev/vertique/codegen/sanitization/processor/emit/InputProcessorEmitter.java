@@ -19,6 +19,12 @@ import dev.vertique.codegen.sanitization.processor.scan.FieldModel;
 import dev.vertique.codegen.sanitization.processor.scan.FieldModel.FieldKind;
 import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
+import dev.vertique.sanitization.processing.ChainResolver;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.GeneratedInputProcessor;
+import dev.vertique.sanitization.processing.GeneratedInputProcessorDispatcher;
+import dev.vertique.sanitization.processing.GeneratedSupport;
+import dev.vertique.sanitization.processing.InputTraversalContext;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -64,7 +70,7 @@ import javax.lang.model.type.TypeMirror;
  * </ul>
  *
  * <p>The emitted code shape matches the hand-written companions in
- * {@code vertique-input-processing}'s test tree ({@code dev.vertique.input.processing}). The
+ * {@code vertique-sanitization}'s test tree ({@code dev.vertique.sanitization.processing}). The
  * reference for the projected-switch shape above is
  * {@code GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor}, and every other
  * companion now mirrors it. Keep them in step when this emitter changes: a companion that switches
@@ -75,16 +81,12 @@ public final class InputProcessorEmitter {
 
     // --- Well-known type names ---
 
-    private static final ClassName GENERATED_INPUT_PROCESSOR =
-            ClassName.get("dev.vertique.input.processing", "GeneratedInputProcessor");
-    private static final ClassName EFFECTIVE_INPUT_POLICIES =
-            ClassName.get("dev.vertique.input.processing", "EffectiveInputPolicies");
+    private static final ClassName GENERATED_INPUT_PROCESSOR = ClassName.get(GeneratedInputProcessor.class);
+    private static final ClassName EFFECTIVE_INPUT_POLICIES = ClassName.get(EffectiveInputPolicies.class);
     private static final ClassName INPUT_LOCATION = ClassName.get("dev.vertique.core.sanitization", "InputLocation");
-    private static final ClassName CHAIN_RESOLVER = ClassName.get("dev.vertique.input.processing", "ChainResolver");
-    private static final ClassName DISPATCHER =
-            ClassName.get("dev.vertique.input.processing", "GeneratedInputProcessorDispatcher");
-    private static final ClassName INPUT_TRAVERSAL_CONTEXT =
-            ClassName.get("dev.vertique.input.processing", "InputTraversalContext");
+    private static final ClassName CHAIN_RESOLVER = ClassName.get(ChainResolver.class);
+    private static final ClassName DISPATCHER = ClassName.get(GeneratedInputProcessorDispatcher.class);
+    private static final ClassName INPUT_TRAVERSAL_CONTEXT = ClassName.get(InputTraversalContext.class);
     private static final ClassName INPUT_FIELD_NAME_RESOLVER =
             ClassName.get("dev.vertique.core.sanitization", "InputFieldNameResolver");
     private static final ClassName CANONICALIZER = ClassName.get("dev.vertique.core.sanitization", "Canonicalizer");
@@ -100,8 +102,7 @@ public final class InputProcessorEmitter {
     private static final String OWNER_TYPES_FIELD = "FIELD_NAME_OWNER_TYPES";
 
     // GeneratedSupport static import target
-    private static final ClassName GENERATED_SUPPORT =
-            ClassName.get("dev.vertique.input.processing", "GeneratedSupport");
+    private static final ClassName GENERATED_SUPPORT = ClassName.get(GeneratedSupport.class);
     private static final String APPLY_STRING = "applyString";
     private static final String APPLY_STRING_COLLECTION = "applyStringCollection";
     private static final String DISPATCH_OBJECT_COLLECTION = "dispatchObjectCollection";
@@ -325,7 +326,7 @@ public final class InputProcessorEmitter {
      * {@code InputValueContext} owner for the reflective continuation
      * ({@code dispatcher.walkUnknown}), which walks with {@code InputPolicyMetadata.EMPTY} — a
      * schema-free traversal that never projects a wire key against it (see
-     * {@code dev.vertique.input.processing.OwnerTypeWalk} for the matching reflective-side rule).
+     * {@code dev.vertique.sanitization.processing.OwnerTypeWalk} for the matching reflective-side rule).
      * An unannotated {@link FieldKind#OTHER} field gets no arm at all and likewise contributes
      * nothing. Deduplication happens here as well as in the emitted body: a
      * {@link java.util.LinkedHashSet} of {@link TypeName} keeps the generated source stable and

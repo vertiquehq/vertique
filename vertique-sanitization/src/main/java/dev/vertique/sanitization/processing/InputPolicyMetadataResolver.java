@@ -1,0 +1,602 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.sanitization.processing;
+
+import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.sanitization.Canonicalize;
+import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.Sanitize;
+import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.core.sanitization.SkipCanonicalization;
+import dev.vertique.core.sanitization.SkipSanitization;
+import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
+import jakarta.annotation.Nullable;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Resolves and caches {@link InputPolicyMetadata} for target types by reflecting on
+ * {@code @Canonicalize}, {@code @Sanitize}, {@code @SkipCanonicalization}, and
+ * {@code @SkipSanitization} annotations.
+ *
+ * <p>Conflict detection: if both {@code @Canonicalize} and {@code @SkipCanonicalization} are
+ * declared on the same element (or both {@code @Sanitize} and {@code @SkipSanitization}),
+ * a {@link ConfigurationException} is thrown at resolution time.
+ *
+ * <p><strong>Resolution is per type and non-recursive.</strong> The returned metadata describes
+ * only {@code targetType}'s own fields; a field that holds a nested object records that field's
+ * declared {@link Class}, and {@link DefaultInputObjectProcessor} calls {@link #resolve} again for
+ * that class when it descends into the value. There is consequently no cycle state and no depth
+ * budget: a self-referential type resolves once and applies at every level, direct and mutual
+ * recursion behave identically, and a policy declared behind any number of policy-free
+ * <em>descendable</em> links is still found. Traversal terminates on the finite intermediate data
+ * instead.
+ *
+ * <p><strong>Not every link is descendable.</strong> {@link #isDescendableObject} excludes scalar
+ * leaves, {@link Object} and {@link Map}, because none carries a statically known property set to
+ * key per-property metadata on. A policy declared <em>beyond</em> such a link is therefore not
+ * found, however shallow the graph: a chain on {@code Inner}'s field is invisible across a
+ * {@code Map<String, Inner>} or {@code Object} field, and a subtype's own chains are invisible
+ * because descent follows the declared type rather than the runtime one. Values behind those links
+ * still receive the chains they inherit — they simply contribute no declared metadata of their own.
+ * The two shapes whose stranded policy can be named statically are refused at registration by
+ * {@link OwnerTypeWalk} instead of being skipped in silence: {@link #mapValueClassesByProperty} finds
+ * the declared class behind a {@code Map}, and the codec's
+ * {@link dev.vertique.core.sanitization.InputFieldNameResolver#polymorphicSubtypes} supplies a
+ * polymorphic base's subtypes. {@link #declaresPolicies} follows the same links as the walker, plus a
+ * {@code Map}'s statically known value class, so a policy that is only stranded still counts as
+ * declared and the transport cannot boot without an engine over it.
+ *
+ * <p>Field classification runs through {@link TypeClassifier}, the single rule set this module also
+ * applies to {@link DefaultInputObjectProcessor}'s entry-point target type: {@code java.util.Optional}
+ * layers are stripped and bounded type arguments are normalized to their upper bound before a
+ * field's shape is decided, so {@code Optional<NestedDto>}, {@code Optional<? extends NestedDto>}
+ * and {@code List<? extends NestedDto>} all classify against {@code NestedDto}. See
+ * {@link #buildFieldMeta} for the shape rules built on top; the APT-time
+ * {@code AnnotationCollector} in {@code vertique-codegen-sanitization} applies the same rules so
+ * the generated and reflective paths agree.
+ *
+ * <p>Thread-safe: metadata is computed once per type and cached via {@link ConcurrentHashMap}.
+ */
+class InputPolicyMetadataResolver {
+
+    private final Map<Class<?>, InputPolicyMetadata> cache = new ConcurrentHashMap<>();
+
+    /**
+     * Resolves {@link InputPolicyMetadata} for the given type, using a cached result if available.
+     *
+     * @param targetType the type to inspect
+     * @return the resolved (and cached) metadata; never {@code null}
+     * @throws ConfigurationException if conflicting annotations are detected on the same element
+     */
+    public InputPolicyMetadata resolve(Class<?> targetType) {
+        return cache.computeIfAbsent(targetType, this::resolveInternal);
+    }
+
+    /**
+     * Answers {@link InputObjectProcessor#declaresPolicies(Type)}: whether any type reachable from
+     * {@code targetType} declares a canonicalizer or sanitizer chain.
+     *
+     * <p>Walks the declared type graph breadth-first with a visited set, using a throw-away resolver
+     * so no {@link Class} is retained past the call — this is a startup-time query, not a request-path
+     * one. Descent follows exactly the links {@link #buildFieldMeta} records: a field's declared type
+     * when it carries a property set, and a collection or array field's element type. Skip flags
+     * declare nothing to run and are therefore not policies.
+     *
+     * @param targetType the entry-point type; must not be {@code null}
+     * @return {@code true} if a declared chain exists anywhere in the reachable graph
+     */
+    static boolean declaresPolicies(Type targetType) {
+        InputPolicyMetadataResolver resolver = new InputPolicyMetadataResolver();
+        Deque<Class<?>> pending = new ArrayDeque<>();
+        Set<Class<?>> visited = new HashSet<>();
+        enqueueDescendable(pending, TypeClassifier.classify(targetType));
+        // A collection or array entry point carries its policies on the element type, not the container.
+        enqueueDescendable(pending, TypeClassifier.elementType(targetType));
+        // A Map entry point carries them on its value type, which the engine never applies — but a
+        // declared policy there is exactly what the startup gate must not report as absent.
+        mapValueClasses(targetType).forEach(value -> enqueueDescendable(pending, value));
+
+        while (!pending.isEmpty()) {
+            Class<?> type = pending.poll();
+            if (!visited.add(type)) {
+                continue;
+            }
+            InputPolicyMetadata metadata = resolver.resolve(type);
+            if (!metadata.objectCanonicalizerChain().isEmpty()
+                    || !metadata.objectSanitizerChain().isEmpty()) {
+                return true;
+            }
+            for (FieldPolicyMetadata field : metadata.fields().values()) {
+                if (!field.canonicalizerChain().isEmpty()
+                        || !field.sanitizerChain().isEmpty()) {
+                    return true;
+                }
+                if (field.collectionElementType() != null) {
+                    enqueueDescendable(pending, field.collectionElementType());
+                } else {
+                    enqueueDescendable(pending, field.fieldType());
+                }
+            }
+            // A Map-typed property is usually absent from the metadata above (an unannotated one is
+            // not recorded), so its value classes come from the declared property types instead.
+            if (!OwnerTypeWalk.isPlatformType(type.getName())) {
+                for (Set<Class<?>> values : mapValueClassesByProperty(type).values()) {
+                    values.forEach(value -> enqueueDescendable(pending, value));
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Adds {@code type} to the traversal queue when it carries a property set worth resolving.
+     *
+     * @param pending the traversal queue
+     * @param type    the candidate type; may be {@code null}
+     */
+    private static void enqueueDescendable(Deque<Class<?>> pending, @Nullable Class<?> type) {
+        if (type != null && type != String.class && isDescendableObject(type)) {
+            pending.add(type);
+        }
+    }
+
+    /**
+     * The descendable classes {@code type} binds as <em>values of a {@link Map}</em>, at any depth of
+     * container nesting: {@code Map<String, Dto>}, {@code Map<String, List<Dto>>},
+     * {@code List<Map<String, Dto>>}, {@code Optional<Map<String, Map<String, Dto>>>} and a
+     * {@code Map} subtype that fixes its value type all yield {@code Dto}.
+     *
+     * <p>These are the classes whose own declared policies the engine cannot apply: a map has no
+     * statically known property set, so {@link #isDescendableObject} refuses the link and the entries
+     * are processed against {@link InputPolicyMetadata#EMPTY}. Scalar leaves, {@link Object}, wildcards
+     * that resolve to {@code Object} and a raw {@code Map} yield nothing — there is no declared
+     * class behind them to carry a policy.
+     *
+     * @param type the declared type; may be {@code null}
+     * @return the descendable classes bound behind a {@code Map}, in declaration order; never
+     *         {@code null}
+     */
+    static Set<Class<?>> mapValueClasses(@Nullable Type type) {
+        Set<Class<?>> values = new LinkedHashSet<>();
+        collectMapValues(type, false, 0, values);
+        return values;
+    }
+
+    /**
+     * Applies {@link #mapValueClasses} to every instance property {@code owner} declares, keyed by
+     * property name so a refusal can name the offending field.
+     *
+     * <p>The property set matches {@link #resolveFields}: instance fields up the class hierarchy
+     * (a subclass shadows a superclass field of the same name) or a record's components, never a
+     * static or synthetic field. It reads the declared types directly rather than the resolved
+     * metadata because an unannotated {@code Map} field is not recorded there.
+     *
+     * @param owner the class whose properties to inspect
+     * @return property name to the descendable classes bound behind a {@code Map} on it; properties
+     *         with none are absent
+     */
+    static Map<String, Set<Class<?>>> mapValueClassesByProperty(Class<?> owner) {
+        Map<String, Type> properties = new LinkedHashMap<>();
+        if (owner.isRecord()) {
+            for (RecordComponent component : owner.getRecordComponents()) {
+                properties.put(component.getName(), component.getGenericType());
+            }
+        } else {
+            for (Class<?> cls = owner; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+                for (Field field : cls.getDeclaredFields()) {
+                    if (field.isSynthetic() || Modifier.isStatic(field.getModifiers())) continue;
+                    properties.putIfAbsent(field.getName(), field.getGenericType());
+                }
+            }
+        }
+        Map<String, Set<Class<?>>> result = new LinkedHashMap<>();
+        properties.forEach((name, type) -> {
+            Set<Class<?>> values = mapValueClasses(type);
+            if (!values.isEmpty()) {
+                result.put(name, values);
+            }
+        });
+        return result;
+    }
+
+    /**
+     * Maximum container nesting {@link #collectMapValues} follows. Real shapes nest two or three
+     * levels; the bound exists so a self-referential container such as
+     * {@code class Tree extends HashMap<String, Tree>} terminates instead of recursing forever.
+     */
+    private static final int MAX_CONTAINER_DEPTH = 16;
+
+    /**
+     * Walks container nesting one level at a time, recording a descendable class once a
+     * {@link Map} has been crossed.
+     *
+     * @param type      the type at this level; may be {@code null}
+     * @param insideMap whether a {@code Map} was crossed on the way here
+     * @param depth     container levels followed so far
+     * @param out       the accumulating result
+     */
+    private static void collectMapValues(@Nullable Type type, boolean insideMap, int depth, Set<Class<?>> out) {
+        Type normalized = TypeClassifier.normalize(type);
+        if (normalized == null || depth > MAX_CONTAINER_DEPTH) {
+            return;
+        }
+        Class<?> raw = TypeClassifier.rawClassOf(normalized);
+        Type entry = TypeClassifier.entryBinding(normalized);
+        if (entry != null) {
+            boolean crossesMap = raw != null && Map.class.isAssignableFrom(raw);
+            collectMapValues(entry, insideMap || crossesMap, depth + 1, out);
+            return;
+        }
+        if (insideMap && raw != null && raw != String.class && isDescendableObject(raw)) {
+            out.add(raw);
+        }
+    }
+
+    /**
+     * Resolves one type's own metadata. Never recurses into nested types, so this is safe to run
+     * inside {@link ConcurrentHashMap#computeIfAbsent} and terminates on any type graph.
+     *
+     * @param type the type being resolved
+     * @return the resolved metadata for {@code type} alone
+     */
+    private InputPolicyMetadata resolveInternal(Class<?> type) {
+        // --- Type-level annotations ---
+        Canonicalize typeCanonicalize = AnnotationResolver.findMetaAnnotation(type, Canonicalize.class);
+        Sanitize typeSanitize = AnnotationResolver.findMetaAnnotation(type, Sanitize.class);
+        SkipCanonicalization typeSkipCanon = AnnotationResolver.findMetaAnnotation(type, SkipCanonicalization.class);
+        SkipSanitization typeSkipSanit = AnnotationResolver.findMetaAnnotation(type, SkipSanitization.class);
+
+        if (typeCanonicalize != null && typeSkipCanon != null) {
+            throw new ConfigurationException(
+                    "Type " + type.getName() + " has both @Canonicalize and @SkipCanonicalization — "
+                            + "these annotations are mutually exclusive.");
+        }
+        if (typeSanitize != null && typeSkipSanit != null) {
+            throw new ConfigurationException("Type " + type.getName() + " has both @Sanitize and @SkipSanitization — "
+                    + "these annotations are mutually exclusive.");
+        }
+
+        List<Class<? extends Canonicalizer>> objectCanonChain =
+                typeCanonicalize != null ? Arrays.asList(typeCanonicalize.value()) : List.of();
+        List<Class<? extends Sanitizer>> objectSanitChain =
+                typeSanitize != null ? Arrays.asList(typeSanitize.value()) : List.of();
+        boolean skipCanon = typeSkipCanon != null;
+        boolean skipSanit = typeSkipSanit != null;
+
+        // --- Field/component-level annotations ---
+        Map<String, FieldPolicyMetadata> fields = resolveFields(type);
+
+        return new InputPolicyMetadata(type, objectCanonChain, objectSanitChain, skipCanon, skipSanit, fields);
+    }
+
+    /**
+     * Resolves per-field metadata for the given type, supporting both regular classes (via
+     * {@link Field}) and records (via {@link RecordComponent}).
+     *
+     * <p><strong>Only instance properties are resolved.</strong> Static and synthetic fields are
+     * skipped: neither is part of the type's wire shape, so recording one would make the walker —
+     * and {@link #declaresPolicies} with it — reason about a type no request path can reach. A
+     * Lombok {@code @Slf4j} {@code log} field or a static helper would otherwise let an unrelated
+     * type's graph trip the startup gate, and a non-static inner class's synthetic {@code this$0}
+     * would point metadata back at the enclosing class under a crafted wire key. Records need no
+     * such filter — {@link Class#getRecordComponents()} reports only the declared components.
+     *
+     * @param type the type whose fields to inspect
+     * @return a map of field name to {@link FieldPolicyMetadata}
+     */
+    private Map<String, FieldPolicyMetadata> resolveFields(Class<?> type) {
+        Map<String, FieldPolicyMetadata> result = new LinkedHashMap<>();
+
+        if (type.isRecord()) {
+            for (RecordComponent component : type.getRecordComponents()) {
+                FieldPolicyMetadata meta = resolveRecordComponent(component);
+                if (meta != null) {
+                    result.put(component.getName(), meta);
+                }
+            }
+        } else {
+            // Walk all declared fields up the hierarchy
+            for (Class<?> cls = type; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+                for (Field field : cls.getDeclaredFields()) {
+                    if (field.isSynthetic() || Modifier.isStatic(field.getModifiers())) continue;
+                    if (result.containsKey(field.getName())) continue; // subclass overrides
+                    FieldPolicyMetadata meta = resolveField(field);
+                    if (meta != null) {
+                        result.put(field.getName(), meta);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Resolves metadata for a single {@link Field}, returning {@code null} if the field type
+     * is a primitive, boxed primitive, or otherwise not worth tracking.
+     *
+     * @param field the field to inspect
+     * @return metadata, or {@code null} if the field needs no processing
+     */
+    private FieldPolicyMetadata resolveField(Field field) {
+        Canonicalize canon = AnnotationResolver.findMetaAnnotation(field, Canonicalize.class);
+        Sanitize sanit = AnnotationResolver.findMetaAnnotation(field, Sanitize.class);
+        SkipCanonicalization skipCanon = AnnotationResolver.findMetaAnnotation(field, SkipCanonicalization.class);
+        SkipSanitization skipSanit = AnnotationResolver.findMetaAnnotation(field, SkipSanitization.class);
+
+        checkConflicts(field.getDeclaringClass().getName() + "#" + field.getName(), canon, skipCanon, sanit, skipSanit);
+
+        return buildFieldMeta(
+                field.getName(),
+                field.getGenericType(),
+                field.getType(),
+                canon,
+                sanit,
+                skipCanon != null,
+                skipSanit != null);
+    }
+
+    /**
+     * Resolves metadata for a single {@link RecordComponent}, returning {@code null} if the
+     * component type does not need processing. Checks both the component and its accessor method
+     * for annotations.
+     *
+     * @param component the record component to inspect
+     * @return metadata, or {@code null} if the component needs no processing
+     */
+    private FieldPolicyMetadata resolveRecordComponent(RecordComponent component) {
+        Canonicalize canon = getAnnotation(component, Canonicalize.class);
+        Sanitize sanit = getAnnotation(component, Sanitize.class);
+        SkipCanonicalization skipCanon = getAnnotation(component, SkipCanonicalization.class);
+        SkipSanitization skipSanit = getAnnotation(component, SkipSanitization.class);
+
+        checkConflicts(
+                component.getDeclaringRecord().getName() + "#" + component.getName(),
+                canon,
+                skipCanon,
+                sanit,
+                skipSanit);
+
+        return buildFieldMeta(
+                component.getName(),
+                component.getGenericType(),
+                component.getType(),
+                canon,
+                sanit,
+                skipCanon != null,
+                skipSanit != null);
+    }
+
+    /**
+     * Builds {@link FieldPolicyMetadata} based on the field's type and annotation state.
+     * Returns {@code null} for types that do not need processing (primitives, boxed types,
+     * and non-container non-string types without annotations or skip flags).
+     *
+     * <p>A field whose declared type is a <em>descendable object</em> (see
+     * {@link #isDescendableObject}) always yields metadata carrying that declared type, even when
+     * neither the field nor the type declares any policy. That is what lets the walker descend
+     * through policy-free links and still find a policy declared further down; dropping such a
+     * field would strand the whole subtree on {@link InputPolicyMetadata#EMPTY}.
+     *
+     * <p>{@code java.util.Optional<T>} is <em>transparent</em> here: the intermediate wire value of
+     * an {@code Optional<T>} field is the unwrapped {@code T} (Jackson's {@code Jdk8Module}
+     * serializes the payload, not the wrapper), so the field is classified by {@code T}. Without
+     * this normalization, {@code Optional<NestedDto>} would classify against {@code Optional}
+     * itself and the nested DTO's own chains would never run. A raw {@code Optional} has no type
+     * argument to classify against and falls back to the no-schema branch.
+     *
+     * <p>Bounded type arguments are normalized to their upper bound by
+     * {@link TypeClassifier#normalize} first, so {@code Optional<? extends NestedDto>} and
+     * {@code Optional<T extends NestedDto>} classify against {@code NestedDto} — the type javac
+     * writes into the erased signature and therefore the type Jackson binds. {@code Optional<?>} and
+     * {@code Optional<? super X>} normalize to {@code java.lang.Object} and stay unclassified. These
+     * rules are symmetric with the APT-time {@code AnnotationCollector} in
+     * {@code vertique-codegen-sanitization}.
+     *
+     * <p><strong>Arrays classify as collections.</strong> {@code NestedDto[]} and
+     * {@code List<NestedDto>} arrive as the same JSON array and carry the same element schema, so an
+     * array field records its component type as the collection element type and its elements are
+     * descended into element-wise. An array whose component type is itself an array or carries no
+     * schema takes the no-element-schema branch, where inherited chains still reach string leaves.
+     *
+     * <p><strong>Only a descendable element type is recorded.</strong> An element type that is a
+     * scalar leaf — see {@link TypeClassifier#isScalarLeaf} — takes the no-element-schema branch
+     * instead, exactly as {@link #isDescendableObject} excludes those types from a field-type
+     * descent. Recording one would send the list into element-wise dispatch, where a JSON-string
+     * value (an enum name, or a number Jackson coerces from a string) matches no nested-object shape
+     * and is returned untouched, silently dropping every declared chain. The
+     * APT-time {@code AnnotationCollector} applies the same rule through
+     * {@code isScalarOrEnum}, so the generated and reflective paths agree.
+     *
+     * @param fieldName   the Java property name; recorded on the metadata so the field's
+     *                    declaration site can be named without threading the map key
+     * @param genericType the full generic type of the field
+     * @param rawType     the raw (erased) class of the field
+     * @param canon       {@code @Canonicalize} annotation, or {@code null}
+     * @param sanit       {@code @Sanitize} annotation, or {@code null}
+     * @param skipCanon   whether {@code @SkipCanonicalization} is present
+     * @param skipSanit   whether {@code @SkipSanitization} is present
+     * @return field metadata, or {@code null}
+     */
+    private FieldPolicyMetadata buildFieldMeta(
+            String fieldName,
+            Type genericType,
+            Class<?> rawType,
+            Canonicalize canon,
+            Sanitize sanit,
+            boolean skipCanon,
+            boolean skipSanit) {
+
+        List<Class<? extends Canonicalizer>> canonChain = canon != null ? Arrays.asList(canon.value()) : List.of();
+        List<Class<? extends Sanitizer>> sanitChain = sanit != null ? Arrays.asList(sanit.value()) : List.of();
+
+        boolean hasAnnotations = !canonChain.isEmpty() || !sanitChain.isEmpty() || skipCanon || skipSanit;
+
+        // Optional<T> wrapper — classify by the wrapped type (see method javadoc).
+        if (rawType == Optional.class) {
+            Type wrapped = TypeClassifier.normalize(genericType);
+            Class<?> wrappedRaw = TypeClassifier.rawClassOf(wrapped);
+            if (wrappedRaw == null || wrappedRaw == Optional.class) {
+                // Raw Optional (or a type argument that does not resolve to a class) — nothing to
+                // classify against.
+                return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+            }
+            return buildFieldMeta(fieldName, wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit);
+        }
+
+        // String field
+        if (rawType == String.class) {
+            return new FieldPolicyMetadata(
+                    fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, true, false, null);
+        }
+
+        // Collection and array types — both arrive as a JSON array on the wire and carry exactly
+        // one element schema, so they classify through one branch.
+        if (Collection.class.isAssignableFrom(rawType) || rawType.isArray()) {
+            Class<?> elementType = TypeClassifier.elementType(genericType);
+            if (elementType == null) {
+                // Raw collection, or an element type with no schema — can't determine element type
+                return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+            }
+            if (elementType == String.class) {
+                return new FieldPolicyMetadata(
+                        fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, true, null);
+            }
+            // Collection or array of objects — record the element type; its metadata is resolved at
+            // descent. An enum element is excluded for the same reason isDescendableObject excludes
+            // an enum field type: it carries no property set to descend into, so recording it would
+            // route the list into element-wise dispatch, where a JSON-string enum value is neither a
+            // map nor a list and is returned verbatim with no chain applied.
+            if (!TypeClassifier.isScalarLeaf(elementType)) {
+                return new FieldPolicyMetadata(
+                        fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, elementType);
+            }
+            return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+        }
+
+        // Nested object — record the declared type unconditionally so the walker can descend into
+        // it and resolve its own metadata, even across links that declare no policy themselves.
+        if (isDescendableObject(rawType)) {
+            return new FieldPolicyMetadata(
+                    fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
+        }
+
+        // Primitives / enums / Object / Map / etc. — no statically known property set.
+        return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+    }
+
+    /**
+     * Builds the metadata for a field that carries no element or nested schema — the shape every
+     * non-descendable branch of {@link #buildFieldMeta} produces. Such a field is only worth
+     * recording when it declares policy of its own; otherwise the walker has nothing to do with it
+     * and it is left out of the metadata entirely.
+     *
+     * @param fieldName      the Java property name, recorded so the declaration site can be named
+     * @param canonChain     the declared canonicalizer chain, possibly empty
+     * @param sanitChain     the declared sanitizer chain, possibly empty
+     * @param skipCanon      whether {@code @SkipCanonicalization} is present
+     * @param skipSanit      whether {@code @SkipSanitization} is present
+     * @param rawType        the raw (erased) class of the field
+     * @param hasAnnotations whether the field declares any policy of its own
+     * @return the schema-free field metadata, or {@code null} when the field declares no policy
+     */
+    private static FieldPolicyMetadata schemaFree(
+            String fieldName,
+            List<Class<? extends Canonicalizer>> canonChain,
+            List<Class<? extends Sanitizer>> sanitChain,
+            boolean skipCanon,
+            boolean skipSanit,
+            Class<?> rawType,
+            boolean hasAnnotations) {
+        return hasAnnotations
+                ? new FieldPolicyMetadata(
+                        fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null)
+                : null;
+    }
+
+    /**
+     * Returns {@code true} when a field of this declared type carries a statically known property
+     * set the walker can descend into and resolve metadata for.
+     *
+     * <p>Excluded, each because it has no such property set and must keep the walker's
+     * inherited-chain-only handling: scalar leaves — primitives, boxed/scalar JDK types and enums,
+     * see {@link TypeClassifier#isScalarLeaf} — plus {@link Object} and {@link Map} (arbitrary
+     * keys). Arrays are excluded here too, but only defensively: {@link #buildFieldMeta} routes them
+     * through the {@link Collection} branch before this test is reached, because element traversal
+     * is a collection concern.
+     *
+     * <p>Package-private rather than private because {@link OwnerTypeWalk} must decide descent by
+     * exactly this rule: the owner set it publishes is only correct if it stops where the walker
+     * stops, and a second copy of the predicate is precisely the duplicated-classification defect
+     * that walk exists to remove.
+     *
+     * @param type the declared field type
+     * @return {@code true} if the walker should resolve {@code type}'s own metadata at descent
+     */
+    static boolean isDescendableObject(Class<?> type) {
+        return !TypeClassifier.isScalarLeaf(type)
+                && type != Object.class
+                && !type.isArray()
+                && !Map.class.isAssignableFrom(type);
+    }
+
+    // --- Annotation helpers ---
+
+    /**
+     * Retrieves an annotation from a record component, falling back to the accessor method.
+     * Supports meta-annotations (composed annotations) via {@link AnnotationResolver}.
+     *
+     * @param <A>            the annotation type
+     * @param component      the record component
+     * @param annotationType the annotation class
+     * @return the annotation instance, or {@code null} if absent on both the component and accessor
+     */
+    private static <A extends Annotation> A getAnnotation(RecordComponent component, Class<A> annotationType) {
+        A ann = AnnotationResolver.findMetaAnnotation(component, annotationType);
+        if (ann != null) return ann;
+        return AnnotationResolver.findMetaAnnotation(component.getAccessor(), annotationType);
+    }
+
+    /**
+     * Throws {@link ConfigurationException} if conflicting annotations are detected.
+     *
+     * @param location  human-readable location string for the error message
+     * @param canon     {@code @Canonicalize} or {@code null}
+     * @param skipCanon {@code @SkipCanonicalization} or {@code null}
+     * @param sanit     {@code @Sanitize} or {@code null}
+     * @param skipSanit {@code @SkipSanitization} or {@code null}
+     */
+    private static void checkConflicts(
+            String location,
+            Canonicalize canon,
+            SkipCanonicalization skipCanon,
+            Sanitize sanit,
+            SkipSanitization skipSanit) {
+        if (canon != null && skipCanon != null) {
+            throw new ConfigurationException(location + " has both @Canonicalize and @SkipCanonicalization — "
+                    + "these annotations are mutually exclusive.");
+        }
+        if (sanit != null && skipSanit != null) {
+            throw new ConfigurationException(location + " has both @Sanitize and @SkipSanitization — "
+                    + "these annotations are mutually exclusive.");
+        }
+    }
+}

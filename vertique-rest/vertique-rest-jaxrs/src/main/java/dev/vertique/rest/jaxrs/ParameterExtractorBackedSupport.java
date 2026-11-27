@@ -3,11 +3,11 @@
 
 package dev.vertique.rest.jaxrs;
 
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 import java.util.List;

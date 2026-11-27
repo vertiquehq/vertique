@@ -31,7 +31,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
@@ -47,11 +47,6 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Test -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-sanitization</artifactId>
-            <scope>test</scope>
-        </dependency>
         <!-- The Swagger reader and the framework's OpenAPI extensions, the build-time side of the security
              parity test. -->
         <dependency>
@@ -75,7 +70,7 @@ SPDX-License-Identifier: EUPL-1.2
              consumed identically by vertique-mcp-server so both transports read the same artifact. -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-input-processing</artifactId>
+            <artifactId>vertique-sanitization</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>

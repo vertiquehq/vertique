@@ -15,18 +15,18 @@ import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.SkipSanitization;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputObjectProcessor;
-import dev.vertique.input.processing.InvocationPolicyConflictException;
-import dev.vertique.input.processing.PolicyAxis;
-import dev.vertique.input.processing.testkit.A;
-import dev.vertique.input.processing.testkit.B;
-import dev.vertique.input.processing.testkit.C;
-import dev.vertique.input.processing.testkit.ComposedSanitize;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Outcome;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Row;
-import dev.vertique.input.processing.testkit.K;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
+import dev.vertique.sanitization.processing.PolicyAxis;
+import dev.vertique.sanitization.processing.testkit.A;
+import dev.vertique.sanitization.processing.testkit.B;
+import dev.vertique.sanitization.processing.testkit.C;
+import dev.vertique.sanitization.processing.testkit.ComposedSanitize;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios.Outcome;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios.Row;
+import dev.vertique.sanitization.processing.testkit.K;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import jakarta.ws.rs.PathParam;
@@ -149,7 +149,7 @@ class WebSocketInvocationPolicyMatrixTest {
 
     @ParameterizedTest(name = "{0}")
     @DisplayName("registerAll caches route/parameter policies matching the matrix")
-    @MethodSource("dev.vertique.input.processing.testkit.InvocationPolicyScenarios#rows")
+    @MethodSource("dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios#rows")
     void cachesPoliciesMatchingTheMatrix(Row row) throws Exception {
         Object endpoint = endpointFor(row.id());
         Method onMessage = endpoint.getClass().getDeclaredMethod("onMessage", String.class, String.class);

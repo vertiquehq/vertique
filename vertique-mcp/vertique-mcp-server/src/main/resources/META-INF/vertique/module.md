@@ -3,7 +3,7 @@
 > **Status:** Stable
 > **Package:** `dev.vertique.mcp.server`, `dev.vertique.mcp.server.runtime`
 > **Artifact:** `vertique-mcp-server`
-> **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
+> **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-sanitization`, `vertique-json`,
 > `vertique-json-schema`, `vertique-rate-limit-core`, `vertique-resilience`, `vertique-rest-core`,
 > `vertique-rest-security`
 
@@ -1065,7 +1065,7 @@ validation determines whether a call is accepted.
 ### Mandatory input-processing binding
 
 Every `McpServerModule` composition requires a direct, non-`Optional`
-`dev.vertique.input.processing.InputObjectProcessor` binding — install a module that provides one
+`dev.vertique.sanitization.processing.InputObjectProcessor` binding — install a module that provides one
 (for example `SanitizationModule`) alongside `McpServerModule`. This is enforced at Dagger
 compile time, not merely at runtime: `McpInputProcessingCompositionValidator`, a package-private
 `ComposeValidator` contributed unconditionally by `McpServerModule`, requires `InputObjectProcessor`
@@ -1699,7 +1699,7 @@ An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeou
 |---|---|
 | `vertique-mcp-core` | Tool/lifecycle/interceptor contracts |
 | `vertique-core` | Correlation, JSON profiles, compose validation, extension ordering |
-| `vertique-input-processing` | Required `InputObjectProcessor` for tool argument pipelines |
+| `vertique-sanitization` | Required `InputObjectProcessor` for tool argument pipelines |
 | `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
 | `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
 | `vertique-rest-security` | Identity resolution middleware for optional schemes |

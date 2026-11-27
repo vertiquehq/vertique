@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.mcp`
 > **Artifact:** `vertique-codegen-mcp`
-> **Depends on:** `vertique-codegen-core`, `vertique-mcp-core`, `vertique-core`, `vertique-security-core`, `vertique-input-processing`, `com.palantir.javapoet:javapoet`
+> **Depends on:** `vertique-codegen-core`, `vertique-mcp-core`, `vertique-core`, `vertique-security-core`, `vertique-sanitization`, `com.palantir.javapoet:javapoet`
 
 `vertique-codegen-mcp` is the annotation processor that turns every `@McpTool`-annotated method into
 generated Model Context Protocol dispatch source: one package-private invoker per tool and one
@@ -147,7 +147,7 @@ For every parameterized tool the processor emits:
 - a position-stable `List<McpToolParameterMetadata>` pairing each component name with its external
   protocol name and description.
 
-`McpInputPolicyResolver` derives policies through the same `vertique-input-processing` adapter the
+`McpInputPolicyResolver` derives policies through the same `vertique-sanitization` adapter the
 JAX-RS codegen resolver uses, so the two transports cannot drift apart. The derivation is hierarchy-
 and composed-annotation-aware: a policy declared only on a superclass, an implemented interface, or
 reached through a meta-annotated composed annotation is honored exactly as the reflective runtime
@@ -310,7 +310,7 @@ application installs.
 | `vertique-mcp-core` | compile | `@McpTool` / `@McpToolParam`, and the `McpToolDescriptor`, `McpToolAccess`, `McpToolInvoker`, `McpPreparedToolCall` contracts the generated source implements |
 | `vertique-core` | compile | `@JsonProfile` and `JsonProfileId` for effective-profile resolution and normalization |
 | `vertique-security-core` | compile | `@RequiresAction` / `ActionRef`, from which the tool's access mode is derived, and `@RequiresPolicy` / `AccessPolicy` for typed policies |
-| `vertique-input-processing` | compile | `dev.vertique.input.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains; the generated invoker's `EffectiveInputPolicies.NONE` literal is still addressed by name only (a JavaPoet `ClassName`), not by import |
+| `vertique-sanitization` | compile | `dev.vertique.sanitization.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains; the generated invoker's `EffectiveInputPolicies.NONE` literal is emitted through a JavaPoet `ClassName` taken from the class literal |
 | `com.palantir.javapoet:javapoet` | compile | Source emission |
 
 Test-only dependencies: `vertique-codegen-test`, `jakarta.inject-api`, `jakarta.annotation-api`.

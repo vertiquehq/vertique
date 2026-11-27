@@ -8,11 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.annotation.Annotation;

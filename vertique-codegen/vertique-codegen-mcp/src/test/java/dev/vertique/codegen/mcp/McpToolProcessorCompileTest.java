@@ -2554,7 +2554,7 @@ class McpToolProcessorCompileTest {
         Object factory = loader.loadClass("dev.vertique.mcp.server.runtime.McpToolRuntimeFactory")
                 .getDeclaredConstructor()
                 .newInstance();
-        Class<?> processorType = loader.loadClass("dev.vertique.input.processing.InputObjectProcessor");
+        Class<?> processorType = loader.loadClass("dev.vertique.sanitization.processing.InputObjectProcessor");
         Object processor =
                 Proxy.newProxyInstance(loader, new Class<?>[] {processorType}, (proxy, method, arguments) -> null);
         Constructor<?> constructor = invokerType.getDeclaredConstructors()[0];
@@ -2870,10 +2870,10 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * A compiled stub of {@code dev.vertique.input.processing.InputObjectProcessor}:
+         * A compiled stub of {@code dev.vertique.sanitization.processing.InputObjectProcessor}:
          * every generated invoker's {@code @Inject} constructor now takes one as a
          * parameter and calls {@code precomputeFieldNameResolution(...)} once during construction and
-         * {@code processInput(...)} once per {@code prepare()}. {@code vertique-input-processing} is
+         * {@code processInput(...)} once per {@code prepare()}. {@code vertique-sanitization} is
          * deliberately not a dependency of this module for the same reason
          * {@code vertique-mcp-server} is not: the generated invoker's dependency footprint
          * is a runtime concern of the application composing it, not of this annotation-processor
@@ -2881,11 +2881,11 @@ class McpToolProcessorCompileTest {
          * keeps this module's own dependency graph independent of what the invoker it emits will need
          * at application build time.
          *
-         * @return the {@code dev.vertique.input.processing.InputObjectProcessor} stub source
+         * @return the {@code dev.vertique.sanitization.processing.InputObjectProcessor} stub source
          */
         private static JavaFileObject inputObjectProcessorStub() {
-            return SourceFiles.inline("dev.vertique.input.processing.InputObjectProcessor", """
-                    package dev.vertique.input.processing;
+            return SourceFiles.inline("dev.vertique.sanitization.processing.InputObjectProcessor", """
+                    package dev.vertique.sanitization.processing;
 
                     import dev.vertique.core.sanitization.InputFieldNameResolver;
                     import dev.vertique.core.sanitization.InputLocation;
@@ -2905,17 +2905,17 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * A compiled stub of {@code dev.vertique.input.processing.EffectiveInputPolicies}:
+         * A compiled stub of {@code dev.vertique.sanitization.processing.EffectiveInputPolicies}:
          * every generated invoker's {@code prepare()} passes the frozen {@code NONE}
          * literal to {@code processInput(...)} (declared per-field policies are
          * discovered from the carrier's own annotations, never passed as invocation-level policies).
          * Same rationale and constraint as {@link #inputObjectProcessorStub()}.
          *
-         * @return the {@code dev.vertique.input.processing.EffectiveInputPolicies} stub source
+         * @return the {@code dev.vertique.sanitization.processing.EffectiveInputPolicies} stub source
          */
         private static JavaFileObject effectiveInputPoliciesStub() {
-            return SourceFiles.inline("dev.vertique.input.processing.EffectiveInputPolicies", """
-                    package dev.vertique.input.processing;
+            return SourceFiles.inline("dev.vertique.sanitization.processing.EffectiveInputPolicies", """
+                    package dev.vertique.sanitization.processing;
 
                     import java.util.List;
 

@@ -25,7 +25,7 @@ class McpParameterlessToolPolicyConflictTest {
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import jakarta.inject.Inject;
 
@@ -57,7 +57,7 @@ class McpParameterlessToolPolicyConflictTest {
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import jakarta.inject.Inject;
 
@@ -90,7 +90,7 @@ class McpParameterlessToolPolicyConflictTest {
 
                         import dev.vertique.core.sanitization.Sanitize;
                         import dev.vertique.core.sanitization.SkipSanitization;
-                        import dev.vertique.input.processing.testkit.B;
+                        import dev.vertique.sanitization.processing.testkit.B;
                         import dev.vertique.mcp.annotation.McpTool;
                         import dev.vertique.mcp.tool.McpCancellationSignal;
                         import jakarta.inject.Inject;

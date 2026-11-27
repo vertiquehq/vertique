@@ -1067,7 +1067,7 @@ intermediate parsed from the wire is keyed by whatever the codec published —
 `@JsonProperty("user_name")`, a `SNAKE_CASE` naming strategy, or a `@JsonAlias`. Without a
 projection between the two, a policy declared on a renamed field silently never runs. This contract
 is the seam that closes that gap, and declaring it here — beside `InputLocation`, `Canonicalizer`
-and `Sanitizer` — is what keeps both `vertique-input-processing` and `vertique-sanitization` free of
+and `Sanitizer` — is what keeps `vertique-sanitization` free of
 any codec dependency: each codec-backed implementation lives in the module that already owns that
 codec (`JacksonFieldNameResolver` in `dev.vertique:vertique-json`).
 

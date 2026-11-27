@@ -29,7 +29,7 @@ import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 
 /**
- * Mirrors {@code dev.vertique.input.processing.InputPolicyMetadataResolver} at APT time:
+ * Mirrors {@code dev.vertique.sanitization.processing.InputPolicyMetadataResolver} at APT time:
  * collects per-type and per-field annotation chains from {@link TypeElement} mirrors instead of
  * reflection.
  *
@@ -57,7 +57,7 @@ import javax.tools.Diagnostic;
  * DTO: its keys are arbitrary, so it carries no statically known property set. The test is
  * assignability to {@code java.util.Map}, so a {@code HashMap}-typed field classifies identically.
  * This mirrors {@code InputPolicyMetadataResolver.isDescendableObject} in
- * {@code vertique-input-processing}, which excludes {@code Map} from descent — an unannotated
+ * {@code vertique-sanitization}, which excludes {@code Map} from descent — an unannotated
  * {@code Map} field therefore yields no {@link FieldModel} on either path.
  *
  * <p>Arrays classify exactly like collections — a {@code NestedDto[]} field is
@@ -65,7 +65,7 @@ import javax.tools.Diagnostic;
  * {@link FieldKind#COLLECTION_OF_STRINGS} — because both shapes arrive as a JSON array carrying
  * one element schema. An array whose component is itself an array ({@code String[][]}) has no
  * element schema and stays {@link FieldKind#OTHER}, matching
- * {@code TypeClassifier.elementType} in {@code vertique-input-processing}.
+ * {@code TypeClassifier.elementType} in {@code vertique-sanitization}.
  */
 public final class AnnotationCollector {
 
@@ -157,7 +157,7 @@ public final class AnnotationCollector {
      *
      * <p><strong>Only instance properties are resolved.</strong> Static and synthetic fields are
      * skipped, mirroring {@code InputPolicyMetadataResolver.resolveFields} in
-     * {@code vertique-input-processing}: neither is part of the type's wire shape, so emitting an
+     * {@code vertique-sanitization}: neither is part of the type's wire shape, so emitting an
      * arm for one would let a crafted wire key drive a Lombok {@code @Slf4j} {@code log} field's or
      * a synthetic {@code this$0}'s type — and would make the generated path disagree with the
      * reflective one on the same DTO. Record components need no such filter; the record's component
@@ -329,7 +329,7 @@ public final class AnnotationCollector {
         // A bare type variable or wildcard (`T item;` on `class Dto<T extends Child>`) carries no
         // schema of its own. Normalize it to its declared bound first, so it classifies against the
         // type Jackson actually materializes — the same rule the reflective path applies in
-        // dev.vertique.input.processing.TypeClassifier#normalize. Without this the field fell
+        // dev.vertique.sanitization.processing.TypeClassifier#normalize. Without this the field fell
         // through to OTHER and its nested schema was never emitted, diverging from reflection.
         type = normalizeToBound(type);
 
@@ -410,7 +410,7 @@ public final class AnnotationCollector {
 
         // Map fields are schema-free — never nested DTOs. A Map's keys are arbitrary, so it carries
         // no statically known property set to generate a switch over. This mirrors
-        // InputPolicyMetadataResolver.isDescendableObject in vertique-input-processing, which
+        // InputPolicyMetadataResolver.isDescendableObject in vertique-sanitization, which
         // excludes Map from descent and therefore drops an unannotated Map field entirely; without
         // this branch the DECLARED fallthrough below would classify the field as NESTED_DTO and
         // emit a `dispatchNested(v, Map.class, …)` arm, so the generated path would report
@@ -683,7 +683,7 @@ public final class AnnotationCollector {
      * {@link #normalizeElementType} exactly as they would a directly-declared argument.
      *
      * <p>This is the APT counterpart of {@code TypeClassifier}'s reflective supertype walk in
-     * {@code vertique-input-processing}: the two must resolve the same element or the generated and
+     * {@code vertique-sanitization}: the two must resolve the same element or the generated and
      * reflective paths dispatch a collection's elements against different owners.
      *
      * @param ctx  the codegen context supplying {@code Types} and {@code Elements}
@@ -725,7 +725,7 @@ public final class AnnotationCollector {
      * ({@code List<Map<String, String>>}). A container element's wire value is another JSON array
      * or object rather than a dispatchable nested DTO, and a {@code Map}'s keys are arbitrary, so
      * neither carries a statically known property set. This is exactly
-     * {@code TypeClassifier.elementType}'s rule in {@code vertique-input-processing}, whose null
+     * {@code TypeClassifier.elementType}'s rule in {@code vertique-sanitization}, whose null
      * result likewise keeps the field on the inherited-chain path instead of descending
      * element-wise — the two paths must classify these shapes identically or their output diverges.
      *

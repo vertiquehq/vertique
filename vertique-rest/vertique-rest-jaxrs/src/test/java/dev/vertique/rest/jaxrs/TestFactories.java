@@ -4,7 +4,6 @@
 package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.RestExceptionMapper;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -26,6 +25,7 @@ import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
 import jakarta.annotation.Nullable;

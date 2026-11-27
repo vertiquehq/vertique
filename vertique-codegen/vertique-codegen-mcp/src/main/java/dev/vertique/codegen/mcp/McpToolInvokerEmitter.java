@@ -17,6 +17,8 @@ import com.palantir.javapoet.WildcardTypeName;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.support.GeneratedMarker;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -160,11 +162,9 @@ final class McpToolInvokerEmitter {
     private static final ClassName CANONICALIZE = ClassName.get("dev.vertique.core.sanitization", "Canonicalize");
     private static final ClassName SANITIZE = ClassName.get("dev.vertique.core.sanitization", "Sanitize");
     private static final ClassName INPUT_LOCATION = ClassName.get("dev.vertique.core.sanitization", "InputLocation");
-    private static final ClassName INPUT_OBJECT_PROCESSOR =
-            ClassName.get("dev.vertique.input.processing", "InputObjectProcessor");
+    private static final ClassName INPUT_OBJECT_PROCESSOR = ClassName.get(InputObjectProcessor.class);
     private static final ClassName JAKARTA_VALIDATOR = ClassName.get("jakarta.validation", "Validator");
-    private static final ClassName EFFECTIVE_INPUT_POLICIES =
-            ClassName.get("dev.vertique.input.processing", "EffectiveInputPolicies");
+    private static final ClassName EFFECTIVE_INPUT_POLICIES = ClassName.get(EffectiveInputPolicies.class);
     private static final ClassName MCP_TOOL_RUNTIME_FACTORY =
             ClassName.get("dev.vertique.mcp.server.runtime", "McpToolRuntimeFactory");
     private static final ClassName MCP_TOOL_RUNTIME =

@@ -11,12 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport;
 import dev.vertique.rest.jaxrs.runtime.ResourceExecutionPlan;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.Method;
 import java.util.Collections;

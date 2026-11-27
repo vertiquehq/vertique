@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.sanitization.processing.InputObjectProcessor;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import java.util.Set;

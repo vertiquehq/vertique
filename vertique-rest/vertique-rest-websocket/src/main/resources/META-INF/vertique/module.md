@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.websocket`
 > **Artifact:** `vertique-rest-websocket`
-> **Depends on:** rest-core, rest-security, core, context, security-core, security-runtime, logging
+> **Depends on:** rest-core, rest-security, core, context, security-core, security-runtime, logging, sanitization
 
 `vertique-rest-websocket` is the annotation-driven WebSocket transport for Vertique. You write a
 plain class annotated with `@WebSocketEndpoint`, add lifecycle methods (`@OnOpen`, `@OnMessage`,
@@ -608,7 +608,7 @@ message type to `InputObjectProcessor.precomputeFieldNameResolution`, which prep
 every owner type its own descent may consult for that message. The postcondition is that no statically
 knowable owner is left to introspect on the event loop — an array message type reduces to its
 component and a scalar such as the default `String` simply has nothing beneath it, both by the engine's
-own classification. The `vertique-input-processing` reference documents the owner set and its bounds in
+own classification. The `vertique-sanitization` reference documents the owner set and its bounds in
 full.
 
 Two startup failures follow (see [Startup failures](#startup-failures)), both of which previously
@@ -621,7 +621,7 @@ method- and type-level chains and nothing else. Nothing fails and nothing is log
 on one of these is invisible until the message that mattered gets through. A renamed key, a key a codec
 promoted out of an `@JsonUnwrapped` member, and a key matched case-insensitively are all covered
 now, and a governed field the mapper binds under a different property name — `@Sanitize` on
-`streetName` behind `setStreet` — fails registration rather than passing silently. The `vertique-input-processing` reference documents each shape, what still applies, and how to
+`streetName` behind `setStreet` — fails registration rather than passing silently. The `vertique-sanitization` reference documents each shape, what still applies, and how to
 stay inside the covered set.
 
 ---
@@ -694,7 +694,7 @@ coalesce with the same declaration in `AuthModule` when both are present.
 | `Authorizer` | `SecurityAuthzModule` | Any endpoint declaring `@RequiresAction` fails startup |
 | `ActionRegistry` | `SecurityAuthzModule` | Same |
 | `BeanValidator` | `ValidationModule` | Messages are not validated |
-| `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`) | `SanitizationModule` | Messages and path parameters are not sanitized — and any endpoint that *declares* a policy fails startup rather than accepting messages unprocessed |
+| `InputObjectProcessor` (`dev.vertique.sanitization.processing.InputObjectProcessor`) | `SanitizationModule` | Messages and path parameters are not sanitized — and any endpoint that *declares* a policy fails startup rather than accepting messages unprocessed |
 
 ---
 
@@ -808,7 +808,7 @@ exactly one `HttpRequestCompletedEvent`.
 | Dependency | Why |
 |---|---|
 | `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler`, the request-completion claim for a successful upgrade |
-| `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against |
+| `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against |
 | `dev.vertique:vertique-json` | `JacksonFieldNameResolver` — the wire-name projection that lets a declared policy reach a renamed message field |
 | `dev.vertique:vertique-rest-security` | Policy enforcement, identity resolution, claim mapping |
 | `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation and sanitization contracts, including the `InputFieldNameResolver` projection contract message processing is typed against |

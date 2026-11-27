@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.input.processing.GeneratedInputProcessor;
+import dev.vertique.sanitization.processing.GeneratedInputProcessor;
 import java.util.Set;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
@@ -360,7 +360,7 @@ class InputProcessorEmitterTest {
                     .assertSuccess()
                     .assertGeneratedSourceContains(
                             "com.example.dto.ArticleDto_InputProcessor",
-                            "import static dev.vertique.input.processing.GeneratedSupport.applyString;");
+                            "import static dev.vertique.sanitization.processing.GeneratedSupport.applyString;");
         }
 
         @Test
@@ -370,7 +370,7 @@ class InputProcessorEmitterTest {
                     .assertSuccess()
                     .assertGeneratedSourceContains(
                             "com.example.dto.ArticleDto_InputProcessor",
-                            "import static dev.vertique.input.processing.GeneratedSupport.applyStringCollection;");
+                            "import static dev.vertique.sanitization.processing.GeneratedSupport.applyStringCollection;");
         }
 
         @Test
@@ -380,7 +380,7 @@ class InputProcessorEmitterTest {
                     .assertSuccess()
                     .assertGeneratedSourceContains(
                             "com.example.dto.ArticleDto_InputProcessor",
-                            "import static dev.vertique.input.processing.GeneratedSupport.dispatchObjectCollection;");
+                            "import static dev.vertique.sanitization.processing.GeneratedSupport.dispatchObjectCollection;");
         }
     }
 
@@ -391,12 +391,13 @@ class InputProcessorEmitterTest {
     class RuntimeSpiPackage {
 
         @Test
-        @DisplayName("emitted source references only dev.vertique.input.processing, never the old rest-core package")
+        @DisplayName(
+                "emitted source references only dev.vertique.sanitization.processing, never the old rest-core package")
         void emittedSource_referencesNeutralProcessingPackageOnly() {
             ProcessorTestHarness.run(new SanitizationProcessor(), NESTED_DTO, FULL_DTO, RESOURCE)
                     .assertSuccess()
                     .assertGeneratedSourceContains(
-                            "com.example.dto.ArticleDto_InputProcessor", "dev.vertique.input.processing")
+                            "com.example.dto.ArticleDto_InputProcessor", "dev.vertique.sanitization.processing")
                     .assertGeneratedSourceDoesNotContain(
                             "com.example.dto.ArticleDto_InputProcessor", "dev.vertique.rest.core.request");
         }

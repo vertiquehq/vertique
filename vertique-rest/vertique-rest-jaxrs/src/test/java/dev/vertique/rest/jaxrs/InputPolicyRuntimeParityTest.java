@@ -13,7 +13,7 @@ import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
-import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
 import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;

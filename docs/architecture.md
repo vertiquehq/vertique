@@ -154,6 +154,11 @@ URL, request header validation, and attempt-scoped calls. It consumes `vertique-
 consumers sit above it: `vertique-rest-client` builds its transport on it, while neither `vertique-core`
 nor `vertique-resilience` depends on it.
 
+`vertique-sanitization` owns the transport-neutral input-processing engine (`dev.vertique.sanitization.processing`),
+the built-in canonicalizers, the control-character sanitizer and `SanitizationModule`. It consumes
+`vertique-core` and adds no third-party artifact beyond Dagger, the Jakarta injection and annotation APIs and
+SLF4J. The REST, WebSocket and MCP server modules and the code generators depend on it for the engine.
+
 `vertique-sanitization-html` owns the four HTML sanitizers, which are the only code that uses the
 OWASP HTML sanitizer library. It consumes `vertique-sanitization`, `vertique-core` and
 `owasp-java-html-sanitizer`, ships no Dagger module, and nothing in the framework depends on it:

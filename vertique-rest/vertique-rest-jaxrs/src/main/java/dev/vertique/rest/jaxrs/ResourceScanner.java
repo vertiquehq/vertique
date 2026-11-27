@@ -8,8 +8,6 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.core.validation.ValidateWith;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.rest.core.context.RestContextTypes;
 import dev.vertique.rest.core.request.RequestParams;
 import dev.vertique.rest.core.request.RequestPreconditions;
@@ -19,6 +17,8 @@ import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceDescriptor;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.ReflectiveInvocationPolicies;
 import dev.vertique.security.authz.AccessPolicyResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.ext.web.FileUpload;
@@ -240,7 +240,7 @@ class ResourceScanner {
             Class<?>[] validationGroups = (validateWith != null) ? validateWith.value() : null;
 
             // Resolve route-level canonicalization/sanitization chains through the shared resolver
-            // (dev.vertique.input.processing). InvocationPolicyConflictException (a
+            // (dev.vertique.sanitization.processing). InvocationPolicyConflictException (a
             // ConfigurationException) propagates uncaught when the method or class declares both an
             // additive and a skip annotation on the same axis.
             EffectiveInputPolicies routePolicies = ReflectiveInvocationPolicies.resolveRoute(method, clazz);

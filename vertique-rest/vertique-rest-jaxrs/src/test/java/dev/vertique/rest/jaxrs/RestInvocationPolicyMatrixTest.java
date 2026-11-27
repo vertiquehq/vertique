@@ -10,17 +10,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.SkipSanitization;
-import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InvocationPolicyConflictException;
-import dev.vertique.input.processing.PolicyAxis;
-import dev.vertique.input.processing.testkit.A;
-import dev.vertique.input.processing.testkit.B;
-import dev.vertique.input.processing.testkit.C;
-import dev.vertique.input.processing.testkit.ComposedSanitize;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Outcome;
-import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Row;
-import dev.vertique.input.processing.testkit.K;
+import dev.vertique.sanitization.processing.EffectiveInputPolicies;
+import dev.vertique.sanitization.processing.InvocationPolicyConflictException;
+import dev.vertique.sanitization.processing.PolicyAxis;
+import dev.vertique.sanitization.processing.testkit.A;
+import dev.vertique.sanitization.processing.testkit.B;
+import dev.vertique.sanitization.processing.testkit.C;
+import dev.vertique.sanitization.processing.testkit.ComposedSanitize;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios.Outcome;
+import dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios.Row;
+import dev.vertique.sanitization.processing.testkit.K;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import java.util.List;
@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * Proves that the real {@link ResourceScanner} and {@link ParameterExtractor} reproduce every scenario
  * from {@link InvocationPolicyScenarios}, the single source of truth also consumed by the
- * {@code vertique-input-processing} resolver/adapter proofs.
+ * {@code vertique-sanitization} resolver/adapter proofs.
  *
  * <p>Each row is driven through the real production seams rather than a re-implementation:
  *
@@ -70,7 +70,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 class RestInvocationPolicyMatrixTest {
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("dev.vertique.input.processing.testkit.InvocationPolicyScenarios#rows")
+    @MethodSource("dev.vertique.sanitization.processing.testkit.InvocationPolicyScenarios#rows")
     @DisplayName("REST scanner/extractor reproduce the invocation-policy matrix")
     void matrixRowMatchesRealScannerAndExtractor(Row row) {
         Object resource = FIXTURES.get(row.id());
