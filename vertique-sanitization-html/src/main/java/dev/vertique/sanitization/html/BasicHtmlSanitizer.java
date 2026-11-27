@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.sanitization.sanitize;
+package dev.vertique.sanitization.html;
 
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;

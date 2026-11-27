@@ -569,6 +569,8 @@ class, a lifecycle method, or a parameter exactly as the bare annotation does, m
 startup gate reads the very policies the message path later applies, so what fails the build and what
 runs on a message always agree.
 
+`StripAllHtmlSanitizer` comes from `dev.vertique.sanitization.html`; add the `dev.vertique:vertique-sanitization-html` dependency to use it.
+
 ```java
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)

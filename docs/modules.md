@@ -108,6 +108,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-rest-validation` | [module.md](../vertique-rest/vertique-rest-validation/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-websocket` | [module.md](../vertique-rest/vertique-rest-websocket/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-sanitization` | [module.md](../vertique-sanitization/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-sanitization-html` | [module.md](../vertique-sanitization-html/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-security-config` | [module.md](../vertique-security/vertique-security-config/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-security-core` | [module.md](../vertique-security/vertique-security-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-security-runtime` | [module.md](../vertique-security/vertique-security-runtime/src/main/resources/META-INF/vertique/module.md) |

@@ -378,6 +378,8 @@ public record CreateUserRequest(
 // {"display_name": "<b>ada</b>"} -> displayName == "ada"
 ```
 
+`StripAllHtmlSanitizer` comes from `dev.vertique.sanitization.html`; add the `dev.vertique:vertique-sanitization-html` dependency to use it.
+
 **Three shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed
 field, and a concrete `@JsonTypeInfo` subtype's own fields all leave the field with its inherited
 route- and object-level chains and nothing else. Registration refuses a policy it can see stranded

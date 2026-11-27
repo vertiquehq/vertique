@@ -97,6 +97,14 @@ runtime's cleanup path intentionally accepts the Vert.x consequence that a fatal
 reset accumulated closed-state breaker failures and close a half-open breaker before rethrowing
 the same fatal value.
 
+## Input Sanitization
+
+[`vertique-sanitization`](vertique-sanitization/src/main/resources/META-INF/vertique/module.md)
+provides the built-in canonicalizers, the control-character sanitizer and `SanitizationModule`.
+The four HTML sanitizers ship separately in
+[`vertique-sanitization-html`](vertique-sanitization-html/src/main/resources/META-INF/vertique/module.md),
+so applications that sanitize no HTML do not carry the OWASP library.
+
 ## Application Archetypes
 
 Each application archetype generates a functional starting application on one or more starter

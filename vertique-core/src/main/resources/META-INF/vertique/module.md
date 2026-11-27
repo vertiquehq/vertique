@@ -996,7 +996,7 @@ public record CreateUserRequest(                           // component-level
         String bio) {}
 ```
 
-A `Sanitizer` is registered the same way, through `SanitizerBinding`.
+A `Sanitizer` is registered the same way, through `SanitizerBinding`. `BasicHtmlSanitizer` (and the other HTML sanitizers) lives in `dev.vertique.sanitization.html`; add the `dev.vertique:vertique-sanitization-html` dependency to use it. It needs no binding: the engine creates it through its public no-arg constructor.
 
 `@SkipCanonicalization` and `@SkipSanitization` opt an element out of processing inherited from an
 enclosing type. `InputValueContext` is a `record (InputLocation location, String path, String

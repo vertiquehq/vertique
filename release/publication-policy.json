@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 125,
+  "expectedPublishableGavCount": 126,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -144,6 +144,7 @@
     "dev.vertique:vertique-rest-validation",
     "dev.vertique:vertique-rest-websocket",
     "dev.vertique:vertique-sanitization",
+    "dev.vertique:vertique-sanitization-html",
     "dev.vertique:vertique-security-config",
     "dev.vertique:vertique-security-core",
     "dev.vertique:vertique-security-runtime",

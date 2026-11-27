@@ -49,12 +49,6 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>lombok</artifactId>
         </dependency>
 
-        <!-- OWASP HTML Sanitizer for HTML sanitizer implementations -->
-        <dependency>
-            <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
-            <artifactId>owasp-java-html-sanitizer</artifactId>
-        </dependency>
-
         <!-- Test -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

@@ -32,7 +32,8 @@ that installs a starter already has it on the classpath.
 
 **Canonicalize, then sanitize.** Canonicalizers normalize a value into one comparable form — Unicode
 NFC or NFKC, case folding, whitespace collapsing, trimming. Sanitizers then remove what must not
-survive — control characters, HTML that is not on the allow-list. The order matters: sanitizing
+survive — control characters here, and HTML that is not on the allow-list with the separate
+`vertique-sanitization-html` artifact. The order matters: sanitizing
 before canonicalizing lets a differently-encoded form of a forbidden sequence pass.
 
 **Policies are declared, not called.** A field carries annotations; the engine resolves the chain
@@ -48,7 +49,7 @@ one field out of an otherwise inherited chain.
 
 ### SanitizationModule
 
-Abstract Dagger `@Module` that registers all built-in canonicalizers and sanitizers via `@ElementsIntoSet`, declares `@Multibinds` for custom processor contributions, and provides the default `InputObjectProcessor` engine via `InputObjectProcessor.createDefault(...)`.
+Abstract Dagger `@Module` that registers the eight built-in canonicalizers and the one built-in sanitizer (`StripControlCharsSanitizer`) via `@ElementsIntoSet`, declares `@Multibinds` for custom processor contributions, and provides the default `InputObjectProcessor` engine via `InputObjectProcessor.createDefault(...)`.
 
 ```java
 @Component(modules = {
@@ -86,7 +87,7 @@ public Canonicalizer resolveCanonicalizer(Class<? extends Canonicalizer> type) {
 public Sanitizer resolveSanitizer(Class<? extends Sanitizer> type) { ... }
 ```
 
-All processors registered through `SanitizationModule` are always resolvable via tier 1. Custom processors without Dagger bindings are resolvable via tier 2 if they expose a public no-arg constructor.
+All processors registered through `SanitizationModule` are always resolvable via tier 1. A canonicalizer or sanitizer class with no binding is created through its public no-arg constructor; the HTML sanitizers in `vertique-sanitization-html` rely on this and ship no binding.
 
 ---
 
@@ -116,12 +117,8 @@ Sanitizers remove or transform disallowed content. They are stateless and thread
 | Class | Effect |
 |-------|--------|
 | `StripControlCharsSanitizer` | Removes C0 and C1 control characters (`U+0000`–`U+001F`, `U+007F`, `U+0080`–`U+009F`); preserves tab, LF, and CR |
-| `StripAllHtmlSanitizer` | Strips all HTML tags and attributes using OWASP Java HTML Sanitizer and returns plain text: entities are decoded, `script` and `style` content is dropped, block-level element boundaries become newlines, and the result is trimmed |
-| `BasicHtmlSanitizer` | Allows `<p>`, `<br>`, `<em>`, `<i>`, `<strong>`, `<b>`, `<ul>`, `<ol>`, `<li>`; strips everything else |
-| `LinksHtmlSanitizer` | Allows `BasicHtml` elements plus `<a href>` (http, https and mailto schemes only; `rel="nofollow"` is added to links) |
-| `RichTextHtmlSanitizer` | Allows `LinksHtml` elements plus `u`, `s`, `h1`-`h6`, `blockquote`, `pre`, `code`, `table`, `thead`, `tbody`, `tr`, `th`, `td`, `hr`, `span`, `div`, `sub`, `sup` and `<img>` (`src`, `alt`, `width`, `height`); the `class` attribute is allowed on every allowed element |
 
-HTML sanitizers use [OWASP Java HTML Sanitizer](https://owasp.org/www-project-java-html-sanitizer/) with static singleton `PolicyFactory` instances (thread-safe).
+The HTML sanitizers (`StripAllHtmlSanitizer`, `BasicHtmlSanitizer`, `LinksHtmlSanitizer`, `RichTextHtmlSanitizer`) are in the separate `dev.vertique:vertique-sanitization-html` artifact, package `dev.vertique.sanitization.html`.
 
 ---
 
@@ -151,6 +148,7 @@ Declare an ordered chain of processors. Processors execute in declaration order.
 public class UserResource { ... }
 
 // Field-level: apply HTML sanitization to this specific field
+// (BasicHtmlSanitizer: dev.vertique.sanitization.html, artifact vertique-sanitization-html)
 public record CreateUserRequest(
     @Sanitize(BasicHtmlSanitizer.class)
     String bio,
@@ -267,5 +265,4 @@ Custom processors are contributed via `@Provides @IntoSet` in application or lib
 - `dev.vertique:vertique-input-processing`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
-- `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` (OWASP Java HTML Sanitizer, used by HTML sanitizers)
 - `org.projectlombok:lombok` (provided scope)

@@ -154,6 +154,12 @@ URL, request header validation, and attempt-scoped calls. It consumes `vertique-
 consumers sit above it: `vertique-rest-client` builds its transport on it, while neither `vertique-core`
 nor `vertique-resilience` depends on it.
 
+`vertique-sanitization-html` owns the four HTML sanitizers, which are the only code that uses the
+OWASP HTML sanitizer library. It consumes `vertique-sanitization`, `vertique-core` and
+`owasp-java-html-sanitizer`, ships no Dagger module, and nothing in the framework depends on it:
+an application adds it and names a sanitizer class in `@Sanitize`, and the engine creates the
+instance on first use.
+
 `vertique-security-core` owns `AccessPolicy` and `@RequiresPolicy`. A policy is a public interface
 of direct security requirements. REST and the JAX-RS processor expand a selected policy into the
 existing `SecurityPolicy` and action metadata. The codegen mirror selects the same policy without

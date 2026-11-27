@@ -228,6 +228,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-sanitization-html</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-input-processing</artifactId>
         </dependency>
         <dependency>
