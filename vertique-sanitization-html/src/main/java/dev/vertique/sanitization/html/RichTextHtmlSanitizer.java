@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.html;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Sanitizer;
 import org.owasp.html.HtmlPolicyBuilder;
 import org.owasp.html.PolicyFactory;

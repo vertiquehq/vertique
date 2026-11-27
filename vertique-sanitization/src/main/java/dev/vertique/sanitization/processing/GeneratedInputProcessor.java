@@ -3,8 +3,8 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
 import jakarta.annotation.Nullable;
 import java.util.Set;
 
@@ -61,7 +61,7 @@ public interface GeneratedInputProcessor<T> {
      *                     silently drop a renamed field's declared policies
      * @param parentPath   the dot-separated path prefix of the field this DTO is nested under,
      *                     or an empty string when invoked at the top level; used to compose
-     *                     correct {@code path} values in {@link dev.vertique.core.sanitization.InputValueContext}
+     *                     correct {@code path} values in {@link dev.vertique.core.input.InputValueContext}
      *                     for every field in this DTO
      * @return the processed intermediate — a new map/list with string values transformed
      *         (copy-on-write: implementations MUST allocate a fresh

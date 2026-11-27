@@ -20,7 +20,7 @@ import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dagger.Component;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestBodyDecoder;

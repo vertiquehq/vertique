@@ -9,9 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Sanitize;
 import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;

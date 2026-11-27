@@ -7,7 +7,7 @@ import com.fasterxml.jackson.core.json.JsonWriteFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.mcp.tool.McpStructuredOutputWriter;
 import dev.vertique.mcp.tool.McpToolDescriptor;

@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.input.InputLocation;
 import dev.vertique.core.util.GeneratedNames;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -168,7 +168,7 @@ public final class GeneratedInputProcessorDispatcher {
      * @param ctx       the accumulated traversal context (with inherited chains)
      * @param location  where the input originated
      * @param fieldPath the dot-separated path so far, for diagnostic context
-     * @param ownerType the owner type for {@link dev.vertique.core.sanitization.InputValueContext}
+     * @param ownerType the owner type for {@link dev.vertique.core.input.InputValueContext}
      * @return the processed value, applying only inherited chains
      */
     Object walkUnknown(
@@ -220,7 +220,7 @@ public final class GeneratedInputProcessorDispatcher {
          * @param ctx          the accumulated traversal context (with inherited chains)
          * @param location     where the input originated
          * @param fieldPath    the dot-separated path so far, for diagnostic context
-         * @param ownerType    the owner type for {@link dev.vertique.core.sanitization.InputValueContext}
+         * @param ownerType    the owner type for {@link dev.vertique.core.input.InputValueContext}
          * @return the processed intermediate, applying only inherited chains
          */
         Object walkUnknown(

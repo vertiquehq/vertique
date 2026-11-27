@@ -13,9 +13,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.core.security.SecurityPolicy;

@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.sanitization.Sanitize;
 import dev.vertique.sanitization.SkipSanitization;
 import dev.vertique.sanitization.processing.DefaultInputObjectProcessorTest.TestStripControlsSanitizer;

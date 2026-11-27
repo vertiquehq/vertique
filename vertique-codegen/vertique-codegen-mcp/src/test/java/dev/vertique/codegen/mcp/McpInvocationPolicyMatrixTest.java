@@ -822,7 +822,7 @@ class McpInvocationPolicyMatrixTest {
         return SourceFiles.inline("dev.vertique.mcp.server.runtime.McpToolRuntime", """
                 package dev.vertique.mcp.server.runtime;
 
-                import dev.vertique.core.sanitization.InputFieldNameResolver;
+                import dev.vertique.core.input.InputFieldNameResolver;
                 import dev.vertique.mcp.tool.McpStructuredOutputWriter;
                 import dev.vertique.mcp.tool.McpToolDescriptor;
                 import java.io.IOException;

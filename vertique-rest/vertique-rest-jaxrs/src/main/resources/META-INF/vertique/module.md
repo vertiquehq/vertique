@@ -2428,7 +2428,7 @@ These types left this module and have no forwarding type here. Change the import
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
 | `dev.vertique:vertique-sanitization` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
-| `dev.vertique:vertique-json` | the `JsonMapperProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
+| `dev.vertique:vertique-json` | the `JsonMapperProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.input.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 

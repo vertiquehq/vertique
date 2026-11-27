@@ -13,7 +13,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestBodyDecoder;

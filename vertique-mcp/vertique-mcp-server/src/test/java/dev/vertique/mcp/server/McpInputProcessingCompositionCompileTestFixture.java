@@ -142,8 +142,8 @@ final class McpInputProcessingCompositionCompileTestFixture {
 
             import dagger.Module;
             import dagger.Provides;
-            import dev.vertique.core.sanitization.InputFieldNameResolver;
-            import dev.vertique.core.sanitization.InputLocation;
+            import dev.vertique.core.input.InputFieldNameResolver;
+            import dev.vertique.core.input.InputLocation;
             import dev.vertique.sanitization.processing.EffectiveInputPolicies;
             import dev.vertique.sanitization.processing.InputObjectProcessor;
             import jakarta.inject.Singleton;

@@ -587,7 +587,7 @@ incoming message is keyed by whatever Jackson publishes — `@JsonProperty("user
 strategy, or a `@JsonAlias`. Messages are bound through the process JSON codec's `VertiqueJson.mapper()`, and
 that mapper's own property introspection is what maps each wire key back onto the Java property whose
 policies apply (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`, implementing the
-`dev.vertique.core.sanitization.InputFieldNameResolver` contract). A `@Sanitize` on a
+`dev.vertique.core.input.InputFieldNameResolver` contract). A `@Sanitize` on a
 renamed field therefore runs exactly as it would on an unrenamed one, with no extra declaration.
 The projection is computed once per endpoint set when the registrar is built (the `EDGE` startup
 phase) from the mapper installed at that moment, while each frame binds through the mapper current at

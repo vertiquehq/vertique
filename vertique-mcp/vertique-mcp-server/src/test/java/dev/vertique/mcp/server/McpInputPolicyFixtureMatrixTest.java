@@ -5,9 +5,9 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Sanitize;
 import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;

@@ -1111,7 +1111,7 @@ framework's canonicalization/sanitization traversal by injecting the optional
 InputLocation location, InputFieldNameResolver nameResolver)` before final binding. The binding is
 `@BindsOptionalOf`; it resolves only when `SanitizationModule` is installed.
 
-The trailing `dev.vertique.core.sanitization.InputFieldNameResolver` is the decoder's own choice,
+The trailing `dev.vertique.core.input.InputFieldNameResolver` is the decoder's own choice,
 and there is no overload that omits it. Pass `InputFieldNameResolver.IDENTITY` when the
 intermediate's keys are already Java property names — including any call that processes a bare
 string, where no object's fields could be renamed. Pass a codec-backed projection when the keys are

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.sanitization;
+package dev.vertique.core.input;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,12 +23,12 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the sanitization input types.
+ * Unit tests for the shared input context types.
  *
  * <p>Covers record equality and accessors for {@link InputValueContext}, {@link InputLocation}
  * enum values, and the frozen member ledger of {@link InputFieldNameResolver}.
  */
-class SanitizationContractsTest {
+class InputContractsTest {
 
     // --- InputLocation ---
 

@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.input.InputLocation;
 import jakarta.annotation.Nullable;
 
 /**

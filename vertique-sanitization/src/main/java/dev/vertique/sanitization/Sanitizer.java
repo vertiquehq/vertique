@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 
 /**
  * Opt-in rewriting of string input for narrow, declared use cases.

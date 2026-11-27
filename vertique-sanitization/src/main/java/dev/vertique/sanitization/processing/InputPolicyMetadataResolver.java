@@ -59,7 +59,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * The two shapes whose stranded policy can be named statically are refused at registration by
  * {@link OwnerTypeWalk} instead of being skipped in silence: {@link #mapValueClassesByProperty} finds
  * the declared class behind a {@code Map}, and the codec's
- * {@link dev.vertique.core.sanitization.InputFieldNameResolver#polymorphicSubtypes} supplies a
+ * {@link dev.vertique.core.input.InputFieldNameResolver#polymorphicSubtypes} supplies a
  * polymorphic base's subtypes. {@link #declaresPolicies} follows the same links as the walker, plus a
  * {@code Map}'s statically known value class, so a policy that is only stranded still counts as
  * declared and the transport cannot boot without an engine over it.

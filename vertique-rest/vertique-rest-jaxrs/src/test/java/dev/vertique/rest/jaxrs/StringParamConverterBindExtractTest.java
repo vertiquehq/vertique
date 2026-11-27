@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionException;
 import dev.vertique.rest.core.convert.ParamConversionResolver;

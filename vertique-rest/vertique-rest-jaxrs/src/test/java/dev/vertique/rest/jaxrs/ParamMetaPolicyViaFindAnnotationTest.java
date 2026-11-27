@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.sanitization.Canonicalize;
 import dev.vertique.sanitization.Canonicalizer;

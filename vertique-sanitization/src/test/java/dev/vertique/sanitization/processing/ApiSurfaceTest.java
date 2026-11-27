@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.input.InputLocation;
 import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import dev.vertique.sanitization.processing.apt.ElementInvocationPolicies;
 import dev.vertique.sanitization.processing.apt.ElementInvocationPolicies.ElementPolicyChains;
@@ -52,7 +52,7 @@ class ApiSurfaceTest {
      * Types published to consumers of this module.
      *
      * <p>{@code InputFieldNameResolver} is deliberately absent: the contract is declared in
-     * {@code dev.vertique.core.sanitization} beside its vocabulary siblings ({@code InputLocation},
+     * {@code dev.vertique.core.input} beside its vocabulary siblings ({@code InputLocation},
      * {@code Canonicalizer}, {@code Sanitizer}), so its surface is frozen by {@code vertique-core}'s
      * {@code SanitizationContractsTest} rather than here. This module consumes it — every ledgered
      * signature below that names it still pins the parameter type.

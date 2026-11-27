@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Canonicalizer;
 import dev.vertique.sanitization.Sanitizer;
 import java.util.List;

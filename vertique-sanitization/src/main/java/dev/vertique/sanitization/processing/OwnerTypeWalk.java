@@ -4,8 +4,8 @@
 package dev.vertique.sanitization.processing;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputFieldNameResolver.PromotedField;
 import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;

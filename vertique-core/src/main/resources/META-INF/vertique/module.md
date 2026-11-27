@@ -958,54 +958,14 @@ application with `ManagementModule` is not `UP` before every verticle phase, and
 completed. It stays `UP` afterwards; a failed startup is torn down and never reaches it. A host that includes the
 module but never runs the lifecycle runner stays not-ready. The `@Readiness Set<HealthCheck>` always holds `startup`, so an in-process evaluation of that set before the gate step has run, including from inside startup, reports `DOWN`.
 
-### `Canonicalizer` and `Sanitizer`
+### `InputValueContext` and `InputLocation`
 
-These contracts, their binding records, and the `@Canonicalize`, `@Sanitize`,
-`@SkipCanonicalization` and `@SkipSanitization` annotations are declared in `vertique-sanitization`
-(`dev.vertique.sanitization`), not in this module. `vertique-core` keeps `InputLocation`,
-`InputValueContext` and `InputFieldNameResolver` in `dev.vertique.core.sanitization`.
+`vertique-core` declares the context every input processor receives, in `dev.vertique.core.input`.
+The `Canonicalizer` and `Sanitizer` contracts, their binding records, and the `@Canonicalize`,
+`@Sanitize`, `@SkipCanonicalization` and `@SkipSanitization` annotations are declared in
+`vertique-sanitization` (`dev.vertique.sanitization`); see that module's reference.
 
-String normalization (semantics-preserving) and content removal (not semantics-preserving) applied
-to inbound values. Implementations must be stateless and thread-safe; a `Canonicalizer` must also be
-deterministic and idempotent.
-
-```java
-@FunctionalInterface
-public interface Canonicalizer {
-    String canonicalize(String value, InputValueContext context);
-}
-
-@FunctionalInterface
-public interface Sanitizer {
-    String sanitize(String value, InputValueContext context);
-}
-```
-
-Register each implementation as a binding record keyed by its own type — the `type()` component is
-the lookup key used to resolve the classes named in `@Canonicalize` / `@Sanitize`. Declare the chain
-with those annotations, both `@Target({TYPE, FIELD, RECORD_COMPONENT, PARAMETER, METHOD,
-ANNOTATION_TYPE})`, so they also compose into custom annotations:
-
-```java
-@Provides @IntoSet
-static CanonicalizerBinding trimCanonicalizer(TrimCanonicalizer c) {
-    return new CanonicalizerBinding(TrimCanonicalizer.class, c);
-}
-
-@Path("/users")                                            // type-level: applies to the whole resource
-@Canonicalize({TrimCanonicalizer.class, NfkcCanonicalizer.class})
-public class UserResource { }
-
-public record CreateUserRequest(                           // component-level
-        @Canonicalize(TrimCanonicalizer.class)
-        @Sanitize(BasicHtmlSanitizer.class)
-        String bio) {}
-```
-
-A `Sanitizer` is registered the same way, through `SanitizerBinding`. `BasicHtmlSanitizer` (and the other HTML sanitizers) lives in `dev.vertique.sanitization.html`; add the `dev.vertique:vertique-sanitization-html` dependency to use it. It needs no binding: the engine creates it through its public no-arg constructor.
-
-`@SkipCanonicalization` and `@SkipSanitization` opt an element out of processing inherited from an
-enclosing type. `InputValueContext` is a `record (InputLocation location, String path, String
+`InputValueContext` is a `record (InputLocation location, String path, String
 logicalName, Class<?> ownerType)`; `InputLocation` is `PATH`, `QUERY`, `HEADER`, `COOKIE`, `FORM`,
 `BODY`, `BEAN_PARAM`, `PAYLOAD`. `PAYLOAD` marks values from message or protocol payloads (e.g.
 WebSocket messages); REST request bodies remain `BODY`. A custom `Canonicalizer`, `Sanitizer`, or

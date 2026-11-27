@@ -6,9 +6,9 @@ package dev.vertique.sanitization.processing;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Canonicalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

@@ -91,6 +91,34 @@ All processors registered through `SanitizationModule` are always resolvable via
 
 ---
 
+## Contracts
+
+String normalization (semantics-preserving) and content removal (not semantics-preserving) applied
+to inbound values. Implementations must be stateless and thread-safe; a `Canonicalizer` must also be
+deterministic and idempotent. Both receive an `InputValueContext` (`dev.vertique.core.input`,
+documented in the `vertique-core` module reference).
+
+```java
+@FunctionalInterface
+public interface Canonicalizer {
+    String canonicalize(String value, InputValueContext context);
+}
+
+@FunctionalInterface
+public interface Sanitizer {
+    String sanitize(String value, InputValueContext context);
+}
+```
+
+Register each implementation as a binding record keyed by its own type — the `type()` component is
+the lookup key used to resolve the classes named in `@Canonicalize` / `@Sanitize`. A `Sanitizer` is
+registered the same way, through `SanitizerBinding`. `@Canonicalize` and `@Sanitize` both declare
+`@Target({TYPE, FIELD, RECORD_COMPONENT, PARAMETER, METHOD, ANNOTATION_TYPE})`, so they also compose
+into custom annotations. `@SkipCanonicalization` and `@SkipSanitization` opt an element out of
+processing inherited from an enclosing type.
+
+---
+
 ## Built-in Canonicalizers
 
 Canonicalizers are semantics-preserving normalizers. They are stateless, idempotent, and thread-safe.
@@ -370,7 +398,7 @@ Memoization is not mutual exclusion: threads racing on a cold class may each run
 
 `processInput(...)` accepts the decoded intermediate (`Map<String, Object>` for objects, `List<Object>` for arrays, or a raw value; `null` is returned unchanged) and returns a new structure with string values transformed.
 
-`nameResolver` is a `dev.vertique.core.sanitization.InputFieldNameResolver` — the codec-neutral wire-name → Java-property-name projection the engine consults for every intermediate key before looking that field's policies up. The contract is declared in `vertique-core` beside `InputLocation` and `InputValueContext`; codec-backed implementations live in the module owning that codec (`JacksonFieldNameResolver` in `vertique-json`), which is what keeps this module free of any codec dependency. Pass `InputFieldNameResolver.IDENTITY` when the intermediate's keys are already Java property names — including every call that processes a bare `String`, where there is no object whose fields could be renamed.
+`nameResolver` is a `dev.vertique.core.input.InputFieldNameResolver` — the codec-neutral wire-name → Java-property-name projection the engine consults for every intermediate key before looking that field's policies up. The contract is declared in `vertique-core` beside `InputLocation` and `InputValueContext`; codec-backed implementations live in the module owning that codec (`JacksonFieldNameResolver` in `vertique-json`), which is what keeps this module free of any codec dependency. Pass `InputFieldNameResolver.IDENTITY` when the intermediate's keys are already Java property names — including every call that processes a bare `String`, where there is no object whose fields could be renamed.
 
 `targetType` may be anything that reduces to a class: a class, a parameterized type, a bounded wildcard or type variable, an `Optional` of any of those, or an array of them. A type that reduces to no class at all — a `GenericArrayType` such as `List<Inner>[]`, or a foreign `Type` implementation — cannot be processed: the call throws `IllegalStateException` when `policies` is non-empty, because the caller declared processing that provably cannot run, and returns `input` unchanged when `policies` is empty.
 

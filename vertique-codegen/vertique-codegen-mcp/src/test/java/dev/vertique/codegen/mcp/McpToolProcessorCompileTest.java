@@ -2836,7 +2836,7 @@ class McpToolProcessorCompileTest {
             return SourceFiles.inline("dev.vertique.mcp.server.runtime.McpToolRuntime", """
                     package dev.vertique.mcp.server.runtime;
 
-                    import dev.vertique.core.sanitization.InputFieldNameResolver;
+                    import dev.vertique.core.input.InputFieldNameResolver;
                     import dev.vertique.mcp.tool.McpStructuredOutputWriter;
                     import dev.vertique.mcp.tool.McpToolDescriptor;
                     import java.io.IOException;
@@ -2887,8 +2887,8 @@ class McpToolProcessorCompileTest {
             return SourceFiles.inline("dev.vertique.sanitization.processing.InputObjectProcessor", """
                     package dev.vertique.sanitization.processing;
 
-                    import dev.vertique.core.sanitization.InputFieldNameResolver;
-                    import dev.vertique.core.sanitization.InputLocation;
+                    import dev.vertique.core.input.InputFieldNameResolver;
+                    import dev.vertique.core.input.InputLocation;
                     import java.lang.reflect.Type;
 
                     public interface InputObjectProcessor {

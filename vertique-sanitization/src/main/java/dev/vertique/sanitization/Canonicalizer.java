@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 
 /**
  * Semantics-preserving normalization of string input.

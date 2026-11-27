@@ -6,8 +6,8 @@ package dev.vertique.sanitization.sanitize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

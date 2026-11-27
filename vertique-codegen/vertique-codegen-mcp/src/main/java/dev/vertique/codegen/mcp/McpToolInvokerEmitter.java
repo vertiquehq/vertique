@@ -17,7 +17,7 @@ import com.palantir.javapoet.WildcardTypeName;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.support.GeneratedMarker;
-import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.input.InputLocation;
 import dev.vertique.sanitization.Canonicalize;
 import dev.vertique.sanitization.Sanitize;
 import dev.vertique.sanitization.processing.EffectiveInputPolicies;

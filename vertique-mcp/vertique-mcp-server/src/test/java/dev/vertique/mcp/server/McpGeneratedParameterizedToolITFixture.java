@@ -120,7 +120,7 @@ final class McpGeneratedParameterizedToolITFixture {
         JavaFileObject sanitizerSource = SourceFiles.inline(SANITIZER_SOURCE_FQN, """
                 package com.example.greeting;
 
-                import dev.vertique.core.sanitization.InputValueContext;
+                import dev.vertique.core.input.InputValueContext;
                 import dev.vertique.sanitization.Sanitizer;
                 import java.util.Locale;
 

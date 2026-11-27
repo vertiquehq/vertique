@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.canonicalize;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Canonicalizer;
 import java.text.Normalizer;
 

@@ -3,10 +3,10 @@
 
 package dev.vertique.sanitization.processing;
 
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputFieldNameResolver;
+import dev.vertique.core.input.InputFieldNameResolver.PromotedField;
+import dev.vertique.core.input.InputLocation;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Canonicalizer;
 import dev.vertique.sanitization.Sanitizer;
 import dev.vertique.sanitization.processing.InputPolicyMetadata.FieldPolicyMetadata;
@@ -757,7 +757,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param ctx          the accumulated traversal context (with inherited chains)
      * @param location     request origin
      * @param fieldPath    dot-separated path so far, for diagnostic context
-     * @param ownerType    owner type for {@link dev.vertique.core.sanitization.InputValueContext}
+     * @param ownerType    owner type for {@link dev.vertique.core.input.InputValueContext}
      * @return the processed fragment, applying only inherited chains
      */
     private Object walkUnknown(

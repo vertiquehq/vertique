@@ -289,7 +289,7 @@ Return `CharacterPolicyResult.passed()` or
 `CharacterPolicyResult.failed(index, codePoint, reason)`; the record's accessors are `valid()`,
 `invalidIndex()`, `invalidCodePoint()`, and `reason()`.
 
-`InputValueContext` (`dev.vertique.core.sanitization`) is
+`InputValueContext` (`dev.vertique.core.input`) is
 `(InputLocation location, String path, String logicalName, Class<?> ownerType)`. Both built-in
 validators pass `InputLocation.BODY`; the object-level validator sets `path`/`logicalName` to the
 traversed field path, the field-level validator passes empty strings.

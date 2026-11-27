@@ -4,8 +4,8 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.ViolationDetail;

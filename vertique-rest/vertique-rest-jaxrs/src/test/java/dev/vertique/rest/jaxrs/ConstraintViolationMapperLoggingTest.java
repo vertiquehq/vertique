@@ -18,7 +18,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.input.InputFieldNameResolver;
 import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.ViolationDetail;

@@ -487,7 +487,7 @@ outside Jackson binding; it returns the prepared element node.
 
 Projects the **wire** property names a body is keyed by onto the **Java** property names the
 input-processing engine keys its per-field policies on. Implements
-`dev.vertique.core.sanitization.InputFieldNameResolver`.
+`dev.vertique.core.input.InputFieldNameResolver`.
 
 Input processing (`@Canonicalize` / `@Sanitize`) resolves each field's declared chain by the Java
 property name, while an intermediate parsed from the wire is keyed by whatever Jackson published —

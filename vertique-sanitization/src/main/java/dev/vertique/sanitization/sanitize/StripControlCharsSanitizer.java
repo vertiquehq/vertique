@@ -3,7 +3,7 @@
 
 package dev.vertique.sanitization.sanitize;
 
-import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.input.InputValueContext;
 import dev.vertique.sanitization.Sanitizer;
 
 /**
