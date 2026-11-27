@@ -681,7 +681,10 @@ JsonSchemaTypeOverride.both(
 fragment. It orders object keys recursively by `String.compareTo` (never reordering arrays), retains
 only the canonical compact string, and returns an immutable value; `canonicalJson()` returns that
 string and two fragments are equal when their canonical JSON is equal. Parsing is syntactic plus
-bounded structural validation — the consuming validator still compiles the completed schema.
+bounded structural validation — the consuming validator still compiles the completed schema. It uses
+Vert.x's streaming JSON parser: numbers with a fraction or exponent read as doubles, the last of
+repeated keys wins, JSON comments are ignored, and the operator's `vertx.jackson.defaultRead*` limits
+apply.
 
 `parse` rejects — with an `IllegalArgumentException` whose bounded message names the violated rule
 and never echoes the fragment — a `null` or blank input, malformed JSON, a non-object root, and any
